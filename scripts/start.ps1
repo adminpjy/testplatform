@@ -3,6 +3,7 @@ $ErrorActionPreference = "Stop"
 
 $runtimeDir = ".runtime"
 New-Item -ItemType Directory -Force -Path $runtimeDir | Out-Null
+$script:MockMisDemoUrl = ""
 
 function Find-AvailablePort {
   param(
@@ -62,6 +63,60 @@ function Start-Backend {
   Write-Host "Backend started at http://$hostName`:$port with PID $($process.Id)."
 }
 
+function Start-Frontend {
+  $frontendHost = "127.0.0.1"
+  $frontendPort = $env:FRONTEND_PORT
+  $hasExplicitPort = -not [string]::IsNullOrWhiteSpace($frontendPort)
+  if ([string]::IsNullOrWhiteSpace($frontendPort)) {
+    $frontendPort = "5173"
+  }
+  if (Get-NetTCPConnection -LocalPort ([int]$frontendPort) -ErrorAction SilentlyContinue) {
+    if ($hasExplicitPort) {
+      Write-Error "Frontend port $frontendPort is already in use."
+    }
+    $frontendPort = Find-AvailablePort -PreferredPort ([int]$frontendPort)
+  }
+
+  $pidFile = Join-Path $runtimeDir "frontend.pid"
+  $outFile = Join-Path $runtimeDir "frontend.out.log"
+  $errFile = Join-Path $runtimeDir "frontend.err.log"
+
+  if (Test-Path $pidFile) {
+    $existingPid = Get-Content $pidFile -Raw
+    if (-not [string]::IsNullOrWhiteSpace($existingPid)) {
+      $existingProcess = Get-Process -Id ([int]$existingPid) -ErrorAction SilentlyContinue
+      if ($null -ne $existingProcess) {
+        Write-Host "Frontend is already running with PID $existingPid."
+        return
+      }
+    }
+  }
+
+  if (-not (Test-Path "frontend/node_modules")) {
+    npm.cmd --prefix frontend install
+  }
+
+  $args = @(
+    "--prefix", "frontend",
+    "run", "dev",
+    "--",
+    "--host", $frontendHost,
+    "--port", $frontendPort,
+    "--strictPort"
+  )
+
+  $process = Start-Process `
+    -FilePath "npm.cmd" `
+    -ArgumentList $args `
+    -PassThru `
+    -WindowStyle Hidden `
+    -RedirectStandardOutput $outFile `
+    -RedirectStandardError $errFile
+
+  Set-Content -Path $pidFile -Value $process.Id
+  Write-Host "Frontend started at http://$frontendHost`:$frontendPort with PID $($process.Id)."
+}
+
 function Start-MockMisDemo {
   $mockHost = "127.0.0.1"
   $mockPort = $env:MOCK_MIS_PORT
@@ -113,8 +168,13 @@ function Start-MockMisDemo {
     -RedirectStandardError $errFile
 
   Set-Content -Path $pidFile -Value $process.Id
+  $script:MockMisDemoUrl = "http://$mockHost`:$mockPort"
   Write-Host "Mock MIS demo started at http://$mockHost`:$mockPort with PID $($process.Id)."
 }
 
 Start-Backend
 Start-MockMisDemo
+if (-not [string]::IsNullOrWhiteSpace($script:MockMisDemoUrl)) {
+  $env:VITE_MOCK_MIS_URL = "$($script:MockMisDemoUrl)/login"
+}
+Start-Frontend

@@ -31,18 +31,34 @@ $requiredPaths = @(
   "backend/tests",
   "backend/requirements.txt",
   "frontend/src/api",
+  "frontend/src/api/client.ts",
+  "frontend/src/api/platform.ts",
   "frontend/src/api/runtimeStream.ts",
   "frontend/src/App.tsx",
   "frontend/src/components",
+  "frontend/src/components/DataTable.tsx",
+  "frontend/src/components/DebugDrawer.tsx",
+  "frontend/src/components/ErrorSummaryCard.tsx",
   "frontend/src/components/RuntimeStreamPanel.tsx",
+  "frontend/src/components/ScreenshotPanel.tsx",
+  "frontend/src/components/StatusBadge.tsx",
+  "frontend/src/components/StepTree.tsx",
   "frontend/src/main.tsx",
   "frontend/src/pages",
+  "frontend/src/pages/AbilityCenterPage.tsx",
+  "frontend/src/pages/FailureSamplesPage.tsx",
+  "frontend/src/pages/MockMisDemoPage.tsx",
+  "frontend/src/pages/ReportsPage.tsx",
+  "frontend/src/pages/SystemSettingsPage.tsx",
+  "frontend/src/pages/TestRunPage.tsx",
   "frontend/src/routes",
+  "frontend/src/routes/navigation.ts",
   "frontend/src/stores",
   "frontend/src/styles",
   "frontend/src/styles/app.css",
   "frontend/src/styles/runtime-stream.css",
   "frontend/src/types",
+  "frontend/src/types/platform.ts",
   "frontend/src/types/runtime.ts",
   "frontend/src/vite-env.d.ts",
   "frontend/index.html",
@@ -686,7 +702,7 @@ try {
     Write-Error "Runtime stream did not replay history after completion."
   }
 
-  Write-Host "Stage 7 runtime stream check passed."
+  Write-Host "Stage 8 frontend pages check passed."
 } finally {
   if ($null -ne $process -and -not $process.HasExited) {
     Stop-Process -Id $process.Id -Force

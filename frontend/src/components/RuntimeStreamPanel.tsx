@@ -18,12 +18,13 @@ const typeLabels: Record<RuntimeMessage["type"], string> = {
   error: "错误",
   success: "成功"
 };
+const EMPTY_RUNTIME_MESSAGES: RuntimeMessage[] = [];
 
 export function RuntimeStreamPanel({
   runId,
   baseUrl,
   className,
-  initialMessages = []
+  initialMessages = EMPTY_RUNTIME_MESSAGES
 }: RuntimeStreamPanelProps) {
   const [messages, setMessages] = useState<RuntimeMessage[]>(() => dedupeMessages(initialMessages));
   const [connected, setConnected] = useState(false);
