@@ -2,7 +2,7 @@
 
 This repository contains the project skeleton for an AI-assisted functional testing platform for existing enterprise MIS systems.
 
-Stage 0 establishes a clean engineering foundation only:
+The current foundation includes:
 
 - Backend skeleton: FastAPI, SQLAlchemy, Pydantic.
 - Frontend skeleton: React, Vite, TypeScript.
@@ -10,6 +10,7 @@ Stage 0 establishes a clean engineering foundation only:
 - Mock MIS demo placeholder for future local verification.
 - Runtime data directories for artifacts and reports.
 - PowerShell scripts for local lifecycle commands.
+- Backend stage 1 service startup, database connection, automatic table creation, default project initialization, and project APIs.
 
 No complex business implementation is included in this stage.
 
@@ -35,10 +36,48 @@ Copy `.env.example` to `.env` before running later phases.
 Copy-Item .env.example .env
 ```
 
-## Stage 0 Check
+## Backend
+
+The backend reads `DATABASE_URL` from the environment or `.env`.
+
+When `DATABASE_URL` is absent, it falls back to:
+
+```text
+sqlite:///./data/aitp.db
+```
+
+Start the backend:
+
+```powershell
+.\scripts\start.ps1
+```
+
+Stop the backend:
+
+```powershell
+.\scripts\stop.ps1
+```
+
+Initialize tables without starting the HTTP service:
+
+```powershell
+.\scripts\init-db.ps1
+```
+
+Implemented endpoints:
+
+```text
+GET  /health
+GET  /api/system/info
+GET  /api/projects
+POST /api/projects
+GET  /api/projects/{id}
+```
+
+## Check
 
 ```powershell
 .\scripts\check.ps1
 ```
 
-The stage 0 check validates the expected project skeleton and required files.
+The check validates the expected skeleton, compiles the backend, starts a temporary API process, verifies `/health`, checks database connectivity, and confirms that at least one project exists.
