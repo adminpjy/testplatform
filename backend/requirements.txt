@@ -6,4 +6,5 @@ pydantic
 pydantic-settings
 python-dotenv
 httpx
+playwright
 pytest

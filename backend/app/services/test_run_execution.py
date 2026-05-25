@@ -1,0 +1,223 @@
+from datetime import datetime, timezone
+from uuid import uuid4
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.models import TestArtifact, TestCase, TestProject, TestRun, TestStepRun
+from app.schemas.test_runs import TestCaseDSL, TestRunCreate
+from executor.aitp_executor.runner.case_runner import CaseRunner
+
+
+def create_and_execute_run(db: Session, payload: TestRunCreate) -> TestRun:
+    project = db.get(TestProject, payload.project_id)
+    if project is None:
+        raise ValueError("Project not found.")
+
+    case = db.get(TestCase, payload.case_id) if payload.case_id is not None else None
+    if payload.case_id is not None and case is None:
+        raise ValueError("Test case not found.")
+
+    dsl = _resolve_dsl(payload, case, project)
+    run = TestRun(
+        run_code=_new_run_code(),
+        project_id=project.id,
+        case_id=case.id if case else None,
+        instruction=payload.instruction or (case.instruction if case else None),
+        base_url=payload.base_url or dsl.get("baseUrl") or project.base_url,
+        status="created",
+        current_phase="created",
+        dsl_json=_redact_dsl_for_storage(dsl),
+    )
+    db.add(run)
+    db.commit()
+    db.refresh(run)
+
+    run.status = "running"
+    run.current_phase = "executing"
+    run.started_at = _utc_now()
+    db.add(run)
+    db.commit()
+
+    try:
+        execution_result = CaseRunner().run(run_code=run.run_code, dsl=dsl)
+        _persist_execution_result(db, run, execution_result)
+        run.status = "passed" if execution_result["status"] == "passed" else "failed"
+        run.current_phase = "completed" if run.status == "passed" else "failed"
+        run.summary_json = execution_result["summary"]
+    except Exception as exc:
+        run.status = "failed"
+        run.current_phase = "failed"
+        run.summary_json = {"status": "failed", "errorSummary": str(exc)}
+    finally:
+        run.ended_at = _utc_now()
+        db.add(run)
+        db.commit()
+        db.refresh(run)
+
+    return run
+
+
+def list_runs(db: Session) -> list[TestRun]:
+    return list(db.scalars(select(TestRun).order_by(TestRun.id.desc())).all())
+
+
+def get_run(db: Session, run_id: int) -> TestRun | None:
+    return db.get(TestRun, run_id)
+
+
+def list_step_runs(db: Session, run_id: int) -> list[TestStepRun]:
+    return list(
+        db.scalars(select(TestStepRun).where(TestStepRun.run_id == run_id).order_by(TestStepRun.id)).all()
+    )
+
+
+def list_artifacts(db: Session, run_id: int) -> list[TestArtifact]:
+    return list(
+        db.scalars(select(TestArtifact).where(TestArtifact.run_id == run_id).order_by(TestArtifact.id)).all()
+    )
+
+
+def latest_screenshot(db: Session, run_id: int) -> TestArtifact | None:
+    return db.scalars(
+        select(TestArtifact)
+        .where(TestArtifact.run_id == run_id, TestArtifact.artifact_type == "screenshot")
+        .order_by(TestArtifact.id.desc())
+    ).first()
+
+
+def report_artifact(db: Session, run_id: int) -> TestArtifact | None:
+    return db.scalars(
+        select(TestArtifact)
+        .where(TestArtifact.run_id == run_id, TestArtifact.artifact_type == "report_html")
+        .order_by(TestArtifact.id.desc())
+    ).first()
+
+
+def _resolve_dsl(payload: TestRunCreate, case: TestCase | None, project: TestProject) -> dict:
+    if payload.dsl_json is not None:
+        dsl = payload.dsl_json.model_dump()
+    elif case and case.dsl_json:
+        dsl = TestCaseDSL.model_validate(case.dsl_json).model_dump()
+    else:
+        raise ValueError("A dsl_json payload or a test case with DSL is required.")
+
+    if payload.base_url:
+        dsl["baseUrl"] = payload.base_url
+    elif not dsl.get("baseUrl") and project.base_url:
+        dsl["baseUrl"] = project.base_url
+    return dsl
+
+
+def _redact_dsl_for_storage(dsl: dict) -> dict:
+    redacted = dict(dsl)
+    credentials = dict(redacted.get("credentials") or {})
+    if "password" in credentials:
+        credentials.pop("password")
+        credentials["secret_ref"] = credentials.get("secret_ref", "redacted_password")
+    redacted["credentials"] = credentials
+
+    safe_steps = []
+    for step in redacted.get("steps") or []:
+        safe_step = dict(step)
+        target = str(safe_step.get("target") or "").lower()
+        if "password" in target or "密码" in target:
+            safe_step["value"] = "***REDACTED***"
+        safe_steps.append(safe_step)
+    redacted["steps"] = safe_steps
+    return redacted
+
+
+def _persist_execution_result(db: Session, run: TestRun, execution_result: dict) -> None:
+    for step_result in execution_result.get("steps", []):
+        step_run = TestStepRun(
+            run_id=run.id,
+            step_id=str(step_result.get("step_id") or step_result.get("step_number")),
+            step_name=step_result.get("step_name"),
+            action=step_result.get("action"),
+            target=step_result.get("target"),
+            status=step_result.get("status", "unknown"),
+            locator_strategy=step_result.get("locator_strategy"),
+            element_ref=step_result.get("element_ref"),
+            confidence=step_result.get("confidence"),
+            reason=step_result.get("reason"),
+            screenshot_path=step_result.get("screenshot_path"),
+            error_summary=step_result.get("error_summary"),
+            started_at=_parse_dt(step_result.get("started_at")),
+            ended_at=_parse_dt(step_result.get("ended_at")),
+        )
+        db.add(step_run)
+        db.flush()
+        _add_artifact(
+            db,
+            run.id,
+            step_run.id,
+            "screenshot",
+            step_result.get("screenshot_path"),
+            {"step_number": step_result.get("step_number")},
+        )
+        _add_artifact(
+            db,
+            run.id,
+            step_run.id,
+            "dom_snapshot",
+            step_result.get("dom_snapshot_path"),
+            {"step_number": step_result.get("step_number")},
+        )
+        _add_artifact(
+            db,
+            run.id,
+            step_run.id,
+            "accessibility_snapshot",
+            step_result.get("accessibility_snapshot_path"),
+            {"step_number": step_result.get("step_number")},
+        )
+
+    artifacts = execution_result.get("artifacts", {})
+    artifact_types = {
+        "summary": "summary_json",
+        "report": "report_html",
+        "step_results": "step_results_jsonl",
+        "locator_debug": "locator_debug_jsonl",
+        "execution_trace": "execution_trace_jsonl",
+        "runtime_stream": "runtime_stream_jsonl",
+    }
+    for key, artifact_type in artifact_types.items():
+        _add_artifact(db, run.id, None, artifact_type, artifacts.get(key), {"run_code": run.run_code})
+    db.commit()
+
+
+def _add_artifact(
+    db: Session,
+    run_id: int,
+    step_id: int | None,
+    artifact_type: str,
+    file_path: str | None,
+    metadata: dict,
+) -> None:
+    if not file_path:
+        return
+    db.add(
+        TestArtifact(
+            run_id=run_id,
+            step_id=step_id,
+            artifact_type=artifact_type,
+            file_path=file_path,
+            metadata_json=metadata,
+        )
+    )
+
+
+def _new_run_code() -> str:
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+    return f"RUN-{stamp}-{uuid4().hex[:8].upper()}"
+
+
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _parse_dt(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    return datetime.fromisoformat(value)

@@ -1,6 +1,7 @@
+from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 ALLOWED_DSL_ACTIONS = {
@@ -60,3 +61,62 @@ class TestCaseDSL(BaseModel):
         if invalid:
             raise ValueError(f"Unsupported DSL action(s): {', '.join(invalid)}")
         return steps
+
+
+class TestRunCreate(BaseModel):
+    project_id: int
+    case_id: int | None = None
+    instruction: str | None = None
+    base_url: str | None = None
+    dsl_json: TestCaseDSL | None = None
+
+
+class TestRunRead(BaseModel):
+    id: int
+    run_code: str
+    project_id: int
+    case_id: int | None = None
+    instruction: str | None = None
+    base_url: str | None = None
+    status: str
+    current_phase: str | None = None
+    dsl_json: dict[str, Any] | None = None
+    summary_json: dict[str, Any] | None = None
+    started_at: datetime | None = None
+    ended_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class TestStepRunRead(BaseModel):
+    id: int
+    run_id: int
+    step_id: str | None = None
+    step_name: str | None = None
+    action: str | None = None
+    target: str | None = None
+    status: str
+    locator_strategy: str | None = None
+    element_ref: str | None = None
+    confidence: float | None = None
+    reason: str | None = None
+    screenshot_path: str | None = None
+    error_summary: str | None = None
+    started_at: datetime | None = None
+    ended_at: datetime | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class TestArtifactRead(BaseModel):
+    id: int
+    run_id: int
+    step_id: int | None = None
+    artifact_type: str
+    file_path: str
+    metadata_json: dict[str, Any] | None = None
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)

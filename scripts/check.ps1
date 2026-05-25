@@ -25,13 +25,19 @@ $requiredPaths = @(
   "frontend/package.json",
   "frontend/vite.config.ts",
   "executor/aitp_executor/runner",
+  "executor/aitp_executor/runner/case_runner.py",
   "executor/aitp_executor/browser",
+  "executor/aitp_executor/browser/sandbox_provider.py",
+  "executor/aitp_executor/browser/local_playwright_provider.py",
   "executor/aitp_executor/observer",
   "executor/aitp_executor/locator",
   "executor/aitp_executor/goal",
   "executor/aitp_executor/vision",
   "executor/aitp_executor/reports",
+  "executor/aitp_executor/reports/artifact_writer.py",
+  "executor/aitp_executor/reports/report_writer.py",
   "executor/aitp_executor/utils",
+  "executor/aitp_executor/utils/file_paths.py",
   "executor/requirements.txt",
   "mock-mis-demo/package.json",
   "mock-mis-demo/index.html",
@@ -67,7 +73,7 @@ if ($missing.Count -gt 0) {
   Write-Error ("Missing required paths:`n" + ($missing -join "`n"))
 }
 
-python -m compileall backend | Out-Null
+python -m compileall backend executor | Out-Null
 
 if (-not (Test-Path "mock-mis-demo/node_modules")) {
   npm.cmd --prefix mock-mis-demo install
@@ -341,7 +347,7 @@ try {
 
   $planPayload = @{
     project_id = $projectId
-    instruction = "打开 http://127.0.0.1:5174/login，使用账号 admin 密码 123456 登录系统，进入我的待办，确认页面存在我的待办"
+    instruction = "打开 $mockBaseUrl/login，使用账号 admin 密码 123456 登录系统，进入我的待办，确认页面存在我的待办"
     stream = $true
   } | ConvertTo-Json -Depth 8
   $dsl = Invoke-RestMethod `
@@ -386,7 +392,96 @@ try {
     Write-Error "TestCaseDSL exposed a plaintext password."
   }
 
-  Write-Host "Stage 4 mock MIS demo check passed."
+  $runPayload = @{
+    project_id = $projectId
+    instruction = "打开 Mock MIS 登录页并验证登录成功"
+    base_url = "$mockBaseUrl/login"
+    dsl_json = @{
+      caseName = "打开 Mock MIS 登录页"
+      baseUrl = "$mockBaseUrl/login"
+      credentials = @{}
+      settings = @{
+        headless = $true
+      }
+      steps = @(
+        @{
+          action = "open_url"
+          target = "$mockBaseUrl/login"
+        },
+        @{
+          action = "input"
+          target = "用户名"
+          value = "admin"
+        },
+        @{
+          action = "input"
+          target = "密码"
+          value = "123456"
+        },
+        @{
+          action = "click"
+          target = "登录"
+        },
+        @{
+          action = "wait_for_text"
+          target = "华东生产验证环境"
+        },
+        @{
+          action = "assert_url_contains"
+          target = "/dashboard"
+        }
+      )
+    }
+  } | ConvertTo-Json -Depth 12
+  $run = Invoke-RestMethod `
+    -Uri "$baseUrl/api/test-runs" `
+    -Method Post `
+    -ContentType "application/json" `
+    -Body $runPayload `
+    -TimeoutSec 60
+  if ($run.status -ne "passed") {
+    Write-Error "Playwright executor run did not pass. Status: $($run.status)"
+  }
+  if ([string]::IsNullOrWhiteSpace($run.summary_json.status)) {
+    Write-Error "Test run summary was not persisted."
+  }
+  $storedRunJson = $run | ConvertTo-Json -Depth 20
+  if ($storedRunJson -like "*123456*") {
+    Write-Error "Persisted test run exposed a plaintext password."
+  }
+
+  $runSteps = Invoke-RestMethod -Uri "$baseUrl/api/test-runs/$($run.id)/steps" -TimeoutSec 5
+  if (@($runSteps).Count -lt 6) {
+    Write-Error "Test run steps were not persisted."
+  }
+
+  $runArtifacts = Invoke-RestMethod -Uri "$baseUrl/api/test-runs/$($run.id)/artifacts" -TimeoutSec 5
+  if (@($runArtifacts | Where-Object { $_.artifact_type -eq "screenshot" }).Count -lt 1) {
+    Write-Error "Screenshot artifact was not persisted."
+  }
+  $summaryArtifact = $runArtifacts | Where-Object { $_.artifact_type -eq "summary_json" } | Select-Object -First 1
+  if ($null -eq $summaryArtifact -or -not (Test-Path $summaryArtifact.file_path)) {
+    Write-Error "summary.json artifact does not exist on disk."
+  }
+  $reportArtifact = $runArtifacts | Where-Object { $_.artifact_type -eq "report_html" } | Select-Object -First 1
+  if ($null -eq $reportArtifact -or -not (Test-Path $reportArtifact.file_path)) {
+    Write-Error "report.html artifact does not exist on disk."
+  }
+
+  $latestScreenshot = Invoke-WebRequest -Uri "$baseUrl/api/test-runs/$($run.id)/latest-screenshot" -TimeoutSec 10
+  if ($latestScreenshot.StatusCode -ne 200) {
+    Write-Error "Latest screenshot endpoint did not return HTTP 200."
+  }
+  $reportResponse = Invoke-WebRequest -Uri "$baseUrl/api/reports/$($run.id)" -TimeoutSec 10
+  if ($reportResponse.StatusCode -ne 200 -or $reportResponse.Content -notlike "*测试执行报告*") {
+    Write-Error "Report endpoint did not return report.html."
+  }
+  $fileResponse = Invoke-WebRequest -Uri "$baseUrl/files/$($summaryArtifact.file_path)" -TimeoutSec 10
+  if ($fileResponse.StatusCode -ne 200 -or $fileResponse.Content -notlike "*runCode*") {
+    Write-Error "File endpoint did not return summary artifact."
+  }
+
+  Write-Host "Stage 5 Playwright executor check passed."
 } finally {
   if ($null -ne $process -and -not $process.HasExited) {
     Stop-Process -Id $process.Id -Force

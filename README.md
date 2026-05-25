@@ -14,6 +14,7 @@ The current foundation includes:
 - MIS base ability pack initialization and RuleResolver for common enterprise MIS testing goals.
 - LLM provider abstraction with Mock and OpenAI-compatible providers, stream parsing, JSON extraction, and natural-language test planning.
 - Local Mock MIS demo system for Playwright-accessible login, dashboard, todo approval, user management, and detail navigation scenarios.
+- Local Playwright executor with SandboxProvider abstraction, per-step evidence capture, persisted artifacts, summary JSON, and HTML reports.
 
 No complex business implementation is included in this stage.
 
@@ -83,6 +84,14 @@ POST /api/abilities/rules/{id}/disable
 POST /api/abilities/resolve
 POST /api/test-runs/analyze
 POST /api/test-runs/plan
+POST /api/test-runs
+GET  /api/test-runs
+GET  /api/test-runs/{runId}
+GET  /api/test-runs/{runId}/steps
+GET  /api/test-runs/{runId}/artifacts
+GET  /api/test-runs/{runId}/latest-screenshot
+GET  /api/reports/{runId}
+GET  /files/{path}
 ```
 
 LLM configuration:
@@ -128,6 +137,30 @@ Supported demo routes:
 /todo
 /users
 ```
+
+## Playwright Executor
+
+The stage 5 executor runs locally with Playwright headless and writes evidence under:
+
+```text
+artifacts/runs/{run_code}/
+```
+
+Each run writes:
+
+```text
+summary.json
+report.html
+step-result.jsonl
+locator-debug.jsonl
+execution-trace.jsonl
+runtime-stream.jsonl
+screenshots/
+dom/
+accessibility/
+```
+
+The executor is currently local-only, with `SandboxProvider` retained as the boundary for later sandbox integration.
 
 ## Check
 
