@@ -15,6 +15,7 @@ The current foundation includes:
 - LLM provider abstraction with Mock and OpenAI-compatible providers, stream parsing, JSON extraction, and natural-language test planning.
 - Local Mock MIS demo system for Playwright-accessible login, dashboard, todo approval, user management, and detail navigation scenarios.
 - Local Playwright executor with SandboxProvider abstraction, per-step evidence capture, persisted artifacts, summary JSON, and HTML reports.
+- Goal driven executor and semantic locator for business-level DSL steps such as entering todo lists, approval pass, approval flow view, and form field resolution.
 
 No complex business implementation is included in this stage.
 
@@ -161,6 +162,38 @@ accessibility/
 ```
 
 The executor is currently local-only, with `SandboxProvider` retained as the boundary for later sandbox integration.
+
+Stage 6 adds business-goal execution for:
+
+```text
+登录系统
+进入我的待办
+查询记录
+新增记录
+修改记录
+删除记录
+打开详情
+查看审批流程
+审批通过
+审批驳回
+```
+
+Locator resolution order:
+
+```text
+knowledge base
+explicit selector
+Playwright role/label/text
+PageSemantic
+BusinessIntent
+CandidateRanker
+AmbiguityResolver
+LLM resolver
+VisionResolver
+ActionVerifier
+```
+
+When confidence is too low and vision is unavailable, locator debug records `vision_fallback_not_configured`.
 
 ## Check
 

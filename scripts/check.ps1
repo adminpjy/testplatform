@@ -30,8 +30,20 @@ $requiredPaths = @(
   "executor/aitp_executor/browser/sandbox_provider.py",
   "executor/aitp_executor/browser/local_playwright_provider.py",
   "executor/aitp_executor/observer",
+  "executor/aitp_executor/observer/page_observer.py",
   "executor/aitp_executor/locator",
+  "executor/aitp_executor/locator/page_semantic_extractor.py",
+  "executor/aitp_executor/locator/business_intent_normalizer.py",
+  "executor/aitp_executor/locator/candidate_ranker.py",
+  "executor/aitp_executor/locator/ambiguity_resolver.py",
+  "executor/aitp_executor/locator/element_locator.py",
+  "executor/aitp_executor/locator/llm_element_resolver.py",
+  "executor/aitp_executor/locator/vision_resolver.py",
   "executor/aitp_executor/goal",
+  "executor/aitp_executor/goal/goal_executor.py",
+  "executor/aitp_executor/goal/goal_planner.py",
+  "executor/aitp_executor/goal/goal_success_verifier.py",
+  "executor/aitp_executor/goal/recovery_policy.py",
   "executor/aitp_executor/vision",
   "executor/aitp_executor/reports",
   "executor/aitp_executor/reports/artifact_writer.py",
@@ -481,7 +493,166 @@ try {
     Write-Error "File endpoint did not return summary artifact."
   }
 
-  Write-Host "Stage 5 Playwright executor check passed."
+  $approvalGoalPayload = @{
+    project_id = $projectId
+    instruction = "目标驱动：进入我的待办并审批通过"
+    base_url = "$mockBaseUrl/login"
+    dsl_json = @{
+      caseName = "目标驱动审批通过"
+      baseUrl = "$mockBaseUrl/login"
+      credentials = @{}
+      settings = @{}
+      steps = @(
+        @{ action = "open_url"; target = "$mockBaseUrl/login" },
+        @{ action = "input"; target = "用户名"; value = "admin" },
+        @{ action = "input"; target = "密码"; value = "123456" },
+        @{ action = "click"; target = "登录" },
+        @{ action = "business_goal"; target = "工作台/我的待办" },
+        @{ action = "business_goal"; target = "审批通过" },
+        @{ action = "wait_for_text"; target = "审批成功" }
+      )
+    }
+  } | ConvertTo-Json -Depth 12
+  $approvalGoalRun = Invoke-RestMethod `
+    -Uri "$baseUrl/api/test-runs" `
+    -Method Post `
+    -ContentType "application/json" `
+    -Body $approvalGoalPayload `
+    -TimeoutSec 60
+  if ($approvalGoalRun.status -ne "passed") {
+    Write-Error "Goal executor did not pass approval_pass scenario."
+  }
+  $approvalGoalArtifacts = Invoke-RestMethod -Uri "$baseUrl/api/test-runs/$($approvalGoalRun.id)/artifacts" -TimeoutSec 5
+  $approvalLocatorArtifact = $approvalGoalArtifacts | Where-Object { $_.artifact_type -eq "locator_debug_jsonl" } | Select-Object -First 1
+  $approvalLocatorEvents = Get-Content $approvalLocatorArtifact.file_path | ForEach-Object { $_ | ConvertFrom-Json }
+  $approvalDecision = $approvalLocatorEvents | Where-Object { $_.target -eq "审批通过" } | Select-Object -First 1
+  if ($approvalDecision.element_ref -ne "审批") {
+    Write-Error "Approval pass target did not select the exact approval action."
+  }
+
+  $flowGoalPayload = @{
+    project_id = $projectId
+    instruction = "目标驱动：进入我的待办并查看审批流程"
+    base_url = "$mockBaseUrl/login"
+    dsl_json = @{
+      caseName = "目标驱动查看审批流程"
+      baseUrl = "$mockBaseUrl/login"
+      credentials = @{}
+      settings = @{}
+      steps = @(
+        @{ action = "open_url"; target = "$mockBaseUrl/login" },
+        @{ action = "input"; target = "用户名"; value = "admin" },
+        @{ action = "input"; target = "密码"; value = "123456" },
+        @{ action = "click"; target = "登录" },
+        @{ action = "business_goal"; target = "工作台/我的待办" },
+        @{ action = "business_goal"; target = "查看审批流程" },
+        @{ action = "assert_url_contains"; target = "flow=true" }
+      )
+    }
+  } | ConvertTo-Json -Depth 12
+  $flowGoalRun = Invoke-RestMethod `
+    -Uri "$baseUrl/api/test-runs" `
+    -Method Post `
+    -ContentType "application/json" `
+    -Body $flowGoalPayload `
+    -TimeoutSec 60
+  if ($flowGoalRun.status -ne "passed") {
+    Write-Error "Goal executor did not pass approval_flow_view scenario."
+  }
+  $flowGoalArtifacts = Invoke-RestMethod -Uri "$baseUrl/api/test-runs/$($flowGoalRun.id)/artifacts" -TimeoutSec 5
+  $flowLocatorArtifact = $flowGoalArtifacts | Where-Object { $_.artifact_type -eq "locator_debug_jsonl" } | Select-Object -First 1
+  $flowLocatorEvents = Get-Content $flowLocatorArtifact.file_path | ForEach-Object { $_ | ConvertFrom-Json }
+  $flowDecision = $flowLocatorEvents | Where-Object { $_.target -eq "查看审批流程" } | Select-Object -First 1
+  if ($flowDecision.element_ref -ne "查看审批流程") {
+    Write-Error "Approval flow target did not select 查看审批流程."
+  }
+
+  $userGoalPayload = @{
+    project_id = $projectId
+    instruction = "目标驱动：进入用户管理并新增用户"
+    base_url = "$mockBaseUrl/login"
+    dsl_json = @{
+      caseName = "目标驱动用户管理新增"
+      baseUrl = "$mockBaseUrl/login"
+      credentials = @{}
+      settings = @{}
+      steps = @(
+        @{ action = "open_url"; target = "$mockBaseUrl/login" },
+        @{ action = "input"; target = "用户名"; value = "admin" },
+        @{ action = "input"; target = "密码"; value = "123456" },
+        @{ action = "click"; target = "登录" },
+        @{ action = "navigate_menu"; target = "用户管理" },
+        @{ action = "input"; target = "用户名"; value = "goal_user" },
+        @{ action = "input"; target = "姓名"; value = "目标用户" },
+        @{ action = "click"; target = "新增" },
+        @{ action = "wait_for_text"; target = "goal_user" }
+      )
+    }
+  } | ConvertTo-Json -Depth 12
+  $userGoalRun = Invoke-RestMethod `
+    -Uri "$baseUrl/api/test-runs" `
+    -Method Post `
+    -ContentType "application/json" `
+    -Body $userGoalPayload `
+    -TimeoutSec 60
+  if ($userGoalRun.status -ne "passed") {
+    Write-Error "Goal executor did not fill the non-standard username field."
+  }
+  $userGoalArtifacts = Invoke-RestMethod -Uri "$baseUrl/api/test-runs/$($userGoalRun.id)/artifacts" -TimeoutSec 5
+  $userLocatorArtifact = $userGoalArtifacts | Where-Object { $_.artifact_type -eq "locator_debug_jsonl" } | Select-Object -First 1
+  $userLocatorEvents = Get-Content $userLocatorArtifact.file_path | ForEach-Object { $_ | ConvertFrom-Json }
+  $userNameDecision = $userLocatorEvents | Where-Object { $_.target -eq "用户名" -and $_.step_number -eq 6 } | Select-Object -First 1
+  if ($userNameDecision.locator_strategy -ne "playwright_label_exact") {
+    Write-Error "Username field was not resolved through the label-backed non-standard DOM field."
+  }
+  $userDomArtifacts = $userGoalArtifacts | Where-Object { $_.artifact_type -eq "dom_snapshot" }
+  $hasLegacyUserField = $false
+  foreach ($domArtifact in $userDomArtifacts) {
+    if ((Get-Content $domArtifact.file_path -Raw) -like "*id=`"j_name`"*") {
+      $hasLegacyUserField = $true
+      break
+    }
+  }
+  if (-not $hasLegacyUserField) {
+    Write-Error "User management DOM evidence did not include id=j_name."
+  }
+
+  $lowConfidencePayload = @{
+    project_id = $projectId
+    instruction = "目标驱动：触发低置信度定位"
+    base_url = "$mockBaseUrl/login"
+    dsl_json = @{
+      caseName = "低置信度视觉兜底验证"
+      baseUrl = "$mockBaseUrl/login"
+      credentials = @{}
+      settings = @{}
+      steps = @(
+        @{ action = "open_url"; target = "$mockBaseUrl/login" },
+        @{ action = "click"; target = "完全不存在的按钮" }
+      )
+    }
+  } | ConvertTo-Json -Depth 12
+  $lowConfidenceRun = Invoke-RestMethod `
+    -Uri "$baseUrl/api/test-runs" `
+    -Method Post `
+    -ContentType "application/json" `
+    -Body $lowConfidencePayload `
+    -TimeoutSec 60
+  if ($lowConfidenceRun.status -ne "failed") {
+    Write-Error "Low confidence run should fail when vision fallback is not configured."
+  }
+  $lowConfidenceArtifacts = Invoke-RestMethod -Uri "$baseUrl/api/test-runs/$($lowConfidenceRun.id)/artifacts" -TimeoutSec 5
+  $lowLocatorArtifact = $lowConfidenceArtifacts | Where-Object { $_.artifact_type -eq "locator_debug_jsonl" } | Select-Object -First 1
+  $lowLocatorEvents = Get-Content $lowLocatorArtifact.file_path | ForEach-Object { $_ | ConvertFrom-Json }
+  $lowDecision = $lowLocatorEvents | Where-Object { $_.target -eq "完全不存在的按钮" } | Select-Object -First 1
+  if ($lowDecision.needs_vision_fallback -ne $true) {
+    Write-Error "Low confidence locator did not record vision fallback requirement."
+  }
+  if ($lowDecision.fallback_reason -ne "vision_fallback_not_configured") {
+    Write-Error "Vision fallback missing status was not recorded."
+  }
+
+  Write-Host "Stage 6 goal driven executor check passed."
 } finally {
   if ($null -ne $process -and -not $process.HasExited) {
     Stop-Process -Id $process.Id -Force

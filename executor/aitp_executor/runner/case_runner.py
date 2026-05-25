@@ -6,6 +6,8 @@ from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from executor.aitp_executor.browser.local_playwright_provider import LocalPlaywrightProvider
 from executor.aitp_executor.browser.sandbox_provider import SandboxProvider
+from executor.aitp_executor.goal.goal_executor import GoalExecutor
+from executor.aitp_executor.locator.element_locator import ElementLocator
 from executor.aitp_executor.reports.artifact_writer import ArtifactWriter
 from executor.aitp_executor.reports.report_writer import ReportWriter
 
@@ -13,6 +15,8 @@ from executor.aitp_executor.reports.report_writer import ReportWriter
 class CaseRunner:
     def __init__(self, provider: SandboxProvider | None = None) -> None:
         self.provider = provider or LocalPlaywrightProvider(headless=True)
+        self.element_locator = ElementLocator()
+        self.goal_executor = GoalExecutor(locator=self.element_locator)
 
     def run(self, *, run_code: str, dsl: dict[str, Any]) -> dict[str, Any]:
         writer = ArtifactWriter(run_code)
@@ -114,11 +118,26 @@ class CaseRunner:
         error_summary = None
         locator_strategy = None
         element_ref = None
+        confidence = 1.0
+        reason = "executed"
+        needs_vision_fallback = False
+        fallback_reason = None
+        candidates: list[dict[str, Any]] = []
         try:
-            locator_strategy, element_ref = self._execute_action(page, step)
+            outcome = self._execute_action(page, step)
+            locator_strategy = outcome.get("locator_strategy")
+            element_ref = outcome.get("element_ref")
+            confidence = outcome.get("confidence", 1.0)
+            reason = outcome.get("reason", "executed")
+            needs_vision_fallback = outcome.get("needs_vision_fallback", False)
+            fallback_reason = outcome.get("fallback_reason")
+            candidates = outcome.get("candidates", [])
         except Exception as exc:
             status = "failed"
             error_summary = _error_summary(exc)
+            if "vision_fallback_not_configured" in error_summary:
+                needs_vision_fallback = True
+                fallback_reason = "vision_fallback_not_configured"
         finally:
             screenshot_path = self._write_screenshot(page, writer, step_number)
             dom_snapshot_path = self._write_dom_snapshot(page, writer, step_number)
@@ -134,8 +153,10 @@ class CaseRunner:
             "status": status,
             "locator_strategy": locator_strategy,
             "element_ref": element_ref,
-            "confidence": 1.0 if status == "passed" else 0.0,
-            "reason": "executed" if status == "passed" else "execution_failed",
+            "confidence": confidence if status == "passed" else min(confidence, 0.25),
+            "reason": reason if status == "passed" else "execution_failed",
+            "needs_vision_fallback": needs_vision_fallback,
+            "fallback_reason": fallback_reason,
             "screenshot_path": screenshot_path,
             "dom_snapshot_path": dom_snapshot_path,
             "accessibility_snapshot_path": accessibility_snapshot_path,
@@ -155,6 +176,11 @@ class CaseRunner:
                 "element_ref": element_ref,
                 "status": status,
                 "error_summary": error_summary,
+                "confidence": confidence if status == "passed" else min(confidence, 0.25),
+                "reason": reason,
+                "needs_vision_fallback": needs_vision_fallback,
+                "fallback_reason": fallback_reason,
+                "candidates": candidates,
             },
         )
         writer.append_jsonl(
@@ -167,76 +193,73 @@ class CaseRunner:
         )
         return result
 
-    def _execute_action(self, page: Any, step: dict[str, Any]) -> tuple[str | None, str | None]:
+    def _execute_action(self, page: Any, step: dict[str, Any]) -> dict[str, Any]:
         action = step.get("action")
         target = step.get("target") or step.get("selector") or ""
 
         if action == "open_url":
             url = step.get("url") or target
             page.goto(url, wait_until="domcontentloaded")
-            return "url", str(url)
+            return _outcome("url", str(url), 1.0, "url opened")
 
         if action == "input":
-            locator, strategy = _resolve_input_locator(page, step)
-            locator.fill(str(step.get("value") or ""))
-            return strategy, str(target)
+            result = self.element_locator.locate(page, action="input", target=str(target), step=step)
+            _require_locator(result).fill(str(step.get("value") or ""))
+            return _locator_outcome(result)
 
         if action in {"click", "confirm_dialog"}:
-            locator, strategy = _resolve_click_locator(page, step)
-            locator.click()
-            return strategy, str(target)
+            result = self.element_locator.locate(page, action="click", target=str(target), step=step)
+            _require_locator(result).click()
+            return _locator_outcome(result)
 
         if action == "navigate_menu":
-            locator = page.locator("aside").get_by_role("button", name=str(target), exact=True)
-            locator.click()
-            return "side_menu_button_exact", str(target)
+            result = self.element_locator.locate(page, action="navigate_menu", target=str(target), step=step)
+            _require_locator(result).click()
+            return _locator_outcome(result)
 
         if action in {"wait_for_text", "assert_text_exists"}:
             page.get_by_text(str(target), exact=False).wait_for(state="visible")
-            return "text_visible", str(target)
+            return _outcome("text_visible", str(target), 1.0, "text visible")
 
         if action == "assert_text_not_exists":
             count = page.get_by_text(str(target), exact=False).count()
             if count > 0:
                 raise AssertionError(f"Text should not exist: {target}")
-            return "text_absent", str(target)
+            return _outcome("text_absent", str(target), 1.0, "text absent")
 
         if action == "assert_url_contains":
             current_url = page.url
             if str(target) not in current_url:
                 raise AssertionError(f"URL does not contain '{target}': {current_url}")
-            return "url_contains", str(target)
+            return _outcome("url_contains", str(target), 1.0, "url contains target")
 
         if action == "select":
-            locator, strategy = _resolve_input_locator(page, step)
-            locator.select_option(str(step.get("value") or target))
-            return strategy, str(target)
+            result = self.element_locator.locate(page, action="select", target=str(target), step=step)
+            _require_locator(result).select_option(str(step.get("value") or target))
+            return _locator_outcome(result)
 
         if action == "upload_file":
-            locator, strategy = _resolve_input_locator(page, step)
-            locator.set_input_files(str(step.get("file_path") or step.get("value") or ""))
-            return strategy, str(target)
+            result = self.element_locator.locate(page, action="upload_file", target=str(target), step=step)
+            _require_locator(result).set_input_files(str(step.get("file_path") or step.get("value") or ""))
+            return _locator_outcome(result)
 
         if action == "wait":
             page.wait_for_timeout(int(step.get("ms") or step.get("timeoutMs") or 1000))
-            return "timeout", str(step.get("ms") or step.get("timeoutMs") or 1000)
+            return _outcome("timeout", str(step.get("ms") or step.get("timeoutMs") or 1000), 1.0, "waited")
 
         if action == "query_table":
             page.locator("table").first.wait_for(state="visible")
-            return "table_visible", "table"
+            return _outcome("table_visible", "table", 1.0, "table visible")
 
         if action == "click_table_row_action":
             row_text = str(step.get("rowText") or step.get("row_text") or "")
             action_name = str(step.get("button") or step.get("buttonText") or target)
             row = page.locator("tbody tr").filter(has_text=row_text)
             row.get_by_role("button", name=action_name, exact=True).click()
-            return "table_row_action_exact", f"{row_text}:{action_name}"
+            return _outcome("table_row_action_exact", f"{row_text}:{action_name}", 0.95, "table row action")
 
         if action == "business_goal":
-            if "审批通过" in str(target):
-                page.get_by_role("button", name="审批", exact=True).click()
-                return "business_goal_approval_pass", str(target)
-            return "business_goal_recorded", str(target)
+            return self.goal_executor.execute(page, target=str(target), step=step)
 
         raise ValueError(f"Unsupported DSL action: {action}")
 
@@ -266,26 +289,34 @@ class CaseRunner:
             return None
 
 
-def _resolve_input_locator(page: Any, step: dict[str, Any]) -> tuple[Any, str]:
-    if step.get("selector"):
-        return page.locator(str(step["selector"])), "css_selector"
-    target = str(step.get("target") or "")
-    return page.get_by_label(target, exact=True), "label_exact"
+def _require_locator(result: Any) -> Any:
+    if result.locator is None:
+        raise RuntimeError(result.fallback_reason or result.reason)
+    return result.locator
 
 
-def _resolve_click_locator(page: Any, step: dict[str, Any]) -> tuple[Any, str]:
-    if step.get("selector"):
-        return page.locator(str(step["selector"])), "css_selector"
-    target = str(step.get("target") or "")
-    if not target:
-        raise ValueError("Click step requires target or selector.")
-    role = page.get_by_role("button", name=target, exact=True)
-    if role.count() > 0:
-        return role, "button_exact"
-    text = page.get_by_text(target, exact=True)
-    if text.count() > 0:
-        return text, "text_exact"
-    return page.get_by_text(target, exact=False), "text_contains"
+def _locator_outcome(result: Any) -> dict[str, Any]:
+    return {
+        "locator_strategy": result.strategy,
+        "element_ref": result.element_ref,
+        "confidence": result.confidence,
+        "reason": result.reason,
+        "needs_vision_fallback": result.needs_vision_fallback,
+        "fallback_reason": result.fallback_reason,
+        "candidates": result.candidates,
+    }
+
+
+def _outcome(strategy: str, element_ref: str, confidence: float, reason: str) -> dict[str, Any]:
+    return {
+        "locator_strategy": strategy,
+        "element_ref": element_ref,
+        "confidence": confidence,
+        "reason": reason,
+        "needs_vision_fallback": False,
+        "fallback_reason": None,
+        "candidates": [],
+    }
 
 
 def _redact_step(step: dict[str, Any]) -> dict[str, Any]:
