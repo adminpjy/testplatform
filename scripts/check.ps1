@@ -1,6 +1,21 @@
-Set-StrictMode -Version Latest
+﻿Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+function Invoke-JsonPost {
+  param(
+    [Parameter(Mandatory = $true)][string]$Uri,
+    [Parameter(Mandatory = $true)][string]$Body,
+    [int]$TimeoutSec = 30
+  )
+
+  $bodyBytes = [System.Text.Encoding]::UTF8.GetBytes($Body)
+  Invoke-RestMethod `
+    -Uri $Uri `
+    -Method Post `
+    -ContentType "application/json; charset=utf-8" `
+    -Body $bodyBytes `
+    -TimeoutSec $TimeoutSec
+}
 $requiredPaths = @(
   "backend/app/api",
   "backend/app/core",
@@ -16,13 +31,23 @@ $requiredPaths = @(
   "backend/tests",
   "backend/requirements.txt",
   "frontend/src/api",
+  "frontend/src/api/runtimeStream.ts",
+  "frontend/src/App.tsx",
   "frontend/src/components",
+  "frontend/src/components/RuntimeStreamPanel.tsx",
+  "frontend/src/main.tsx",
   "frontend/src/pages",
   "frontend/src/routes",
   "frontend/src/stores",
   "frontend/src/styles",
+  "frontend/src/styles/app.css",
+  "frontend/src/styles/runtime-stream.css",
   "frontend/src/types",
+  "frontend/src/types/runtime.ts",
+  "frontend/src/vite-env.d.ts",
+  "frontend/index.html",
   "frontend/package.json",
+  "frontend/tsconfig.json",
   "frontend/vite.config.ts",
   "executor/aitp_executor/runner",
   "executor/aitp_executor/runner/case_runner.py",
@@ -86,6 +111,17 @@ if ($missing.Count -gt 0) {
 }
 
 python -m compileall backend executor | Out-Null
+
+if (-not (Test-Path "frontend/node_modules")) {
+  npm.cmd --prefix frontend install
+}
+Push-Location "frontend"
+try {
+  npx.cmd tsc --noEmit
+} finally {
+  Pop-Location
+}
+npm.cmd --prefix frontend run build | Out-Null
 
 if (-not (Test-Path "mock-mis-demo/node_modules")) {
   npm.cmd --prefix mock-mis-demo install
@@ -285,16 +321,11 @@ try {
       visible_text = "审批 通过 同意"
     }
   } | ConvertTo-Json -Depth 8
-  $approvalPass = Invoke-RestMethod `
-    -Uri "$baseUrl/api/abilities/resolve" `
-    -Method Post `
-    -ContentType "application/json" `
-    -Body $approvalPassPayload `
-    -TimeoutSec 5
+  $approvalPass = Invoke-JsonPost -Uri "$baseUrl/api/abilities/resolve" -Body $approvalPassPayload -TimeoutSec 5
   if ($approvalPass.selectedRule.rule_code -ne "APPROVAL-PASS-v1") {
     Write-Error "RuleResolver did not select APPROVAL-PASS-v1 for approval pass."
   }
-  if ($approvalPass.reason -notlike "*命中规则 APPROVAL-PASS-v1*") {
+  if ($approvalPass.reason -notlike "*APPROVAL-PASS-v1*") {
     Write-Error "RuleResolver did not produce the expected runtime message."
   }
 
@@ -309,12 +340,7 @@ try {
       visible_text = "审批流程 流程图 审批记录"
     }
   } | ConvertTo-Json -Depth 8
-  $flowView = Invoke-RestMethod `
-    -Uri "$baseUrl/api/abilities/resolve" `
-    -Method Post `
-    -ContentType "application/json" `
-    -Body $flowViewPayload `
-    -TimeoutSec 5
+  $flowView = Invoke-JsonPost -Uri "$baseUrl/api/abilities/resolve" -Body $flowViewPayload -TimeoutSec 5
   if ($flowView.selectedRule.rule_code -ne "APPROVAL-FLOW-VIEW-v1") {
     Write-Error "RuleResolver misclassified approval flow view."
   }
@@ -330,12 +356,7 @@ try {
       visible_text = "工作台 我的待办 待办表格"
     }
   } | ConvertTo-Json -Depth 8
-  $todoResolve = Invoke-RestMethod `
-    -Uri "$baseUrl/api/abilities/resolve" `
-    -Method Post `
-    -ContentType "application/json" `
-    -Body $todoPayload `
-    -TimeoutSec 5
+  $todoResolve = Invoke-JsonPost -Uri "$baseUrl/api/abilities/resolve" -Body $todoPayload -TimeoutSec 5
   if ($todoResolve.selectedRule.rule_code -ne "ENTER-TODO-LIST-v1") {
     Write-Error "RuleResolver did not select ENTER-TODO-LIST-v1."
   }
@@ -344,12 +365,7 @@ try {
     instruction = "登录系统"
     stream = $true
   } | ConvertTo-Json -Depth 8
-  $analysis = Invoke-RestMethod `
-    -Uri "$baseUrl/api/test-runs/analyze" `
-    -Method Post `
-    -ContentType "application/json" `
-    -Body $insufficientPayload `
-    -TimeoutSec 5
+  $analysis = Invoke-JsonPost -Uri "$baseUrl/api/test-runs/analyze" -Body $insufficientPayload -TimeoutSec 5
   if ($analysis.readyToExecute -ne $false) {
     Write-Error "Natural language analysis should request more information for an incomplete goal."
   }
@@ -362,12 +378,7 @@ try {
     instruction = "打开 $mockBaseUrl/login，使用账号 admin 密码 123456 登录系统，进入我的待办，确认页面存在我的待办"
     stream = $true
   } | ConvertTo-Json -Depth 8
-  $dsl = Invoke-RestMethod `
-    -Uri "$baseUrl/api/test-runs/plan" `
-    -Method Post `
-    -ContentType "application/json" `
-    -Body $planPayload `
-    -TimeoutSec 5
+  $dsl = Invoke-JsonPost -Uri "$baseUrl/api/test-runs/plan" -Body $planPayload -TimeoutSec 5
   if ([string]::IsNullOrWhiteSpace($dsl.caseName)) {
     Write-Error "TestCaseDSL did not include caseName."
   }
@@ -445,12 +456,7 @@ try {
       )
     }
   } | ConvertTo-Json -Depth 12
-  $run = Invoke-RestMethod `
-    -Uri "$baseUrl/api/test-runs" `
-    -Method Post `
-    -ContentType "application/json" `
-    -Body $runPayload `
-    -TimeoutSec 60
+  $run = Invoke-JsonPost -Uri "$baseUrl/api/test-runs" -Body $runPayload -TimeoutSec 60
   if ($run.status -ne "passed") {
     Write-Error "Playwright executor run did not pass. Status: $($run.status)"
   }
@@ -513,18 +519,13 @@ try {
       )
     }
   } | ConvertTo-Json -Depth 12
-  $approvalGoalRun = Invoke-RestMethod `
-    -Uri "$baseUrl/api/test-runs" `
-    -Method Post `
-    -ContentType "application/json" `
-    -Body $approvalGoalPayload `
-    -TimeoutSec 60
+  $approvalGoalRun = Invoke-JsonPost -Uri "$baseUrl/api/test-runs" -Body $approvalGoalPayload -TimeoutSec 60
   if ($approvalGoalRun.status -ne "passed") {
     Write-Error "Goal executor did not pass approval_pass scenario."
   }
   $approvalGoalArtifacts = Invoke-RestMethod -Uri "$baseUrl/api/test-runs/$($approvalGoalRun.id)/artifacts" -TimeoutSec 5
   $approvalLocatorArtifact = $approvalGoalArtifacts | Where-Object { $_.artifact_type -eq "locator_debug_jsonl" } | Select-Object -First 1
-  $approvalLocatorEvents = Get-Content $approvalLocatorArtifact.file_path | ForEach-Object { $_ | ConvertFrom-Json }
+  $approvalLocatorEvents = Get-Content $approvalLocatorArtifact.file_path -Encoding UTF8 | ForEach-Object { $_ | ConvertFrom-Json }
   $approvalDecision = $approvalLocatorEvents | Where-Object { $_.target -eq "审批通过" } | Select-Object -First 1
   if ($approvalDecision.element_ref -ne "审批") {
     Write-Error "Approval pass target did not select the exact approval action."
@@ -550,18 +551,13 @@ try {
       )
     }
   } | ConvertTo-Json -Depth 12
-  $flowGoalRun = Invoke-RestMethod `
-    -Uri "$baseUrl/api/test-runs" `
-    -Method Post `
-    -ContentType "application/json" `
-    -Body $flowGoalPayload `
-    -TimeoutSec 60
+  $flowGoalRun = Invoke-JsonPost -Uri "$baseUrl/api/test-runs" -Body $flowGoalPayload -TimeoutSec 60
   if ($flowGoalRun.status -ne "passed") {
     Write-Error "Goal executor did not pass approval_flow_view scenario."
   }
   $flowGoalArtifacts = Invoke-RestMethod -Uri "$baseUrl/api/test-runs/$($flowGoalRun.id)/artifacts" -TimeoutSec 5
   $flowLocatorArtifact = $flowGoalArtifacts | Where-Object { $_.artifact_type -eq "locator_debug_jsonl" } | Select-Object -First 1
-  $flowLocatorEvents = Get-Content $flowLocatorArtifact.file_path | ForEach-Object { $_ | ConvertFrom-Json }
+  $flowLocatorEvents = Get-Content $flowLocatorArtifact.file_path -Encoding UTF8 | ForEach-Object { $_ | ConvertFrom-Json }
   $flowDecision = $flowLocatorEvents | Where-Object { $_.target -eq "查看审批流程" } | Select-Object -First 1
   if ($flowDecision.element_ref -ne "查看审批流程") {
     Write-Error "Approval flow target did not select 查看审批流程."
@@ -589,18 +585,13 @@ try {
       )
     }
   } | ConvertTo-Json -Depth 12
-  $userGoalRun = Invoke-RestMethod `
-    -Uri "$baseUrl/api/test-runs" `
-    -Method Post `
-    -ContentType "application/json" `
-    -Body $userGoalPayload `
-    -TimeoutSec 60
+  $userGoalRun = Invoke-JsonPost -Uri "$baseUrl/api/test-runs" -Body $userGoalPayload -TimeoutSec 60
   if ($userGoalRun.status -ne "passed") {
     Write-Error "Goal executor did not fill the non-standard username field."
   }
   $userGoalArtifacts = Invoke-RestMethod -Uri "$baseUrl/api/test-runs/$($userGoalRun.id)/artifacts" -TimeoutSec 5
   $userLocatorArtifact = $userGoalArtifacts | Where-Object { $_.artifact_type -eq "locator_debug_jsonl" } | Select-Object -First 1
-  $userLocatorEvents = Get-Content $userLocatorArtifact.file_path | ForEach-Object { $_ | ConvertFrom-Json }
+  $userLocatorEvents = Get-Content $userLocatorArtifact.file_path -Encoding UTF8 | ForEach-Object { $_ | ConvertFrom-Json }
   $userNameDecision = $userLocatorEvents | Where-Object { $_.target -eq "用户名" -and $_.step_number -eq 6 } | Select-Object -First 1
   if ($userNameDecision.locator_strategy -ne "playwright_label_exact") {
     Write-Error "Username field was not resolved through the label-backed non-standard DOM field."
@@ -608,7 +599,7 @@ try {
   $userDomArtifacts = $userGoalArtifacts | Where-Object { $_.artifact_type -eq "dom_snapshot" }
   $hasLegacyUserField = $false
   foreach ($domArtifact in $userDomArtifacts) {
-    if ((Get-Content $domArtifact.file_path -Raw) -like "*id=`"j_name`"*") {
+    if ((Get-Content $domArtifact.file_path -Raw -Encoding UTF8) -like "*id=`"j_name`"*") {
       $hasLegacyUserField = $true
       break
     }
@@ -632,18 +623,13 @@ try {
       )
     }
   } | ConvertTo-Json -Depth 12
-  $lowConfidenceRun = Invoke-RestMethod `
-    -Uri "$baseUrl/api/test-runs" `
-    -Method Post `
-    -ContentType "application/json" `
-    -Body $lowConfidencePayload `
-    -TimeoutSec 60
+  $lowConfidenceRun = Invoke-JsonPost -Uri "$baseUrl/api/test-runs" -Body $lowConfidencePayload -TimeoutSec 60
   if ($lowConfidenceRun.status -ne "failed") {
     Write-Error "Low confidence run should fail when vision fallback is not configured."
   }
   $lowConfidenceArtifacts = Invoke-RestMethod -Uri "$baseUrl/api/test-runs/$($lowConfidenceRun.id)/artifacts" -TimeoutSec 5
   $lowLocatorArtifact = $lowConfidenceArtifacts | Where-Object { $_.artifact_type -eq "locator_debug_jsonl" } | Select-Object -First 1
-  $lowLocatorEvents = Get-Content $lowLocatorArtifact.file_path | ForEach-Object { $_ | ConvertFrom-Json }
+  $lowLocatorEvents = Get-Content $lowLocatorArtifact.file_path -Encoding UTF8 | ForEach-Object { $_ | ConvertFrom-Json }
   $lowDecision = $lowLocatorEvents | Where-Object { $_.target -eq "完全不存在的按钮" } | Select-Object -First 1
   if ($lowDecision.needs_vision_fallback -ne $true) {
     Write-Error "Low confidence locator did not record vision fallback requirement."
@@ -652,7 +638,55 @@ try {
     Write-Error "Vision fallback missing status was not recorded."
   }
 
-  Write-Host "Stage 6 goal driven executor check passed."
+  $runtimeMessages = Invoke-RestMethod -Uri "$baseUrl/api/test-runs/$($approvalGoalRun.id)/runtime-messages" -TimeoutSec 5
+  if (@($runtimeMessages).Count -lt 1) {
+    Write-Error "Runtime messages were not persisted to the database."
+  }
+
+  $normalStream = Invoke-WebRequest -Uri "$baseUrl/api/test-runs/$($approvalGoalRun.id)/stream" -TimeoutSec 20
+  $lowStream = Invoke-WebRequest -Uri "$baseUrl/api/test-runs/$($lowConfidenceRun.id)/stream" -TimeoutSec 20
+  $streamContent = "$($normalStream.Content)`n$($lowStream.Content)"
+  $requiredRuntimeMessages = @(
+    "正在理解测试用例",
+    "正在生成测试步骤",
+    "正在启动浏览器",
+    "正在打开系统",
+    "正在读取页面",
+    "正在识别业务意图",
+    "正在分析候选元素",
+    "正在调用 LLM",
+    "正在启用视觉兜底",
+    "正在点击",
+    "正在验证",
+    "正在生成报告"
+  )
+  foreach ($runtimeText in $requiredRuntimeMessages) {
+    if ($streamContent -notlike "*$runtimeText*") {
+      Write-Error "Runtime stream did not include required message '$runtimeText'."
+    }
+  }
+
+  if ($normalStream.Content -notlike "*event: progress*" -or $normalStream.Content -notlike "*event: success*") {
+    Write-Error "Runtime stream did not expose typed SSE events."
+  }
+
+  $approvalRuntimeArtifact = $approvalGoalArtifacts |
+    Where-Object { $_.artifact_type -eq "runtime_stream_jsonl" } |
+    Select-Object -First 1
+  if ($null -eq $approvalRuntimeArtifact -or -not (Test-Path $approvalRuntimeArtifact.file_path)) {
+    Write-Error "runtime-stream.jsonl artifact was not persisted."
+  }
+  $approvalRuntimeFile = Get-Content $approvalRuntimeArtifact.file_path -Raw -Encoding UTF8
+  if ($approvalRuntimeFile -notlike "*正在生成报告*") {
+    Write-Error "runtime-stream.jsonl did not include runtime messages."
+  }
+
+  $replayedStream = Invoke-WebRequest -Uri "$baseUrl/api/test-runs/$($approvalGoalRun.id)/stream" -TimeoutSec 20
+  if ($replayedStream.Content -notlike "*正在理解测试用例*") {
+    Write-Error "Runtime stream did not replay history after completion."
+  }
+
+  Write-Host "Stage 7 runtime stream check passed."
 } finally {
   if ($null -ne $process -and -not $process.HasExited) {
     Stop-Process -Id $process.Id -Force

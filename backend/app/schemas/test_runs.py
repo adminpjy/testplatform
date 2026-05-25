@@ -120,3 +120,16 @@ class TestArtifactRead(BaseModel):
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class RuntimeMessageRead(BaseModel):
+    id: int
+    run_id: int | None = None
+    type: str
+    phase: str | None = None
+    content: str | None = None
+    method: str | None = None
+    metadata_json: dict[str, Any] | None = None
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)

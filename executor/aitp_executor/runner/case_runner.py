@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Callable
 
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
@@ -13,10 +13,15 @@ from executor.aitp_executor.reports.report_writer import ReportWriter
 
 
 class CaseRunner:
-    def __init__(self, provider: SandboxProvider | None = None) -> None:
+    def __init__(
+        self,
+        provider: SandboxProvider | None = None,
+        event_sink: Callable[[dict[str, Any]], None] | None = None,
+    ) -> None:
         self.provider = provider or LocalPlaywrightProvider(headless=True)
         self.element_locator = ElementLocator()
         self.goal_executor = GoalExecutor(locator=self.element_locator)
+        self.event_sink = event_sink
 
     def run(self, *, run_code: str, dsl: dict[str, Any]) -> dict[str, Any]:
         writer = ArtifactWriter(run_code)
@@ -27,20 +32,17 @@ class CaseRunner:
         status = "passed"
         error_summary = None
 
-        writer.append_jsonl(
-            "runtime-stream.jsonl",
-            {"type": "run.started", "run_code": run_code, "message": "测试执行开始"},
-        )
+        self._emit_runtime(writer, "text", "understanding", "正在理解测试用例", "runner", {"run_code": run_code})
+        self._emit_runtime(writer, "progress", "planning", "正在生成测试步骤", "runner", {"steps": len(steps)})
+        self._emit_runtime(writer, "progress", "browser", "正在启动浏览器", "playwright", {"headless": True})
 
         session = self.provider.start()
         try:
             page = session.page
             base_url = dsl.get("baseUrl") or dsl.get("base_url")
             if base_url:
-                writer.append_jsonl(
-                    "execution-trace.jsonl",
-                    {"type": "base_url.open", "url": base_url},
-                )
+                writer.append_jsonl("execution-trace.jsonl", {"type": "base_url.open", "url": base_url})
+                self._emit_runtime(writer, "progress", "open_system", "正在打开系统", "playwright", {"url": base_url})
                 page.goto(base_url, wait_until="domcontentloaded")
 
             for index, step in enumerate(steps, start=1):
@@ -53,10 +55,7 @@ class CaseRunner:
         except Exception as exc:
             status = "failed"
             error_summary = str(exc)
-            writer.append_jsonl(
-                "runtime-stream.jsonl",
-                {"type": "run.failed", "run_code": run_code, "message": error_summary},
-            )
+            self._emit_runtime(writer, "error", "failed", str(error_summary), "runner", {"run_code": run_code})
         finally:
             session.close()
 
@@ -76,10 +75,15 @@ class CaseRunner:
             "errorSummary": error_summary,
         }
         summary_path = writer.write_json("summary.json", summary)
+        self._emit_runtime(writer, "progress", "reporting", "正在生成报告", "report_writer", {"summary": summary_path})
         report_path = report_writer.write(summary, results)
-        writer.append_jsonl(
-            "runtime-stream.jsonl",
-            {"type": f"run.{status}", "run_code": run_code, "message": f"测试执行{status}"},
+        self._emit_runtime(
+            writer,
+            "success" if status == "passed" else "error",
+            "completed" if status == "passed" else "failed",
+            "测试执行通过" if status == "passed" else "测试执行失败",
+            "runner",
+            {"run_code": run_code, "report": report_path},
         )
         return {
             "status": status,
@@ -100,15 +104,58 @@ class CaseRunner:
         started_at = _utc_now()
         action = str(step.get("action") or "")
         target = str(step.get("target") or step.get("selector") or "")
-        writer.append_jsonl(
-            "runtime-stream.jsonl",
-            {
-                "type": "step.started",
-                "step_number": step_number,
-                "action": action,
-                "target": target,
-            },
+        self._emit_runtime(
+            writer,
+            "progress",
+            "step",
+            "步骤开始",
+            "runner",
+            {"step_number": step_number, "action": action, "target": target},
         )
+        if action == "business_goal":
+            self._emit_runtime(
+                writer,
+                "progress",
+                "intent",
+                "正在识别业务意图",
+                "goal_executor",
+                {"step_number": step_number, "target": target},
+            )
+        if action in {"input", "click", "confirm_dialog", "navigate_menu", "select", "upload_file", "business_goal"}:
+            self._emit_runtime(
+                writer,
+                "progress",
+                "observe",
+                "正在读取页面",
+                "page_observer",
+                {"step_number": step_number, "action": action, "target": target},
+            )
+            self._emit_runtime(
+                writer,
+                "progress",
+                "locate",
+                "正在分析候选元素",
+                "element_locator",
+                {"step_number": step_number, "action": action, "target": target},
+            )
+        if action in {"click", "confirm_dialog", "navigate_menu", "business_goal"}:
+            self._emit_runtime(
+                writer,
+                "progress",
+                "action",
+                "正在点击",
+                "playwright",
+                {"step_number": step_number, "target": target},
+            )
+        if action in {"wait_for_text", "assert_text_exists", "assert_text_not_exists", "assert_url_contains", "business_goal"}:
+            self._emit_runtime(
+                writer,
+                "progress",
+                "verify",
+                "正在验证",
+                "action_verifier",
+                {"step_number": step_number, "target": target},
+            )
         writer.append_jsonl(
             "execution-trace.jsonl",
             {"type": "step.execute", "step_number": step_number, "step": _redact_step(step)},
@@ -138,6 +185,22 @@ class CaseRunner:
             if "vision_fallback_not_configured" in error_summary:
                 needs_vision_fallback = True
                 fallback_reason = "vision_fallback_not_configured"
+                self._emit_runtime(
+                    writer,
+                    "warning",
+                    "llm_resolver",
+                    "正在调用 LLM",
+                    "llm_element_resolver",
+                    {"step_number": step_number, "target": target, "configured": False},
+                )
+                self._emit_runtime(
+                    writer,
+                    "warning",
+                    "vision",
+                    "正在启用视觉兜底",
+                    "vision_resolver",
+                    {"step_number": step_number, "target": target, "status": fallback_reason},
+                )
         finally:
             screenshot_path = self._write_screenshot(page, writer, step_number)
             dom_snapshot_path = self._write_dom_snapshot(page, writer, step_number)
@@ -183,15 +246,29 @@ class CaseRunner:
                 "candidates": candidates,
             },
         )
-        writer.append_jsonl(
-            "runtime-stream.jsonl",
-            {
-                "type": "step.succeeded" if status == "passed" else "step.failed",
-                "step_number": step_number,
-                "message": error_summary or "步骤执行成功",
-            },
+        self._emit_runtime(
+            writer,
+            "success" if status == "passed" else "error",
+            "step",
+            "步骤执行成功" if status == "passed" else str(error_summary),
+            "runner",
+            {"step_number": step_number, "action": action, "target": target},
         )
         return result
+
+    def _emit_runtime(
+        self,
+        writer: ArtifactWriter,
+        message_type: str,
+        phase: str,
+        content: str,
+        method: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        event = _runtime_event(message_type, phase, content, method, metadata or {})
+        writer.append_jsonl("runtime-stream.jsonl", event)
+        if self.event_sink:
+            self.event_sink(event)
 
     def _execute_action(self, page: Any, step: dict[str, Any]) -> dict[str, Any]:
         action = step.get("action")
@@ -347,3 +424,19 @@ def _json_dumps(value: Any) -> str:
     import json
 
     return json.dumps(value, ensure_ascii=False, indent=2, default=str)
+
+
+def _runtime_event(
+    message_type: str,
+    phase: str,
+    content: str,
+    method: str,
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return {
+        "type": message_type,
+        "phase": phase,
+        "content": content,
+        "method": method,
+        "metadata": metadata or {},
+    }

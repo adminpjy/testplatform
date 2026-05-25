@@ -1,11 +1,17 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+import json
+import time
+from collections.abc import Iterator
+
+from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
-from app.db.session import get_db
+from app.db.session import SessionLocal, get_db
 from app.models import TestCase, TestProject
 from app.schemas.test_runs import (
     AnalyzeResult,
     NaturalLanguageTestRequest,
+    RuntimeMessageRead,
     TestArtifactRead,
     TestCaseDSL,
     TestRunCreate,
@@ -19,10 +25,12 @@ from app.services.test_run_execution import (
     latest_screenshot,
     list_artifacts,
     list_runs,
+    list_runtime_messages,
     list_step_runs,
 )
 
 router = APIRouter()
+STREAM_TYPES = {"text", "progress", "warning", "error", "success"}
 
 
 @router.post("", response_model=TestRunRead, status_code=status.HTTP_201_CREATED)
@@ -70,6 +78,26 @@ def plan_test_case(payload: NaturalLanguageTestRequest, db: Session = Depends(ge
     return dsl
 
 
+@router.get("/{run_id}/stream")
+def stream_test_run_runtime(
+    run_id: int,
+    after_id: int = 0,
+    last_event_id: str | None = Header(default=None, alias="Last-Event-ID"),
+    db: Session = Depends(get_db),
+):
+    _ensure_run_exists(db, run_id)
+    start_after_id = _resolve_start_after_id(after_id, last_event_id)
+    return StreamingResponse(
+        _runtime_message_events(run_id, start_after_id),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 @router.get("/{run_id}", response_model=TestRunRead)
 def read_test_run(run_id: int, db: Session = Depends(get_db)) -> TestRunRead:
     run = get_run(db, run_id)
@@ -90,6 +118,12 @@ def read_test_run_artifacts(run_id: int, db: Session = Depends(get_db)) -> list[
     return list_artifacts(db, run_id)
 
 
+@router.get("/{run_id}/runtime-messages", response_model=list[RuntimeMessageRead])
+def read_runtime_messages(run_id: int, db: Session = Depends(get_db)) -> list[RuntimeMessageRead]:
+    _ensure_run_exists(db, run_id)
+    return list_runtime_messages(db, run_id)
+
+
 @router.get("/{run_id}/latest-screenshot")
 def read_latest_screenshot(run_id: int, db: Session = Depends(get_db)):
     from fastapi.responses import FileResponse
@@ -108,3 +142,59 @@ def read_latest_screenshot(run_id: int, db: Session = Depends(get_db)):
 def _ensure_run_exists(db: Session, run_id: int) -> None:
     if get_run(db, run_id) is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Test run not found.")
+
+
+def _runtime_message_events(run_id: int, after_id: int) -> Iterator[str]:
+    last_id = after_id
+    idle_ticks = 0
+    while True:
+        with SessionLocal() as db:
+            messages = list_runtime_messages(db, run_id, after_id=last_id)
+            run = get_run(db, run_id)
+            run_status = run.status if run is not None else "missing"
+
+        for message in messages:
+            last_id = message.id
+            yield _format_sse(message)
+
+        if _is_terminal_status(run_status) and not messages:
+            break
+
+        if messages:
+            idle_ticks = 0
+            continue
+
+        idle_ticks += 1
+        if idle_ticks % 20 == 0:
+            yield ": keep-alive\n\n"
+        time.sleep(0.5)
+
+
+def _format_sse(message) -> str:
+    event_type = message.type if message.type in STREAM_TYPES else "text"
+    payload = {
+        "id": message.id,
+        "runId": message.run_id,
+        "type": event_type,
+        "phase": message.phase,
+        "content": message.content,
+        "method": message.method,
+        "metadata": message.metadata_json or {},
+        "createdAt": message.created_at.isoformat() if message.created_at else None,
+    }
+    data = json.dumps(payload, ensure_ascii=False, default=str)
+    return f"id: {message.id}\nevent: {event_type}\ndata: {data}\n\n"
+
+
+def _resolve_start_after_id(after_id: int, last_event_id: str | None) -> int:
+    values = [max(after_id, 0)]
+    if last_event_id:
+        try:
+            values.append(max(int(last_event_id), 0))
+        except ValueError:
+            pass
+    return max(values)
+
+
+def _is_terminal_status(status_value: str | None) -> bool:
+    return status_value in {"passed", "failed", "cancelled", "aborted", "missing"}

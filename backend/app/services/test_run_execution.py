@@ -4,7 +4,7 @@ from uuid import uuid4
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import TestArtifact, TestCase, TestProject, TestRun, TestStepRun
+from app.models import RuntimeMessage, TestArtifact, TestCase, TestProject, TestRun, TestStepRun
 from app.schemas.test_runs import TestCaseDSL, TestRunCreate
 from executor.aitp_executor.runner.case_runner import CaseRunner
 
@@ -40,7 +40,7 @@ def create_and_execute_run(db: Session, payload: TestRunCreate) -> TestRun:
     db.commit()
 
     try:
-        execution_result = CaseRunner().run(run_code=run.run_code, dsl=dsl)
+        execution_result = CaseRunner(event_sink=_runtime_sink(db, run.id)).run(run_code=run.run_code, dsl=dsl)
         _persist_execution_result(db, run, execution_result)
         run.status = "passed" if execution_result["status"] == "passed" else "failed"
         run.current_phase = "completed" if run.status == "passed" else "failed"
@@ -92,6 +92,16 @@ def report_artifact(db: Session, run_id: int) -> TestArtifact | None:
         .where(TestArtifact.run_id == run_id, TestArtifact.artifact_type == "report_html")
         .order_by(TestArtifact.id.desc())
     ).first()
+
+
+def list_runtime_messages(db: Session, run_id: int, *, after_id: int = 0) -> list[RuntimeMessage]:
+    return list(
+        db.scalars(
+            select(RuntimeMessage)
+            .where(RuntimeMessage.run_id == run_id, RuntimeMessage.id > after_id)
+            .order_by(RuntimeMessage.id)
+        ).all()
+    )
 
 
 def _resolve_dsl(payload: TestRunCreate, case: TestCase | None, project: TestProject) -> dict:
@@ -206,6 +216,22 @@ def _add_artifact(
             metadata_json=metadata,
         )
     )
+
+
+def _runtime_sink(db: Session, run_id: int):
+    def sink(event: dict) -> None:
+        message = RuntimeMessage(
+            run_id=run_id,
+            type=str(event.get("type") or "text"),
+            phase=event.get("phase"),
+            content=event.get("content"),
+            method=event.get("method"),
+            metadata_json=event.get("metadata") or {},
+        )
+        db.add(message)
+        db.commit()
+
+    return sink
 
 
 def _new_run_code() -> str:
