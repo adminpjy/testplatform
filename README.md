@@ -13,6 +13,7 @@ The current foundation includes:
 - Backend stage 1 service startup, database connection, automatic table creation, default project initialization, and project APIs.
 - MIS base ability pack initialization and RuleResolver for common enterprise MIS testing goals.
 - LLM provider abstraction with Mock and OpenAI-compatible providers, stream parsing, JSON extraction, and natural-language test planning.
+- Local Mock MIS demo system for Playwright-accessible login, dashboard, todo approval, user management, and detail navigation scenarios.
 
 No complex business implementation is included in this stage.
 
@@ -95,6 +96,38 @@ TEST_LLM_STREAM=true
 ```
 
 `mock` is the default provider and is available without external credentials. The OpenAI-compatible provider reads credentials from environment variables and does not print API keys.
+
+## Mock MIS Demo
+
+Start the backend and local MIS demo together:
+
+```powershell
+.\scripts\start.ps1
+```
+
+The demo is available at:
+
+```text
+http://127.0.0.1:5174/login
+```
+
+Login credentials:
+
+```text
+admin / 123456
+```
+
+Supported demo routes:
+
+```text
+/login
+/login?notice=account-expiry
+/login?notice=system-announcement
+/login?notice=force-change-password
+/dashboard
+/todo
+/users
+```
 
 ## Check
 

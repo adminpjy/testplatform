@@ -35,6 +35,10 @@ $requiredPaths = @(
   "executor/requirements.txt",
   "mock-mis-demo/package.json",
   "mock-mis-demo/index.html",
+  "mock-mis-demo/vite.config.ts",
+  "mock-mis-demo/tsconfig.json",
+  "mock-mis-demo/src/main.tsx",
+  "mock-mis-demo/src/styles.css",
   "mock-mis-demo/src",
   "config/abilities",
   "scripts/start.ps1",
@@ -65,12 +69,28 @@ if ($missing.Count -gt 0) {
 
 python -m compileall backend | Out-Null
 
+if (-not (Test-Path "mock-mis-demo/node_modules")) {
+  npm.cmd --prefix mock-mis-demo install
+}
+Push-Location "mock-mis-demo"
+try {
+  npx.cmd tsc --noEmit
+} finally {
+  Pop-Location
+}
+npm.cmd --prefix mock-mis-demo run build | Out-Null
+
 $hostName = "127.0.0.1"
 $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
 $listener.Start()
 $port = [int]$listener.LocalEndpoint.Port
 $listener.Stop()
 $baseUrl = "http://$hostName`:$port"
+$mockListener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
+$mockListener.Start()
+$mockPort = [int]$mockListener.LocalEndpoint.Port
+$mockListener.Stop()
+$mockBaseUrl = "http://$hostName`:$mockPort"
 $runtimeDir = ".runtime"
 New-Item -ItemType Directory -Force -Path $runtimeDir | Out-Null
 
@@ -79,7 +99,9 @@ $env:TEST_LLM_STREAM = "true"
 
 $outFile = Join-Path $runtimeDir "backend-check.out.log"
 $errFile = Join-Path $runtimeDir "backend-check.err.log"
-Remove-Item $outFile, $errFile -Force -ErrorAction SilentlyContinue
+$mockOutFile = Join-Path $runtimeDir "mock-mis-demo-check.out.log"
+$mockErrFile = Join-Path $runtimeDir "mock-mis-demo-check.err.log"
+Remove-Item $outFile, $errFile, $mockOutFile, $mockErrFile -Force -ErrorAction SilentlyContinue
 
 $args = @(
   "-m", "uvicorn",
@@ -97,6 +119,24 @@ $process = Start-Process `
   -WindowStyle Hidden `
   -RedirectStandardOutput $outFile `
   -RedirectStandardError $errFile
+
+$mockArgs = @(
+  "--prefix", "mock-mis-demo",
+  "run", "dev",
+  "--",
+  "--host", $hostName,
+  "--port", $mockPort,
+  "--strictPort",
+  "--logLevel", "silent"
+)
+
+$mockProcess = Start-Process `
+  -FilePath "npm.cmd" `
+  -ArgumentList $mockArgs `
+  -PassThru `
+  -WindowStyle Hidden `
+  -RedirectStandardOutput $mockOutFile `
+  -RedirectStandardError $mockErrFile
 
 try {
   $health = $null
@@ -119,6 +159,42 @@ try {
 
   if ($null -eq $health) {
     Write-Error "Health check timed out."
+  }
+
+  $loginHtml = $null
+  for ($i = 0; $i -lt 30; $i++) {
+    if ($mockProcess.HasExited) {
+      $stderr = ""
+      if (Test-Path $mockErrFile) {
+        $stderr = Get-Content $mockErrFile -Raw
+      }
+      Write-Error "Mock MIS demo exited before access check completed. $stderr"
+    }
+
+    try {
+      $loginHtml = Invoke-WebRequest -Uri "$mockBaseUrl/login" -TimeoutSec 2
+      break
+    } catch {
+      Start-Sleep -Milliseconds 500
+    }
+  }
+
+  if ($null -eq $loginHtml) {
+    Write-Error "Mock MIS demo access check timed out."
+  }
+
+  if ($loginHtml.StatusCode -ne 200) {
+    Write-Error "Mock MIS demo /login did not return HTTP 200."
+  }
+
+  $noticeHtml = Invoke-WebRequest -Uri "$mockBaseUrl/login?notice=account-expiry" -TimeoutSec 5
+  if ($noticeHtml.StatusCode -ne 200) {
+    Write-Error "Mock MIS demo notice login URL did not return HTTP 200."
+  }
+
+  $todoHtml = Invoke-WebRequest -Uri "$mockBaseUrl/todo" -TimeoutSec 5
+  if ($todoHtml.StatusCode -ne 200) {
+    Write-Error "Mock MIS demo /todo did not return HTTP 200."
   }
 
   if ($health.status -ne "ok") {
@@ -310,9 +386,19 @@ try {
     Write-Error "TestCaseDSL exposed a plaintext password."
   }
 
-  Write-Host "Stage 3 LLM parser check passed."
+  Write-Host "Stage 4 mock MIS demo check passed."
 } finally {
   if ($null -ne $process -and -not $process.HasExited) {
     Stop-Process -Id $process.Id -Force
+  }
+  if ($null -ne $mockProcess -and -not $mockProcess.HasExited) {
+    Stop-Process -Id $mockProcess.Id -Force
+  }
+  $mockOwners = Get-NetTCPConnection -LocalPort $mockPort -ErrorAction SilentlyContinue |
+    Select-Object -ExpandProperty OwningProcess -Unique
+  foreach ($owner in $mockOwners) {
+    if ($owner -gt 0) {
+      Stop-Process -Id $owner -Force -ErrorAction SilentlyContinue
+    }
   }
 }

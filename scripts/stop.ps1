@@ -1,25 +1,48 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-$pidFile = Join-Path ".runtime" "backend.pid"
-if (-not (Test-Path $pidFile)) {
-  Write-Host "No backend PID file found."
-  exit 0
+function Stop-ManagedProcess {
+  param(
+    [string]$Name,
+    [string]$PidFile
+  )
+
+  if (-not (Test-Path $PidFile)) {
+    Write-Host "No $Name PID file found."
+    return
+  }
+
+  $processPid = Get-Content $PidFile -Raw
+  if ([string]::IsNullOrWhiteSpace($processPid)) {
+    Remove-Item $PidFile -Force
+    Write-Host "Empty $Name PID file removed."
+    return
+  }
+
+  $process = Get-Process -Id ([int]$processPid) -ErrorAction SilentlyContinue
+  if ($null -ne $process) {
+    Stop-Process -Id $process.Id -Force
+    Write-Host "$Name process $processPid stopped."
+  } else {
+    Write-Host "$Name process $processPid was not running."
+  }
+
+  Remove-Item $PidFile -Force
 }
 
-$backendPid = Get-Content $pidFile -Raw
-if ([string]::IsNullOrWhiteSpace($backendPid)) {
-  Remove-Item $pidFile -Force
-  Write-Host "Empty backend PID file removed."
-  exit 0
-}
+Stop-ManagedProcess -Name "Backend" -PidFile (Join-Path ".runtime" "backend.pid")
+Stop-ManagedProcess -Name "Mock MIS demo" -PidFile (Join-Path ".runtime" "mock-mis-demo.pid")
 
-$process = Get-Process -Id ([int]$backendPid) -ErrorAction SilentlyContinue
-if ($null -ne $process) {
-  Stop-Process -Id $process.Id -Force
-  Write-Host "Backend process $backendPid stopped."
-} else {
-  Write-Host "Backend process $backendPid was not running."
-}
+$projectPath = (Resolve-Path -LiteralPath ".").Path
+$demoProcesses = Get-CimInstance Win32_Process |
+  Where-Object {
+    $_.CommandLine -and
+    $_.CommandLine.Contains($projectPath) -and
+    $_.CommandLine.Contains("mock-mis-demo") -and
+    $_.CommandLine.Contains("vite")
+  }
 
-Remove-Item $pidFile -Force
+foreach ($demoProcess in $demoProcesses) {
+  Stop-Process -Id $demoProcess.ProcessId -Force -ErrorAction SilentlyContinue
+  Write-Host "Mock MIS demo child process $($demoProcess.ProcessId) stopped."
+}
