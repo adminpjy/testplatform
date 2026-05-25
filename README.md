@@ -12,6 +12,7 @@ The current foundation includes:
 - PowerShell scripts for local lifecycle commands.
 - Backend stage 1 service startup, database connection, automatic table creation, default project initialization, and project APIs.
 - MIS base ability pack initialization and RuleResolver for common enterprise MIS testing goals.
+- LLM provider abstraction with Mock and OpenAI-compatible providers, stream parsing, JSON extraction, and natural-language test planning.
 
 No complex business implementation is included in this stage.
 
@@ -79,7 +80,21 @@ PUT  /api/abilities/rules/{id}
 POST /api/abilities/rules/{id}/enable
 POST /api/abilities/rules/{id}/disable
 POST /api/abilities/resolve
+POST /api/test-runs/analyze
+POST /api/test-runs/plan
 ```
+
+LLM configuration:
+
+```text
+LLM_PROVIDER=mock
+TEST_LLM_BASE_URL=
+TEST_LLM_API_KEY=
+TEST_LLM_MODEL=DeepSeek-V4
+TEST_LLM_STREAM=true
+```
+
+`mock` is the default provider and is available without external credentials. The OpenAI-compatible provider reads credentials from environment variables and does not print API keys.
 
 ## Check
 

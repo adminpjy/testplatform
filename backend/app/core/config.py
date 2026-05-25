@@ -1,7 +1,7 @@
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy.engine import make_url
 
@@ -14,6 +14,11 @@ class Settings(BaseSettings):
     backend_host: str = Field(default="127.0.0.1", alias="BACKEND_HOST")
     backend_port: int = Field(default=8000, alias="BACKEND_PORT")
     data_dir: str = Field(default="data", alias="DATA_DIR")
+    llm_provider: str = Field(default="mock", alias="LLM_PROVIDER")
+    test_llm_base_url: str = Field(default="", alias="TEST_LLM_BASE_URL")
+    test_llm_api_key: SecretStr | None = Field(default=None, alias="TEST_LLM_API_KEY")
+    test_llm_model: str = Field(default="DeepSeek-V4", alias="TEST_LLM_MODEL")
+    test_llm_stream: bool = Field(default=True, alias="TEST_LLM_STREAM")
 
     model_config = SettingsConfigDict(
         env_file=".env",

@@ -74,6 +74,9 @@ $baseUrl = "http://$hostName`:$port"
 $runtimeDir = ".runtime"
 New-Item -ItemType Directory -Force -Path $runtimeDir | Out-Null
 
+$env:LLM_PROVIDER = "mock"
+$env:TEST_LLM_STREAM = "true"
+
 $outFile = Join-Path $runtimeDir "backend-check.out.log"
 $errFile = Join-Path $runtimeDir "backend-check.err.log"
 Remove-Item $outFile, $errFile -Force -ErrorAction SilentlyContinue
@@ -243,7 +246,71 @@ try {
     Write-Error "RuleResolver did not select ENTER-TODO-LIST-v1."
   }
 
-  Write-Host "Stage 2 ability rule check passed."
+  $insufficientPayload = @{
+    instruction = "登录系统"
+    stream = $true
+  } | ConvertTo-Json -Depth 8
+  $analysis = Invoke-RestMethod `
+    -Uri "$baseUrl/api/test-runs/analyze" `
+    -Method Post `
+    -ContentType "application/json" `
+    -Body $insufficientPayload `
+    -TimeoutSec 5
+  if ($analysis.readyToExecute -ne $false) {
+    Write-Error "Natural language analysis should request more information for an incomplete goal."
+  }
+  if (@($analysis.clarifyingQuestions).Count -lt 1) {
+    Write-Error "Natural language analysis did not return clarifying questions."
+  }
+
+  $planPayload = @{
+    project_id = $projectId
+    instruction = "打开 http://127.0.0.1:5174/login，使用账号 admin 密码 123456 登录系统，进入我的待办，确认页面存在我的待办"
+    stream = $true
+  } | ConvertTo-Json -Depth 8
+  $dsl = Invoke-RestMethod `
+    -Uri "$baseUrl/api/test-runs/plan" `
+    -Method Post `
+    -ContentType "application/json" `
+    -Body $planPayload `
+    -TimeoutSec 5
+  if ([string]::IsNullOrWhiteSpace($dsl.caseName)) {
+    Write-Error "TestCaseDSL did not include caseName."
+  }
+  if ([string]::IsNullOrWhiteSpace($dsl.baseUrl)) {
+    Write-Error "TestCaseDSL did not include baseUrl."
+  }
+  if (@($dsl.steps).Count -lt 3) {
+    Write-Error "TestCaseDSL did not include enough executable steps."
+  }
+  $allowedActions = @(
+    "open_url",
+    "input",
+    "click",
+    "navigate_menu",
+    "wait_for_text",
+    "assert_text_exists",
+    "assert_text_not_exists",
+    "assert_url_contains",
+    "select",
+    "upload_file",
+    "wait",
+    "confirm_dialog",
+    "query_table",
+    "click_table_row_action",
+    "business_goal"
+  )
+  foreach ($step in $dsl.steps) {
+    if ($allowedActions -notcontains $step.action) {
+      Write-Error "TestCaseDSL returned unsupported action '$($step.action)'."
+    }
+  }
+  $dslJson = $dsl | ConvertTo-Json -Depth 12
+  if ($dslJson -like "*123456*") {
+    Write-Error "TestCaseDSL exposed a plaintext password."
+  }
+
+  Write-Host "Stage 3 LLM parser check passed."
 } finally {
   if ($null -ne $process -and -not $process.HasExited) {
     Stop-Process -Id $process.Id -Force
