@@ -11,6 +11,7 @@ The current foundation includes:
 - Runtime data directories for artifacts and reports.
 - PowerShell scripts for local lifecycle commands.
 - Backend stage 1 service startup, database connection, automatic table creation, default project initialization, and project APIs.
+- MIS base ability pack initialization and RuleResolver for common enterprise MIS testing goals.
 
 No complex business implementation is included in this stage.
 
@@ -72,6 +73,12 @@ GET  /api/system/info
 GET  /api/projects
 POST /api/projects
 GET  /api/projects/{id}
+GET  /api/abilities/rules
+POST /api/abilities/rules
+PUT  /api/abilities/rules/{id}
+POST /api/abilities/rules/{id}/enable
+POST /api/abilities/rules/{id}/disable
+POST /api/abilities/resolve
 ```
 
 ## Check

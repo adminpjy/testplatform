@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from app.db.base import Base
 from app.db.session import engine
 from app.models import TestProject
+from app.services.abilities import ensure_base_ability_rules
 
 
 def create_tables() -> None:
@@ -32,3 +33,4 @@ def init_db() -> None:
     create_tables()
     with Session(bind=engine) as db:
         ensure_default_project(db)
+        ensure_base_ability_rules(db)
