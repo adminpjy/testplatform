@@ -26,6 +26,16 @@ export async function postJson<T>(path: string, body: unknown): Promise<T> {
   });
 }
 
+export async function putJson<T>(path: string, body: unknown): Promise<T> {
+  return requestJson<T>(path, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(body)
+  });
+}
+
 export function apiUrl(path: string): string {
   if (/^https?:\/\//.test(path)) {
     return path;

@@ -7,6 +7,7 @@ from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from executor.aitp_executor.browser.local_playwright_provider import LocalPlaywrightProvider
 from executor.aitp_executor.browser.sandbox_provider import SandboxProvider
 from executor.aitp_executor.goal.goal_executor import GoalExecutor
+from executor.aitp_executor.locator.auto_form_filler import AutoFormFiller
 from executor.aitp_executor.locator.element_locator import ElementLocator
 from executor.aitp_executor.reports.artifact_writer import ArtifactWriter
 from executor.aitp_executor.reports.report_writer import ReportWriter
@@ -20,6 +21,7 @@ class CaseRunner:
     ) -> None:
         self.provider = provider or LocalPlaywrightProvider(headless=True)
         self.element_locator = ElementLocator()
+        self.auto_form_filler = AutoFormFiller()
         self.goal_executor = GoalExecutor(locator=self.element_locator)
         self.event_sink = event_sink
 
@@ -46,7 +48,7 @@ class CaseRunner:
                 page.goto(base_url, wait_until="domcontentloaded")
 
             for index, step in enumerate(steps, start=1):
-                result = self._run_step(page, writer, index, step)
+                result = self._run_step(page, writer, index, step, dsl)
                 results.append(result)
                 if result["status"] != "passed":
                     status = "failed"
@@ -100,7 +102,14 @@ class CaseRunner:
             },
         }
 
-    def _run_step(self, page: Any, writer: ArtifactWriter, step_number: int, step: dict[str, Any]) -> dict[str, Any]:
+    def _run_step(
+        self,
+        page: Any,
+        writer: ArtifactWriter,
+        step_number: int,
+        step: dict[str, Any],
+        dsl: dict[str, Any],
+    ) -> dict[str, Any]:
         started_at = _utc_now()
         action = str(step.get("action") or "")
         target = str(step.get("target") or step.get("selector") or "")
@@ -171,7 +180,7 @@ class CaseRunner:
         fallback_reason = None
         candidates: list[dict[str, Any]] = []
         try:
-            outcome = self._execute_action(page, step)
+            outcome = self._execute_action(page, step, dsl)
             locator_strategy = outcome.get("locator_strategy")
             element_ref = outcome.get("element_ref")
             confidence = outcome.get("confidence", 1.0)
@@ -270,7 +279,7 @@ class CaseRunner:
         if self.event_sink:
             self.event_sink(event)
 
-    def _execute_action(self, page: Any, step: dict[str, Any]) -> dict[str, Any]:
+    def _execute_action(self, page: Any, step: dict[str, Any], dsl: dict[str, Any]) -> dict[str, Any]:
         action = step.get("action")
         target = step.get("target") or step.get("selector") or ""
 
@@ -327,6 +336,25 @@ class CaseRunner:
         if action == "query_table":
             page.locator("table").first.wait_for(state="visible")
             return _outcome("table_visible", "table", 1.0, "table visible")
+
+        if action == "auto_fill_form":
+            test_data = dict(dsl.get("testData") or {})
+            test_data.update(step.get("testData") or {})
+            result = self.auto_form_filler.fill(page, test_data=test_data)
+            if result.needs_clarification:
+                raise RuntimeError("needs_clarification:" + ",".join(result.needs_clarification))
+            return _outcome(
+                "auto_form_filler",
+                "form",
+                0.82,
+                _json_dumps(
+                    {
+                        "filled": result.filled,
+                        "defaults_used": result.defaults_used,
+                        "skipped": result.skipped,
+                    }
+                ),
+            )
 
         if action == "click_table_row_action":
             row_text = str(step.get("rowText") or step.get("row_text") or "")

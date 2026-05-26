@@ -1,3 +1,4 @@
+from sqlalchemy import inspect, text
 from sqlalchemy.orm import Session
 
 from app.db.base import Base
@@ -8,6 +9,35 @@ from app.services.abilities import ensure_base_ability_rules
 
 def create_tables() -> None:
     Base.metadata.create_all(bind=engine)
+    ensure_compatible_columns()
+
+
+def ensure_compatible_columns() -> None:
+    inspector = inspect(engine)
+    additions = {
+        "test_projects": {
+            "system_id": "INTEGER",
+        },
+        "test_accounts": {
+            "system_id": "INTEGER",
+            "environment": "VARCHAR(32)",
+        },
+        "test_runs": {
+            "system_id": "INTEGER",
+        },
+        "ability_knowledge": {
+            "system_id": "INTEGER",
+        },
+    }
+
+    with engine.begin() as connection:
+        for table_name, columns in additions.items():
+            if not inspector.has_table(table_name):
+                continue
+            existing = {column["name"] for column in inspector.get_columns(table_name)}
+            for column_name, column_type in columns.items():
+                if column_name not in existing:
+                    connection.execute(text(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}"))
 
 
 def ensure_default_project(db: Session) -> None:
@@ -19,10 +49,7 @@ def ensure_default_project(db: Session) -> None:
         project_code="DEFAULT",
         name="默认测试项目",
         description="Initial project for enterprise MIS functional testing.",
-        system_name="Default MIS",
-        base_url="http://127.0.0.1:5174",
-        login_url="http://127.0.0.1:5174/login",
-        environment="local",
+        environment="test",
         status="active",
     )
     db.add(project)

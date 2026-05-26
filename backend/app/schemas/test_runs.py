@@ -20,14 +20,17 @@ ALLOWED_DSL_ACTIONS = {
     "query_table",
     "click_table_row_action",
     "business_goal",
+    "auto_fill_form",
 }
 
 
 class NaturalLanguageTestRequest(BaseModel):
     project_id: int | None = None
+    system_id: int | None = None
     instruction: str = Field(min_length=1)
     base_url: str | None = None
     credentials: dict[str, Any] | None = None
+    testData: dict[str, Any] | None = None
     settings: dict[str, Any] | None = None
     stream: bool | None = None
 
@@ -47,6 +50,7 @@ class TestCaseDSL(BaseModel):
     caseName: str = ""
     baseUrl: str = ""
     credentials: dict[str, Any] = Field(default_factory=dict)
+    testData: dict[str, Any] = Field(default_factory=dict)
     settings: dict[str, Any] = Field(default_factory=dict)
     steps: list[dict[str, Any]] = Field(default_factory=list)
 
@@ -65,6 +69,7 @@ class TestCaseDSL(BaseModel):
 
 class TestRunCreate(BaseModel):
     project_id: int
+    system_id: int | None = None
     case_id: int | None = None
     instruction: str | None = None
     base_url: str | None = None
@@ -75,6 +80,7 @@ class TestRunRead(BaseModel):
     id: int
     run_code: str
     project_id: int
+    system_id: int | None = None
     case_id: int | None = None
     instruction: str | None = None
     base_url: str | None = None

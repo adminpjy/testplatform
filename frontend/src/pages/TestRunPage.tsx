@@ -7,6 +7,7 @@ import {
   createTestRun,
   executeIntervention,
   getProjects,
+  getSystems,
   getRunFailureSamples,
   getRunHumanInterventions,
   getTestRunArtifacts,
@@ -31,18 +32,29 @@ import type {
   TestCaseStep,
   TestProject,
   TestRun,
-  TestStepRun
+  TestStepRun,
+  TestSystem
 } from "../types/platform";
 
-const DEFAULT_MOCK_URL = (import.meta.env.VITE_MOCK_MIS_URL as string | undefined) || "http://127.0.0.1:5174/login";
+const DEFAULT_TEST_DATA = `{
+  "用户名": "test001",
+  "手机号": "13800000000",
+  "组织机构": "信息中心",
+  "负责人": "张三",
+  "开始日期": "2026-06-01",
+  "结束日期": "2026-06-03"
+}`;
 
 export function TestRunPage() {
   const [projects, setProjects] = useState<TestProject[]>([]);
+  const [systems, setSystems] = useState<TestSystem[]>([]);
   const [runs, setRuns] = useState<TestRun[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<number | "">("");
-  const [baseUrl, setBaseUrl] = useState(DEFAULT_MOCK_URL);
-  const [username, setUsername] = useState("admin");
-  const [password, setPassword] = useState("123456");
+  const [selectedSystemId, setSelectedSystemId] = useState<number | "">("");
+  const [baseUrl, setBaseUrl] = useState("");
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [testDataJson, setTestDataJson] = useState(DEFAULT_TEST_DATA);
   const [visionFallback, setVisionFallback] = useState(false);
   const [instruction, setInstruction] = useState("登录系统，进入我的待办，确认页面存在我的待办");
   const [analysis, setAnalysis] = useState<AnalyzeResult | null>(null);
@@ -67,16 +79,26 @@ export function TestRunPage() {
     () => projects.find((project) => project.id === selectedProjectId) || null,
     [projects, selectedProjectId]
   );
+  const selectedSystem = useMemo(
+    () => systems.find((system) => system.id === selectedSystemId) || null,
+    [systems, selectedSystemId]
+  );
 
   async function bootstrap() {
     try {
-      const [projectList, runList] = await Promise.all([getProjects(), getTestRuns()]);
+      const [projectList, systemList, runList] = await Promise.all([getProjects(), getSystems(), getTestRuns()]);
       setProjects(projectList);
+      setSystems(systemList);
       setRuns(runList);
       if (projectList.length > 0) {
         const project = projectList[0];
         setSelectedProjectId(project.id);
-        setBaseUrl(resolveProjectUrl(project));
+      }
+      if (systemList.length > 0) {
+        const system = systemList[0];
+        setSelectedSystemId(system.id);
+        setBaseUrl(resolveSystemUrl(system));
+        setUsername(system.accounts[0]?.username || "");
       }
       if (runList.length > 0) {
         await selectRun(runList[0]);
@@ -106,7 +128,19 @@ export function TestRunPage() {
     setSelectedProjectId(projectId);
     const project = projects.find((item) => item.id === projectId);
     if (project) {
-      setBaseUrl(resolveProjectUrl(project) || baseUrl || DEFAULT_MOCK_URL);
+      const system = systems.find((item) => item.id === project.system_id);
+      if (system) {
+        handleSystemChange(system.id);
+      }
+    }
+  }
+
+  function handleSystemChange(systemId: number) {
+    setSelectedSystemId(systemId);
+    const system = systems.find((item) => item.id === systemId);
+    if (system) {
+      setBaseUrl(resolveSystemUrl(system));
+      setUsername(system.accounts[0]?.username || username);
     }
   }
 
@@ -116,9 +150,11 @@ export function TestRunPage() {
     try {
       const result = await analyzeTestRun({
         project_id: Number(selectedProjectId),
+        system_id: selectedSystemId ? Number(selectedSystemId) : undefined,
         instruction,
         base_url: baseUrl,
         credentials: { username, password },
+        testData: parseTestData(),
         settings: { visionFallbackEnabled: visionFallback },
         stream: true
       });
@@ -140,15 +176,18 @@ export function TestRunPage() {
     try {
       const planned = await planTestRun({
         project_id: Number(selectedProjectId),
+        system_id: selectedSystemId ? Number(selectedSystemId) : undefined,
         instruction,
         base_url: baseUrl,
         credentials: { username, password },
+        testData: parseTestData(),
         settings: { visionFallbackEnabled: visionFallback },
         stream: true
       });
-      const executableDsl = materializeDsl(planned, { baseUrl, username, password, visionFallback, instruction });
+      const executableDsl = materializeDsl(planned, { baseUrl, username, password, visionFallback, instruction, testData: parseTestData() });
       const run = await createTestRun({
         project_id: Number(selectedProjectId),
+        system_id: selectedSystemId ? Number(selectedSystemId) : null,
         instruction,
         base_url: baseUrl,
         dsl_json: executableDsl
@@ -160,6 +199,15 @@ export function TestRunPage() {
       setApiError(error instanceof Error ? error.message : String(error));
     } finally {
       setIsExecuting(false);
+    }
+  }
+
+  function parseTestData(): Record<string, unknown> {
+    try {
+      return parseTestDataFromJson(testDataJson);
+    } catch (error) {
+      setApiError(error instanceof Error ? error.message : String(error));
+      throw error;
     }
   }
 
@@ -228,6 +276,24 @@ export function TestRunPage() {
             </select>
           </label>
           <label>
+            <span>被测系统</span>
+            <select value={selectedSystemId} onChange={(event) => {
+              const value = event.target.value;
+              if (!value) {
+                setSelectedSystemId("");
+                return;
+              }
+              handleSystemChange(Number(value));
+            }}>
+              <option value="">未选择</option>
+              {systems.map((system) => (
+                <option value={system.id} key={system.id}>
+                  {system.system_name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
             <span>baseUrl</span>
             <input value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} />
           </label>
@@ -255,6 +321,11 @@ export function TestRunPage() {
           <textarea value={instruction} rows={5} onChange={(event) => setInstruction(event.target.value)} />
         </label>
 
+        <label className="stacked-field">
+          <span>测试数据补充 JSON</span>
+          <textarea value={testDataJson} rows={7} onChange={(event) => setTestDataJson(event.target.value)} />
+        </label>
+
         <div className="action-bar">
           <button className="secondary-button" type="button" onClick={handleAnalyze} disabled={isAnalyzing || !instruction}>
             <Search size={16} />
@@ -277,8 +348,8 @@ export function TestRunPage() {
         {analysis ? <AnalysisPanel analysis={analysis} /> : null}
         {selectedProject ? (
           <div className="project-context">
-            <strong>{selectedProject.system_name || selectedProject.name}</strong>
-            <span>{selectedProject.environment || "default"}</span>
+            <strong>{selectedSystem?.system_name || selectedProject.name}</strong>
+            <span>{selectedSystem?.environment || selectedProject.environment || "test"}</span>
           </div>
         ) : null}
       </section>
@@ -359,6 +430,7 @@ function materializeDsl(
     password: string;
     visionFallback: boolean;
     instruction: string;
+    testData: Record<string, unknown>;
   }
 ): TestCaseDSL {
   const steps = planned.steps.length > 0 ? planned.steps : fallbackSteps(context);
@@ -369,6 +441,10 @@ function materializeDsl(
     credentials: {
       username: context.username,
       secret_ref: "runtime_form_password"
+    },
+    testData: {
+      ...(planned.testData || {}),
+      ...context.testData
     },
     settings: {
       ...planned.settings,
@@ -411,9 +487,17 @@ function fallbackSteps(context: { baseUrl: string; username: string; password: s
   return steps;
 }
 
-function resolveProjectUrl(project: TestProject): string {
-  if (project.project_code === "DEFAULT") {
-    return DEFAULT_MOCK_URL;
+function resolveSystemUrl(system: TestSystem): string {
+  return system.login_url || system.base_url || "";
+}
+
+function parseTestDataFromJson(value: string): Record<string, unknown> {
+  if (!value.trim()) {
+    return {};
   }
-  return project.login_url || project.base_url || DEFAULT_MOCK_URL;
+  const parsed = JSON.parse(value) as unknown;
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("测试数据 JSON 必须是对象。");
+  }
+  return parsed as Record<string, unknown>;
 }

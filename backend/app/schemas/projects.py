@@ -7,6 +7,7 @@ class TestProjectBase(BaseModel):
     project_code: str = Field(min_length=1, max_length=64)
     name: str = Field(min_length=1, max_length=255)
     description: str | None = None
+    system_id: int | None = None
     system_name: str | None = Field(default=None, max_length=255)
     base_url: str | None = Field(default=None, max_length=1024)
     login_url: str | None = Field(default=None, max_length=1024)

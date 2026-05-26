@@ -13,7 +13,7 @@ export type AppRoute =
   | "ability-center"
   | "failure-samples"
   | "reports"
-  | "mock-mis-demo"
+  | "systems"
   | "settings";
 
 export interface AppNavItem {
@@ -49,9 +49,9 @@ export const navigationItems: AppNavItem[] = [
     icon: FileText
   },
   {
-    id: "mock-mis-demo",
-    label: "Mock MIS Demo",
-    description: "本地被测系统入口",
+    id: "systems",
+    label: "被测系统管理",
+    description: "配置真实系统、账号和连通性检查",
     icon: Monitor
   },
   {

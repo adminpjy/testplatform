@@ -4,6 +4,34 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.base import Base, utc_now
 
 
+class TestSystem(Base):
+    __tablename__ = "test_systems"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    system_code: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
+    system_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    base_url: Mapped[str] = mapped_column(String(1024), nullable=False)
+    login_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    home_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    environment: Mapped[str] = mapped_column(String(32), default="test", nullable=False)
+    auth_type: Mapped[str] = mapped_column(String(64), default="username_password", nullable=False)
+    default_timeout_ms: Mapped[int] = mapped_column(Integer, default=15000, nullable=False)
+    allow_write: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    allow_approval: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    allow_delete: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), default="active", nullable=False)
+    config_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[object] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[object] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
+    )
+
+    projects = relationship("TestProject", back_populates="system")
+    accounts = relationship("TestAccount", back_populates="system")
+    runs = relationship("TestRun", back_populates="system")
+
+
 class TestProject(Base):
     __tablename__ = "test_projects"
 
@@ -11,6 +39,7 @@ class TestProject(Base):
     project_code: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    system_id: Mapped[int | None] = mapped_column(ForeignKey("test_systems.id"), nullable=True, index=True)
     system_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     base_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     login_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
@@ -21,6 +50,7 @@ class TestProject(Base):
         DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
     )
 
+    system = relationship("TestSystem", back_populates="projects")
     environments = relationship("TestEnvironment", back_populates="project")
     accounts = relationship("TestAccount", back_populates="project")
     cases = relationship("TestCase", back_populates="project")
@@ -44,17 +74,19 @@ class TestEnvironment(Base):
     )
 
     project = relationship("TestProject", back_populates="environments")
-    accounts = relationship("TestAccount", back_populates="environment")
+    accounts = relationship("TestAccount", back_populates="test_environment")
 
 
 class TestAccount(Base):
     __tablename__ = "test_accounts"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    project_id: Mapped[int] = mapped_column(ForeignKey("test_projects.id"), nullable=False, index=True)
+    system_id: Mapped[int | None] = mapped_column(ForeignKey("test_systems.id"), nullable=True, index=True)
+    project_id: Mapped[int | None] = mapped_column(ForeignKey("test_projects.id"), nullable=True, index=True)
     environment_id: Mapped[int | None] = mapped_column(
         ForeignKey("test_environments.id"), nullable=True, index=True
     )
+    environment: Mapped[str | None] = mapped_column(String(32), nullable=True)
     username: Mapped[str] = mapped_column(String(255), nullable=False)
     password_encrypted: Mapped[str | None] = mapped_column(String(2048), nullable=True)
     secret_ref: Mapped[str | None] = mapped_column(String(512), nullable=True)
@@ -69,8 +101,13 @@ class TestAccount(Base):
         DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
     )
 
+    system = relationship("TestSystem", back_populates="accounts")
     project = relationship("TestProject", back_populates="accounts")
-    environment = relationship("TestEnvironment", back_populates="accounts")
+    test_environment = relationship("TestEnvironment", back_populates="accounts")
+
+    @property
+    def has_password(self) -> bool:
+        return bool(self.password_encrypted)
 
 
 class TestCase(Base):
@@ -98,6 +135,7 @@ class TestRun(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     run_code: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
     project_id: Mapped[int] = mapped_column(ForeignKey("test_projects.id"), nullable=False, index=True)
+    system_id: Mapped[int | None] = mapped_column(ForeignKey("test_systems.id"), nullable=True, index=True)
     case_id: Mapped[int | None] = mapped_column(ForeignKey("test_cases.id"), nullable=True, index=True)
     instruction: Mapped[str | None] = mapped_column(Text, nullable=True)
     base_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
@@ -113,6 +151,7 @@ class TestRun(Base):
     )
 
     project = relationship("TestProject", back_populates="runs")
+    system = relationship("TestSystem", back_populates="runs")
     case = relationship("TestCase", back_populates="runs")
     step_runs = relationship("TestStepRun", back_populates="run")
 
@@ -180,6 +219,7 @@ class AbilityKnowledge(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     knowledge_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    system_id: Mapped[int | None] = mapped_column(ForeignKey("test_systems.id"), nullable=True, index=True)
     project_id: Mapped[int | None] = mapped_column(ForeignKey("test_projects.id"), nullable=True, index=True)
     page_url_pattern: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     page_fingerprint: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -215,7 +255,7 @@ class FailureSample(Base):
     report_path: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     ai_analysis_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     suggested_rule_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
-    status: Mapped[str] = mapped_column(String(32), default="open", nullable=False)
+    status: Mapped[str] = mapped_column(String(32), default="new", nullable=False)
     created_at: Mapped[object] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
     updated_at: Mapped[object] = mapped_column(
         DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
@@ -231,7 +271,7 @@ class HumanIntervention(Base):
     user_instruction: Mapped[str | None] = mapped_column(Text, nullable=True)
     llm_plan_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     execution_result_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
-    status: Mapped[str] = mapped_column(String(32), default="pending", nullable=False)
+    status: Mapped[str] = mapped_column(String(32), default="submitted", nullable=False)
     created_at: Mapped[object] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
     updated_at: Mapped[object] = mapped_column(
         DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
@@ -248,7 +288,7 @@ class RuleDraft(Base):
     rule_name: Mapped[str] = mapped_column(String(255), nullable=False)
     proposed_content_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     reason: Mapped[str | None] = mapped_column(Text, nullable=True)
-    status: Mapped[str] = mapped_column(String(32), default="draft", nullable=False)
+    status: Mapped[str] = mapped_column(String(32), default="pending_review", nullable=False)
     created_at: Mapped[object] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
     updated_at: Mapped[object] = mapped_column(
         DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
@@ -266,3 +306,13 @@ class RuntimeMessage(Base):
     method: Mapped[str | None] = mapped_column(String(64), nullable=True)
     metadata_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[object] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+
+class SystemSetting(Base):
+    __tablename__ = "system_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    key: Mapped[str] = mapped_column(String(128), unique=True, index=True, nullable=False)
+    value_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    updated_at: Mapped[object] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)

@@ -4,7 +4,7 @@ from uuid import uuid4
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import FailureSample, RuntimeMessage, TestArtifact, TestCase, TestProject, TestRun, TestStepRun
+from app.models import FailureSample, RuntimeMessage, TestArtifact, TestCase, TestProject, TestRun, TestStepRun, TestSystem
 from app.schemas.test_runs import TestCaseDSL, TestRunCreate
 from executor.aitp_executor.runner.case_runner import CaseRunner
 
@@ -18,13 +18,15 @@ def create_and_execute_run(db: Session, payload: TestRunCreate) -> TestRun:
     if payload.case_id is not None and case is None:
         raise ValueError("Test case not found.")
 
-    dsl = _resolve_dsl(payload, case, project)
+    system = _resolve_system(db, payload, project)
+    dsl = _resolve_dsl(payload, case, project, system)
     run = TestRun(
         run_code=_new_run_code(),
         project_id=project.id,
+        system_id=system.id if system else payload.system_id or project.system_id,
         case_id=case.id if case else None,
         instruction=payload.instruction or (case.instruction if case else None),
-        base_url=payload.base_url or dsl.get("baseUrl") or project.base_url,
+        base_url=payload.base_url or dsl.get("baseUrl") or (system.base_url if system else project.base_url),
         status="created",
         current_phase="created",
         dsl_json=_redact_dsl_for_storage(dsl),
@@ -87,6 +89,13 @@ def latest_screenshot(db: Session, run_id: int) -> TestArtifact | None:
 
 
 def report_artifact(db: Session, run_id: int) -> TestArtifact | None:
+    artifact = db.scalars(
+        select(TestArtifact)
+        .where(TestArtifact.run_id == run_id, TestArtifact.artifact_type == "report")
+        .order_by(TestArtifact.id.desc())
+    ).first()
+    if artifact is not None:
+        return artifact
     return db.scalars(
         select(TestArtifact)
         .where(TestArtifact.run_id == run_id, TestArtifact.artifact_type == "report_html")
@@ -104,7 +113,22 @@ def list_runtime_messages(db: Session, run_id: int, *, after_id: int = 0) -> lis
     )
 
 
-def _resolve_dsl(payload: TestRunCreate, case: TestCase | None, project: TestProject) -> dict:
+def _resolve_system(db: Session, payload: TestRunCreate, project: TestProject) -> TestSystem | None:
+    system_id = payload.system_id or project.system_id
+    if system_id is None:
+        return None
+    system = db.get(TestSystem, system_id)
+    if system is None:
+        raise ValueError("Test system not found.")
+    return system
+
+
+def _resolve_dsl(
+    payload: TestRunCreate,
+    case: TestCase | None,
+    project: TestProject,
+    system: TestSystem | None,
+) -> dict:
     if payload.dsl_json is not None:
         dsl = payload.dsl_json.model_dump()
     elif case and case.dsl_json:
@@ -114,6 +138,8 @@ def _resolve_dsl(payload: TestRunCreate, case: TestCase | None, project: TestPro
 
     if payload.base_url:
         dsl["baseUrl"] = payload.base_url
+    elif not dsl.get("baseUrl") and system is not None:
+        dsl["baseUrl"] = system.login_url or system.base_url
     elif not dsl.get("baseUrl") and project.base_url:
         dsl["baseUrl"] = project.base_url
     return dsl
@@ -126,6 +152,7 @@ def _redact_dsl_for_storage(dsl: dict) -> dict:
         credentials.pop("password")
         credentials["secret_ref"] = credentials.get("secret_ref", "redacted_password")
     redacted["credentials"] = credentials
+    redacted["testData"] = dict(redacted.get("testData") or {})
 
     safe_steps = []
     for step in redacted.get("steps") or []:
@@ -187,12 +214,12 @@ def _persist_execution_result(db: Session, run: TestRun, execution_result: dict)
             _add_failure_sample(db, run, step_run, step_result, artifacts)
 
     artifact_types = {
-        "summary": "summary_json",
-        "report": "report_html",
-        "step_results": "step_results_jsonl",
-        "locator_debug": "locator_debug_jsonl",
-        "execution_trace": "execution_trace_jsonl",
-        "runtime_stream": "runtime_stream_jsonl",
+        "summary": "summary",
+        "report": "report",
+        "step_results": "step_results",
+        "locator_debug": "locator_debug",
+        "execution_trace": "execution_trace",
+        "runtime_stream": "runtime_stream",
     }
     for key, artifact_type in artifact_types.items():
         _add_artifact(db, run.id, None, artifact_type, artifacts.get(key), {"run_code": run.run_code})
@@ -230,7 +257,7 @@ def _add_failure_sample(
                 "candidateRuleType": "recovery_policy",
                 "needsHumanReview": True,
             },
-            status="open",
+            status="new",
         )
     )
 

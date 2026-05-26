@@ -2,10 +2,10 @@ import { BookOpen, FileWarning, FlaskConical, History, Lightbulb, RefreshCw } fr
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
 
-import { enableRuleDraft, getAbilityRules, getFailureSamples, getHumanInterventions, getRuleDrafts } from "../api/platform";
+import { enableRuleDraft, getAbilityKnowledge, getAbilityRules, getFailureSamples, getHumanInterventions, getRuleDrafts } from "../api/platform";
 import { DataTable } from "../components/DataTable";
 import { StatusBadge } from "../components/StatusBadge";
-import type { AbilityRule, FailureSample, HumanIntervention, RuleDraft } from "../types/platform";
+import type { AbilityKnowledge, AbilityRule, FailureSample, HumanIntervention, RuleDraft } from "../types/platform";
 
 type AbilityTab = "rules" | "knowledge" | "failures" | "interventions" | "drafts";
 
@@ -20,6 +20,7 @@ const tabs: Array<{ id: AbilityTab; label: string }> = [
 export function AbilityCenterPage() {
   const [activeTab, setActiveTab] = useState<AbilityTab>("rules");
   const [rules, setRules] = useState<AbilityRule[]>([]);
+  const [knowledge, setKnowledge] = useState<AbilityKnowledge[]>([]);
   const [failureSamples, setFailureSamples] = useState<FailureSample[]>([]);
   const [interventions, setInterventions] = useState<HumanIntervention[]>([]);
   const [ruleDrafts, setRuleDrafts] = useState<RuleDraft[]>([]);
@@ -34,13 +35,15 @@ export function AbilityCenterPage() {
     setLoading(true);
     setError(null);
     try {
-      const [ruleList, sampleList, interventionList, draftList] = await Promise.all([
+      const [ruleList, knowledgeList, sampleList, interventionList, draftList] = await Promise.all([
         getAbilityRules(),
+        getAbilityKnowledge(),
         getFailureSamples(),
         getHumanInterventions(),
         getRuleDrafts()
       ]);
       setRules(ruleList);
+      setKnowledge(knowledgeList);
       setFailureSamples(sampleList);
       setInterventions(interventionList);
       setRuleDrafts(draftList);
@@ -96,7 +99,7 @@ export function AbilityCenterPage() {
 
       {activeTab === "rules" ? <RulesView groupedRules={groupedRules} /> : null}
       {activeTab === "knowledge" ? (
-        <PlaceholderPanel icon={<BookOpen size={18} />} title="页面知识库" text="页面指纹、语义目标和成功定位路径会在后续运行复盘中沉淀。" />
+        <KnowledgeView knowledge={knowledge} />
       ) : null}
       {activeTab === "failures" ? <FailureMiniView samples={failureSamples} /> : null}
       {activeTab === "interventions" ? <InterventionView interventions={interventions} /> : null}
@@ -157,6 +160,32 @@ function FailureMiniView({ samples }: { samples: FailureSample[] }) {
   );
 }
 
+function KnowledgeView({ knowledge }: { knowledge: AbilityKnowledge[] }) {
+  return (
+    <section className="surface-panel">
+      <div className="panel-heading">
+        <h2>
+          <BookOpen size={18} />
+          页面知识库
+        </h2>
+        <span>{knowledge.length} 条</span>
+      </div>
+      <DataTable
+        columns={[
+          { key: "id", title: "知识", render: (item) => `#${item.id}` },
+          { key: "type", title: "类型", render: (item) => item.knowledge_type },
+          { key: "target", title: "语义目标", render: (item) => item.semantic_target || "-" },
+          { key: "intent", title: "业务意图", render: (item) => item.business_intent || "-" },
+          { key: "status", title: "状态", render: (item) => <StatusBadge value={item.status} /> }
+        ]}
+        rows={knowledge}
+        emptyText="暂无知识记录"
+        getRowKey={(item) => item.id}
+      />
+    </section>
+  );
+}
+
 function InterventionView({ interventions }: { interventions: HumanIntervention[] }) {
   return (
     <section className="surface-panel">
@@ -209,7 +238,7 @@ function RuleDraftView({
               <button
                 className="secondary-button"
                 type="button"
-                disabled={draft.status === "enabled"}
+                disabled={draft.status === "active"}
                 onClick={() => void onEnableDraft(draft.id)}
               >
                 手动启用

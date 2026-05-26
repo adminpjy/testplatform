@@ -1,0 +1,3 @@
+rule_type: global_interruption
+description: Global page interruption handling rules.
+managed_by: database_seed

@@ -3,7 +3,9 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
+from app.models import AbilityKnowledge
 from app.schemas.abilities import (
+    AbilityKnowledgeRead,
     AbilityRuleCreate,
     AbilityRuleRead,
     AbilityRuleUpdate,
@@ -76,6 +78,22 @@ def resolve_ability_rule(
     db: Session = Depends(get_db),
 ) -> RuleResolverResponse:
     return resolve_rule(db, payload)
+
+
+@router.get("/knowledge", response_model=list[AbilityKnowledgeRead])
+def read_ability_knowledge(
+    system_id: int | None = None,
+    project_id: int | None = None,
+    db: Session = Depends(get_db),
+) -> list[AbilityKnowledgeRead]:
+    from sqlalchemy import select
+
+    stmt = select(AbilityKnowledge).order_by(AbilityKnowledge.id.desc())
+    if system_id is not None:
+        stmt = stmt.where(AbilityKnowledge.system_id == system_id)
+    if project_id is not None:
+        stmt = stmt.where(AbilityKnowledge.project_id == project_id)
+    return list(db.scalars(stmt).all())
 
 
 def _get_rule_or_404(db: Session, rule_id: int):

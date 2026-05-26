@@ -68,6 +68,8 @@ export function SystemSettingsPage() {
             <dd>{systemInfo?.database.connected ? "已连接" : "未连接"}</dd>
             <dt>项目数量</dt>
             <dd>{systemInfo?.project_count ?? "-"}</dd>
+            <dt>被测系统</dt>
+            <dd>{systemInfo?.system_count ?? "-"}</dd>
             <dt>能力规则</dt>
             <dd>{systemInfo?.ability_rule_count ?? "-"}</dd>
           </dl>
@@ -80,8 +82,6 @@ export function SystemSettingsPage() {
           <dl className="settings-list">
             <dt>API Base</dt>
             <dd>{(import.meta.env.VITE_API_BASE_URL as string | undefined) || "同源代理"}</dd>
-            <dt>Mock MIS</dt>
-            <dd>{(import.meta.env.VITE_MOCK_MIS_URL as string | undefined) || "http://127.0.0.1:5174"}</dd>
             <dt>视觉兜底</dt>
             <dd>执行时按测试运行页开关传入</dd>
           </dl>

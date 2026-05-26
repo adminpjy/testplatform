@@ -3,12 +3,9 @@ $ErrorActionPreference = "Stop"
 
 $runtimeDir = ".runtime"
 New-Item -ItemType Directory -Force -Path $runtimeDir | Out-Null
-$script:MockMisDemoUrl = ""
 
 function Find-AvailablePort {
-  param(
-    [int]$PreferredPort
-  )
+  param([int]$PreferredPort)
 
   $port = $PreferredPort
   while (Get-NetTCPConnection -LocalPort $port -ErrorAction SilentlyContinue) {
@@ -22,7 +19,6 @@ function Start-Backend {
   if ([string]::IsNullOrWhiteSpace($hostName)) {
     $hostName = "127.0.0.1"
   }
-
   $port = $env:BACKEND_PORT
   if ([string]::IsNullOrWhiteSpace($port)) {
     $port = "8000"
@@ -34,12 +30,10 @@ function Start-Backend {
 
   if (Test-Path $pidFile) {
     $existingPid = Get-Content $pidFile -Raw
-    if (-not [string]::IsNullOrWhiteSpace($existingPid)) {
-      $existingProcess = Get-Process -Id ([int]$existingPid) -ErrorAction SilentlyContinue
-      if ($null -ne $existingProcess) {
-        Write-Host "Backend is already running with PID $existingPid."
-        return
-      }
+    $existingProcess = Get-Process -Id ([int]$existingPid) -ErrorAction SilentlyContinue
+    if ($null -ne $existingProcess) {
+      Write-Host "Backend is already running with PID $existingPid."
+      return
     }
   }
 
@@ -65,6 +59,16 @@ function Start-Backend {
 
 function Start-Frontend {
   $frontendHost = "127.0.0.1"
+  $backendHost = $env:BACKEND_HOST
+  if ([string]::IsNullOrWhiteSpace($backendHost)) {
+    $backendHost = "127.0.0.1"
+  }
+  $backendPort = $env:BACKEND_PORT
+  if ([string]::IsNullOrWhiteSpace($backendPort)) {
+    $backendPort = "8000"
+  }
+  $env:VITE_API_BASE_URL = "http://$backendHost`:$backendPort"
+
   $frontendPort = $env:FRONTEND_PORT
   $hasExplicitPort = -not [string]::IsNullOrWhiteSpace($frontendPort)
   if ([string]::IsNullOrWhiteSpace($frontendPort)) {
@@ -83,12 +87,10 @@ function Start-Frontend {
 
   if (Test-Path $pidFile) {
     $existingPid = Get-Content $pidFile -Raw
-    if (-not [string]::IsNullOrWhiteSpace($existingPid)) {
-      $existingProcess = Get-Process -Id ([int]$existingPid) -ErrorAction SilentlyContinue
-      if ($null -ne $existingProcess) {
-        Write-Host "Frontend is already running with PID $existingPid."
-        return
-      }
+    $existingProcess = Get-Process -Id ([int]$existingPid) -ErrorAction SilentlyContinue
+    if ($null -ne $existingProcess) {
+      Write-Host "Frontend is already running with PID $existingPid."
+      return
     }
   }
 
@@ -117,64 +119,5 @@ function Start-Frontend {
   Write-Host "Frontend started at http://$frontendHost`:$frontendPort with PID $($process.Id)."
 }
 
-function Start-MockMisDemo {
-  $mockHost = "127.0.0.1"
-  $mockPort = $env:MOCK_MIS_PORT
-  $hasExplicitPort = -not [string]::IsNullOrWhiteSpace($mockPort)
-  if ([string]::IsNullOrWhiteSpace($mockPort)) {
-    $mockPort = "5174"
-  }
-  if (Get-NetTCPConnection -LocalPort ([int]$mockPort) -ErrorAction SilentlyContinue) {
-    if ($hasExplicitPort) {
-      Write-Error "Mock MIS demo port $mockPort is already in use."
-    }
-    $mockPort = Find-AvailablePort -PreferredPort ([int]$mockPort)
-  }
-
-  $pidFile = Join-Path $runtimeDir "mock-mis-demo.pid"
-  $outFile = Join-Path $runtimeDir "mock-mis-demo.out.log"
-  $errFile = Join-Path $runtimeDir "mock-mis-demo.err.log"
-
-  if (Test-Path $pidFile) {
-    $existingPid = Get-Content $pidFile -Raw
-    if (-not [string]::IsNullOrWhiteSpace($existingPid)) {
-      $existingProcess = Get-Process -Id ([int]$existingPid) -ErrorAction SilentlyContinue
-      if ($null -ne $existingProcess) {
-        Write-Host "Mock MIS demo is already running with PID $existingPid."
-        return
-      }
-    }
-  }
-
-  if (-not (Test-Path "mock-mis-demo/node_modules")) {
-    npm.cmd --prefix mock-mis-demo install
-  }
-
-  $args = @(
-    "--prefix", "mock-mis-demo",
-    "run", "dev",
-    "--",
-    "--host", $mockHost,
-    "--port", $mockPort,
-    "--strictPort"
-  )
-
-  $process = Start-Process `
-    -FilePath "npm.cmd" `
-    -ArgumentList $args `
-    -PassThru `
-    -WindowStyle Hidden `
-    -RedirectStandardOutput $outFile `
-    -RedirectStandardError $errFile
-
-  Set-Content -Path $pidFile -Value $process.Id
-  $script:MockMisDemoUrl = "http://$mockHost`:$mockPort"
-  Write-Host "Mock MIS demo started at http://$mockHost`:$mockPort with PID $($process.Id)."
-}
-
 Start-Backend
-Start-MockMisDemo
-if (-not [string]::IsNullOrWhiteSpace($script:MockMisDemoUrl)) {
-  $env:VITE_MOCK_MIS_URL = "$($script:MockMisDemoUrl)/login"
-}
 Start-Frontend

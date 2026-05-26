@@ -5,6 +5,7 @@ from app.models.entities import (
     HumanIntervention,
     RuleDraft,
     RuntimeMessage,
+    SystemSetting,
     TestAccount,
     TestArtifact,
     TestCase,
@@ -12,6 +13,7 @@ from app.models.entities import (
     TestProject,
     TestRun,
     TestStepRun,
+    TestSystem,
 )
 
 __all__ = [
@@ -21,6 +23,7 @@ __all__ = [
     "HumanIntervention",
     "RuleDraft",
     "RuntimeMessage",
+    "SystemSetting",
     "TestAccount",
     "TestArtifact",
     "TestCase",
@@ -28,4 +31,5 @@ __all__ = [
     "TestProject",
     "TestRun",
     "TestStepRun",
+    "TestSystem",
 ]

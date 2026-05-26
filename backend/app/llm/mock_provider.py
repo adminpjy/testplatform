@@ -103,6 +103,7 @@ def _mock_plan(payload: dict[str, Any]) -> dict[str, Any]:
         "caseName": _case_name(instruction),
         "baseUrl": base_url,
         "credentials": credentials,
+        "testData": payload.get("testData") or {},
         "settings": {
             "timeoutMs": 30000,
             "stream": bool(payload.get("stream", True)),

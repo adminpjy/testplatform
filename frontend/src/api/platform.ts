@@ -1,6 +1,7 @@
-import { getJson, postJson } from "./client";
+import { getJson, postJson, putJson } from "./client";
 import type {
   AbilityRule,
+  AbilityKnowledge,
   AnalyzeResult,
   FailureSample,
   HealthInfo,
@@ -9,12 +10,15 @@ import type {
   NaturalLanguageTestRequest,
   RuleDraft,
   SystemInfo,
+  SystemCheckResult,
   TestArtifact,
   TestCaseDSL,
   TestProject,
   TestRun,
   TestRunCreate,
-  TestStepRun
+  TestStepRun,
+  TestSystem,
+  TestSystemCreate
 } from "../types/platform";
 import type { RuntimeMessageWire } from "../types/runtime";
 
@@ -28,6 +32,26 @@ export function getSystemInfo(): Promise<SystemInfo> {
 
 export function getProjects(): Promise<TestProject[]> {
   return getJson<TestProject[]>("/api/projects");
+}
+
+export function getSystems(): Promise<TestSystem[]> {
+  return getJson<TestSystem[]>("/api/systems");
+}
+
+export function createSystem(payload: TestSystemCreate): Promise<TestSystem> {
+  return postJson<TestSystem>("/api/systems", payload);
+}
+
+export function updateSystem(systemId: number, payload: Partial<TestSystemCreate>): Promise<TestSystem> {
+  return putJson<TestSystem>(`/api/systems/${systemId}`, payload);
+}
+
+export function checkSystemConnectivity(systemId: number): Promise<SystemCheckResult> {
+  return postJson<SystemCheckResult>(`/api/systems/${systemId}/check-connectivity`, {});
+}
+
+export function checkSystemLogin(systemId: number): Promise<SystemCheckResult> {
+  return postJson<SystemCheckResult>(`/api/systems/${systemId}/check-login`, {});
 }
 
 export function analyzeTestRun(payload: NaturalLanguageTestRequest): Promise<AnalyzeResult> {
@@ -102,4 +126,8 @@ export function enableRuleDraft(draftId: number): Promise<AbilityRule> {
 
 export function getAbilityRules(): Promise<AbilityRule[]> {
   return getJson<AbilityRule[]>("/api/abilities/rules?production_enabled=true");
+}
+
+export function getAbilityKnowledge(): Promise<AbilityKnowledge[]> {
+  return getJson<AbilityKnowledge[]>("/api/abilities/knowledge");
 }

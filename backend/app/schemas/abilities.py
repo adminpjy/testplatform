@@ -50,6 +50,28 @@ class AbilityRuleRead(AbilityRuleBase):
     model_config = ConfigDict(from_attributes=True)
 
 
+class AbilityKnowledgeRead(BaseModel):
+    id: int
+    knowledge_type: str
+    system_id: int | None = None
+    project_id: int | None = None
+    page_url_pattern: str | None = None
+    page_fingerprint: str | None = None
+    semantic_target: str | None = None
+    business_intent: str | None = None
+    success_locator_json: dict[str, Any] | None = None
+    action_path_json: dict[str, Any] | None = None
+    rejected_candidates_json: dict[str, Any] | None = None
+    confidence: float | None = None
+    success_count: int
+    failure_count: int
+    status: str
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class RuleResolverRequest(BaseModel):
     project_id: int
     goal: str | None = None

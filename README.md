@@ -1,35 +1,28 @@
 # Enterprise MIS Intelligent Functional Testing Platform Production v1
 
-This repository contains a production-ready first phase for an intelligent functional testing platform focused on existing enterprise MIS systems.
+This repository contains a first-phase production system for intelligent functional testing of existing enterprise MIS systems.
 
 It includes:
 
-- FastAPI backend with persistent SQLAlchemy models and automatic table initialization.
-- React + Vite + TypeScript frontend for test runs, ability center, failure samples, reports, demo entry, and settings.
-- Python Playwright executor with local headless browser execution and evidence capture.
-- Built-in MIS ability rules, RuleResolver, natural-language analysis, runtime stream, failure samples, human intervention, and rule drafts.
-- Local Mock MIS Demo for validating login, todo approval, approval flow, user management, and detail navigation.
+- FastAPI backend with SQLAlchemy models, PostgreSQL support, and SQLite fallback.
+- React + Vite + TypeScript frontend with a concise management-console layout.
+- Python Playwright executor using local headless Chromium.
+- Real tested-system management, connectivity checks, login checks, natural-language planning, runtime stream, evidence capture, reports, failure samples, human intervention, rule drafts, and ability knowledge.
 
 ## Requirements
 
 - Windows PowerShell
 - Python 3.11+
 - Node.js 18+
-- PostgreSQL is recommended. If `DATABASE_URL` is not set, the backend uses SQLite at `data/aitp.db`.
+- PostgreSQL for production use
 
-Install Python and browser dependencies:
+Install dependencies:
 
 ```powershell
 pip install -r backend\requirements.txt
 pip install -r executor\requirements.txt
 python -m playwright install chromium
-```
-
-Install frontend dependencies:
-
-```powershell
 npm --prefix frontend install
-npm --prefix mock-mis-demo install
 ```
 
 ## Environment
@@ -40,16 +33,25 @@ Create a local environment file:
 Copy-Item .env.example .env
 ```
 
-Default PostgreSQL connection:
+Default database:
 
 ```text
 DATABASE_URL=postgresql+psycopg2://admin:123456@host.docker.internal:5432/postgres
 ```
 
-Fallback when `DATABASE_URL` is absent:
+If `DATABASE_URL` is absent, the backend falls back to:
 
 ```text
 sqlite:///./data/aitp.db
+```
+
+Real system smoke variables:
+
+```text
+REAL_MIS_BASE_URL=
+REAL_MIS_LOGIN_URL=
+REAL_MIS_USERNAME=
+REAL_MIS_PASSWORD=
 ```
 
 LLM defaults:
@@ -62,11 +64,9 @@ TEST_LLM_MODEL=DeepSeek-V4
 TEST_LLM_STREAM=true
 ```
 
-The mock provider works without external credentials. External provider secrets are read from environment variables.
+## Start
 
-## Start Locally
-
-Start backend, frontend, and the local MIS demo:
+Start backend and frontend:
 
 ```powershell
 .\scripts\start.ps1
@@ -75,20 +75,17 @@ Start backend, frontend, and the local MIS demo:
 Typical URLs:
 
 ```text
-Backend:       http://127.0.0.1:8000
-Frontend:      http://127.0.0.1:5173
-Mock MIS Demo: http://127.0.0.1:5174/login
+Backend:  http://127.0.0.1:8000
+Frontend: http://127.0.0.1:5173
 ```
 
-If a default frontend or demo port is occupied, the script chooses the next available port and prints it.
-
-Stop managed local services:
+Stop local services:
 
 ```powershell
 .\scripts\stop.ps1
 ```
 
-Initialize database tables without starting the HTTP service:
+Initialize database tables:
 
 ```powershell
 .\scripts\init-db.ps1
@@ -102,46 +99,43 @@ Run the normal project check:
 .\scripts\check.ps1
 ```
 
-Run the full local end-to-end validation:
+Run a real-system smoke check after filling `REAL_MIS_BASE_URL`:
 
 ```powershell
-.\scripts\e2e-demo.ps1
+.\scripts\run-smoke.ps1
 ```
 
-The end-to-end script starts temporary backend, frontend, and demo services, then verifies:
+Run real-system end-to-end validation after filling all `REAL_MIS_*` variables:
 
-- `/health` and database connectivity.
-- Base ability rule initialization.
-- Natural-language analysis and DSL planning.
-- Login and navigation to todo.
-- Approval pass with conflicting todo actions.
-- User management create, update, and delete.
-- Runtime stream persistence and SSE replay.
-- Latest screenshot and HTML report endpoints.
-- Failure sample evidence files.
-- Ability center APIs for rules, failure samples, interventions, and rule drafts.
-
-## Mock MIS Demo
-
-Login:
-
-```text
-admin / 123456
+```powershell
+.\scripts\e2e-real-system.ps1
 ```
 
-Routes:
+## Real System Onboarding
 
-```text
-/login
-/login?notice=account-expiry
-/login?notice=system-announcement
-/login?notice=force-change-password
-/dashboard
-/todo
-/users
+1. Open the frontend and enter “被测系统管理”.
+2. Create a system with `base_url`, `login_url`, `home_url`, environment, authentication type, and operation guard flags.
+3. Add a test account. Password fields are never shown after saving.
+4. Run “连通性检查” to verify HTTP status, response time, and screenshot capture.
+5. Run “登录检查” to verify login flow and main-page reachability.
+6. Use “测试运行” to select the system, provide a natural-language test goal, optionally add JSON test data, analyze, and execute.
+
+## Test Data JSON
+
+The test run page accepts optional supplemental data:
+
+```json
+{
+  "用户名": "test001",
+  "手机号": "13800000000",
+  "组织机构": "信息中心",
+  "负责人": "张三",
+  "开始日期": "2026-06-01",
+  "结束日期": "2026-06-03"
+}
 ```
 
-The todo page intentionally contains both `审批` and `查看审批流程` actions to validate business-intent disambiguation.
+When values are absent, non-sensitive defaults are generated from the ability rules. Critical fields such as organizations, roles, data permissions, approvers, and uploads request clarification instead of choosing arbitrary values.
 
 ## Runtime Artifacts
 
@@ -151,7 +145,7 @@ Each execution writes evidence under:
 artifacts/runs/{run_code}/
 ```
 
-Expected files include:
+Expected evidence:
 
 ```text
 summary.json
@@ -165,21 +159,24 @@ dom/
 accessibility/
 ```
 
+System checks write evidence under:
+
+```text
+artifacts/system-checks/{system_code}/
+```
+
 ## Main APIs
 
 ```text
 GET  /health
 GET  /api/system/info
-GET  /api/projects
-POST /api/projects
-GET  /api/projects/{id}
 
-GET  /api/abilities/rules
-POST /api/abilities/rules
-PUT  /api/abilities/rules/{id}
-POST /api/abilities/rules/{id}/enable
-POST /api/abilities/rules/{id}/disable
-POST /api/abilities/resolve
+GET  /api/systems
+POST /api/systems
+GET  /api/systems/{id}
+PUT  /api/systems/{id}
+POST /api/systems/{id}/check-connectivity
+POST /api/systems/{id}/check-login
 
 POST /api/test-runs/analyze
 POST /api/test-runs/plan
@@ -188,26 +185,41 @@ GET  /api/test-runs
 GET  /api/test-runs/{runId}
 GET  /api/test-runs/{runId}/steps
 GET  /api/test-runs/{runId}/artifacts
+GET  /api/test-runs/{runId}/logs
 GET  /api/test-runs/{runId}/latest-screenshot
 GET  /api/test-runs/{runId}/stream
-GET  /api/test-runs/{runId}/runtime-messages
+POST /api/test-runs/{runId}/stop
+
+GET  /api/abilities/rules
+POST /api/abilities/rules
+PUT  /api/abilities/rules/{id}
+POST /api/abilities/rules/{id}/enable
+POST /api/abilities/rules/{id}/disable
+GET  /api/abilities/knowledge
+GET  /api/failure-samples
+POST /api/failure-samples/{id}/analyze
 
 POST /api/test-runs/{runId}/steps/{stepId}/intervene
 POST /api/test-runs/{runId}/interventions/{interventionId}/execute
 POST /api/test-runs/{runId}/interventions/{interventionId}/convert-to-rule
 
-GET  /api/failure-samples
-GET  /api/human-interventions
-GET  /api/rule-drafts
-POST /api/rule-drafts/{draftId}/enable
-
 GET  /api/reports/{runId}
 GET  /files/{path}
 ```
 
-## Notes
+## Extension Points
 
-- Test data persists in the configured database.
-- Execution artifacts persist on disk.
-- Long error details are folded in the frontend to keep pages usable.
-- The first phase runs locally with Playwright headless and keeps the browser-provider boundary for later remote execution.
+- `executor/aitp_executor/browser/sandbox_provider.py` is the browser-provider boundary.
+- A future Cube provider can implement the same provider interface and be selected by configuration.
+- Vision fallback currently records overlay screenshots and returns `vision_fallback_not_configured` unless a real vision provider is configured.
+- A real vision model can be wired through `VISION_MODEL_PROVIDER`, `VISION_MODEL_ENDPOINT`, and `VISION_MODEL_API_KEY`.
+
+## Internal Deployment
+
+1. Provision PostgreSQL and set `DATABASE_URL`.
+2. Create `.env` from `.env.example` and fill LLM and real-system values.
+3. Install dependencies or build with Docker Compose.
+4. Run `.\scripts\check.ps1` on the target host.
+5. Start services with `.\scripts\start.ps1` or a process manager.
+6. Put the backend and frontend behind the internal reverse proxy.
+7. Mount `data/`, `artifacts/`, and `reports/` on persistent storage.

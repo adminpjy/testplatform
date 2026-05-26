@@ -141,6 +141,10 @@ a {
   grid-template-columns: minmax(360px, 0.75fr) minmax(480px, 1.25fr);
 }
 
+.page-grid--systems {
+  grid-template-columns: minmax(300px, 0.65fr) minmax(520px, 1.35fr);
+}
+
 .runtime-region,
 .step-tree,
 .error-summary-card {
@@ -161,7 +165,10 @@ a {
 .error-summary-card,
 .report-list-panel,
 .report-preview-panel,
-.mock-frame-panel {
+.systems-list,
+.system-editor,
+.systems-actions,
+.systems-runs {
   padding: 16px;
 }
 
@@ -241,6 +248,37 @@ textarea:focus {
 .toggle-row input {
   width: 16px;
   height: 16px;
+}
+
+.toggle-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.sub-panel {
+  margin-top: 14px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #f8fafc;
+  padding: 14px;
+}
+
+.sub-panel h3 {
+  margin: 0 0 12px;
+  font-size: 14px;
+}
+
+.check-result {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.check-result > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .action-bar {
@@ -389,7 +427,9 @@ button:disabled {
 .status-badge--created,
 .status-badge--planned,
 .status-badge--pending_review,
-.status-badge--open {
+.status-badge--new,
+.status-badge--analyzed,
+.status-badge--submitted {
   background: #fef3c7;
   color: #92400e;
 }
@@ -643,8 +683,7 @@ button:disabled {
   text-decoration: none;
 }
 
-.report-preview-panel iframe,
-.mock-frame-panel iframe {
+.report-preview-panel iframe {
   width: 100%;
   border: 1px solid #e2e8f0;
   border-radius: 7px;
@@ -653,16 +692,6 @@ button:disabled {
 
 .report-preview-panel iframe {
   height: 720px;
-}
-
-.mock-url-row {
-  display: grid;
-  grid-template-columns: minmax(260px, 1fr) auto auto auto;
-  gap: 8px;
-}
-
-.mock-frame-panel iframe {
-  height: 760px;
 }
 
 .settings-list {
@@ -695,8 +724,10 @@ button:disabled {
 @media (max-width: 1180px) {
   .page-grid--test-run,
   .page-grid--reports,
+  .page-grid--systems,
   .ability-rule-grid,
-  .settings-grid {
+  .settings-grid,
+  .toggle-grid {
     grid-template-columns: 1fr;
   }
 }
@@ -720,8 +751,7 @@ button:disabled {
     padding: 12px;
   }
 
-  .form-grid,
-  .mock-url-row {
+  .form-grid {
     grid-template-columns: 1fr;
   }
 }

@@ -68,6 +68,7 @@ class NaturalLanguageParser:
             '"caseName":"",'
             '"baseUrl":"",'
             '"credentials":{},'
+            '"testData":{},'
             '"settings":{},'
             '"steps":[]'
             "}\n"
@@ -111,6 +112,7 @@ class NaturalLanguageParser:
             "caseName": dsl_data.get("caseName") or "自然语言测试用例",
             "baseUrl": dsl_data.get("baseUrl") or payload.base_url or "",
             "credentials": self._sanitize_credentials(dsl_data.get("credentials") or payload.credentials or {}),
+            "testData": dsl_data.get("testData") or payload.testData or {},
             "settings": dsl_data.get("settings") or payload.settings or {},
             "steps": dsl_data.get("steps") or [],
         }

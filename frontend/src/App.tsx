@@ -3,10 +3,10 @@ import { useEffect, useMemo, useState } from "react";
 import { navigationItems, routeFromHash, type AppRoute } from "./routes/navigation";
 import { AbilityCenterPage } from "./pages/AbilityCenterPage";
 import { FailureSamplesPage } from "./pages/FailureSamplesPage";
-import { MockMisDemoPage } from "./pages/MockMisDemoPage";
 import { ReportsPage } from "./pages/ReportsPage";
 import { SystemSettingsPage } from "./pages/SystemSettingsPage";
 import { TestRunPage } from "./pages/TestRunPage";
+import { TestSystemsPage } from "./pages/TestSystemsPage";
 import "./styles/app.css";
 
 export default function App() {
@@ -60,8 +60,8 @@ function renderPage(route: AppRoute) {
       return <FailureSamplesPage />;
     case "reports":
       return <ReportsPage />;
-    case "mock-mis-demo":
-      return <MockMisDemoPage />;
+    case "systems":
+      return <TestSystemsPage />;
     case "settings":
       return <SystemSettingsPage />;
     case "test-run":

@@ -1,0 +1,3 @@
+rule_type: update
+description: Update-record workflow rules.
+managed_by: database_seed

@@ -72,7 +72,7 @@ def create_human_intervention(
         step_id=step.id,
         user_instruction=payload.user_instruction,
         llm_plan_json=plan.model_dump(),
-        status="planned",
+        status="analyzed",
     )
     db.add(intervention)
     db.flush()
@@ -178,7 +178,7 @@ def enable_rule_draft(db: Session, *, draft_id: int) -> AbilityRule:
     rule_code = str(content.get("rule_code_suggestion") or f"HUMAN-RECOVERY-{draft.id}-v1")
     existing_rule = db.scalars(select(AbilityRule).where(AbilityRule.rule_code == rule_code)).first()
     if existing_rule is not None:
-        draft.status = "enabled"
+        draft.status = "active"
         db.add(draft)
         db.commit()
         return existing_rule
@@ -199,7 +199,7 @@ def enable_rule_draft(db: Session, *, draft_id: int) -> AbilityRule:
         source=f"rule_draft:{draft.id}",
         production_enabled=True,
     )
-    draft.status = "enabled"
+    draft.status = "active"
     db.add(rule)
     db.add(draft)
     db.commit()

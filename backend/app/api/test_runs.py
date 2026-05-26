@@ -184,6 +184,26 @@ def read_runtime_messages(run_id: int, db: Session = Depends(get_db)) -> list[Ru
     return list_runtime_messages(db, run_id)
 
 
+@router.get("/{run_id}/logs", response_model=list[RuntimeMessageRead])
+def read_test_run_logs(run_id: int, db: Session = Depends(get_db)) -> list[RuntimeMessageRead]:
+    _ensure_run_exists(db, run_id)
+    return list_runtime_messages(db, run_id)
+
+
+@router.post("/{run_id}/stop", response_model=TestRunRead)
+def stop_test_run(run_id: int, db: Session = Depends(get_db)) -> TestRunRead:
+    run = get_run(db, run_id)
+    if run is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Test run not found.")
+    if run.status not in {"passed", "failed", "stopped"}:
+        run.status = "stopped"
+        run.current_phase = "stopped"
+        db.add(run)
+        db.commit()
+        db.refresh(run)
+    return run
+
+
 @router.get("/{run_id}/latest-screenshot")
 def read_latest_screenshot(run_id: int, db: Session = Depends(get_db)):
     from fastapi.responses import FileResponse

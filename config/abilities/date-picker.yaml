@@ -1,0 +1,3 @@
+rule_type: date_picker
+description: Date, time, and date-range selection rules.
+managed_by: database_seed

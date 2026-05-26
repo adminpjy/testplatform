@@ -3,6 +3,7 @@ export interface TestProject {
   project_code: string;
   name: string;
   description: string | null;
+  system_id: number | null;
   system_name: string | null;
   base_url: string | null;
   login_url: string | null;
@@ -25,9 +26,11 @@ export interface AnalyzeResult {
 
 export interface NaturalLanguageTestRequest {
   project_id?: number;
+  system_id?: number;
   instruction: string;
   base_url?: string;
   credentials?: Record<string, unknown>;
+  testData?: Record<string, unknown>;
   settings?: Record<string, unknown>;
   stream?: boolean;
 }
@@ -36,6 +39,7 @@ export interface TestCaseDSL {
   caseName: string;
   baseUrl: string;
   credentials: Record<string, unknown>;
+  testData: Record<string, unknown>;
   settings: Record<string, unknown>;
   steps: TestCaseStep[];
 }
@@ -51,6 +55,7 @@ export interface TestCaseStep {
 
 export interface TestRunCreate {
   project_id: number;
+  system_id?: number | null;
   case_id?: number | null;
   instruction?: string | null;
   base_url?: string | null;
@@ -61,6 +66,7 @@ export interface TestRun {
   id: number;
   run_code: string;
   project_id: number;
+  system_id: number | null;
   case_id: number | null;
   instruction: string | null;
   base_url: string | null;
@@ -72,6 +78,84 @@ export interface TestRun {
   ended_at: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface TestAccount {
+  id: number;
+  system_id: number | null;
+  environment: string;
+  username: string;
+  role_name: string | null;
+  allow_write: boolean;
+  allow_approval: boolean;
+  allow_delete: boolean;
+  status: string;
+  expires_at: string | null;
+  secret_ref: string | null;
+  has_password: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TestSystem {
+  id: number;
+  system_code: string;
+  system_name: string;
+  description: string | null;
+  base_url: string;
+  login_url: string | null;
+  home_url: string | null;
+  environment: "dev" | "test" | "uat" | "preprod" | "prod" | string;
+  auth_type: "username_password" | "sso" | "token" | "other" | string;
+  default_timeout_ms: number;
+  allow_write: boolean;
+  allow_approval: boolean;
+  allow_delete: boolean;
+  status: string;
+  config_json: Record<string, unknown> | null;
+  accounts: TestAccount[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TestSystemCreate {
+  system_code: string;
+  system_name: string;
+  description?: string | null;
+  base_url: string;
+  login_url?: string | null;
+  home_url?: string | null;
+  environment: string;
+  auth_type: string;
+  default_timeout_ms: number;
+  allow_write: boolean;
+  allow_approval: boolean;
+  allow_delete: boolean;
+  status: string;
+  config_json?: Record<string, unknown> | null;
+  default_account?: {
+    environment: string;
+    username: string;
+    password?: string | null;
+    secret_ref?: string | null;
+    role_name?: string | null;
+    allow_write: boolean;
+    allow_approval: boolean;
+    allow_delete: boolean;
+    status: string;
+  } | null;
+}
+
+export interface SystemCheckResult {
+  system_id: number;
+  check_type: string;
+  status: string;
+  http_status: number | null;
+  response_time_ms: number | null;
+  screenshot_path: string | null;
+  runtime_stream_path: string | null;
+  message: string;
+  metadata: Record<string, unknown>;
 }
 
 export interface TestStepRun {
@@ -196,6 +280,26 @@ export interface AbilityRule {
   updated_at: string;
 }
 
+export interface AbilityKnowledge {
+  id: number;
+  knowledge_type: string;
+  system_id: number | null;
+  project_id: number | null;
+  page_url_pattern: string | null;
+  page_fingerprint: string | null;
+  semantic_target: string | null;
+  business_intent: string | null;
+  success_locator_json: Record<string, unknown> | null;
+  action_path_json: Record<string, unknown> | null;
+  rejected_candidates_json: Record<string, unknown> | null;
+  confidence: number | null;
+  success_count: number;
+  failure_count: number;
+  status: string;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface SystemInfo {
   service: string;
   version: string;
@@ -206,6 +310,7 @@ export interface SystemInfo {
     error?: string;
   };
   project_count: number;
+  system_count: number;
   ability_rule_count: number;
 }
 

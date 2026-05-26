@@ -1,0 +1,3 @@
+rule_type: table_operation
+description: Table row, pagination, and action rules.
+managed_by: database_seed
