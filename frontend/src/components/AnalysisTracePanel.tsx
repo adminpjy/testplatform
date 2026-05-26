@@ -39,6 +39,12 @@ export function AnalysisTracePanel({
         <span>{analyzing ? "流式分析中" : "分析已结束"}</span>
       </div>
 
+      {status.isMock ? (
+        <div className="llm-mock-warning">
+          当前未调用真实 LLM，正在使用 MockLLMProvider。请配置正式 LLM 环境变量并重启服务。
+        </div>
+      ) : null}
+
       <div className="llm-status-grid">
         <div>
           <span>LLM 交互</span>
@@ -180,6 +186,7 @@ function buildAnalysisStatus(messages: RuntimeMessage[], dsl: TestCaseDSL | null
     provider: metadataValue(providerMessage, "provider") || "mock",
     model: metadataValue(providerMessage, "model") || "DeepSeek-V4",
     endpoint: metadataValue(providerMessage, "endpoint"),
+    isMock: metadataValue(providerMessage, "mock") === "true" || metadataValue(providerMessage, "provider") === "mock",
     currentStage: latest ? readableTitle(latest) : "等待分析",
     latestMessage: latest?.content || "点击分析后显示 LLM 交互状态",
     analyzeChunks,
