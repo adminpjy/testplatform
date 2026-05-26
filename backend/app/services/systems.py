@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session, selectinload
 from app.core.config import settings
 from app.models import TestAccount, TestProject, TestSystem
 from app.schemas.systems import LoginCheckRequest, SystemCheckResult, TestSystemCreate, TestSystemUpdate
+from app.utils.url_policy import ensure_allowed_url, ensure_allowed_urls
 from app.utils.secrets import decrypt_secret, encrypt_secret
 
 
@@ -37,6 +38,13 @@ def get_system(db: Session, system_id: int) -> TestSystem | None:
 
 
 def create_system(db: Session, payload: TestSystemCreate) -> TestSystem:
+    ensure_allowed_urls(
+        {
+            "base_url": payload.base_url,
+            "login_url": payload.login_url,
+            "home_url": payload.home_url,
+        }
+    )
     data = payload.model_dump(exclude={"default_account"})
     system = TestSystem(**data)
     db.add(system)
@@ -49,6 +57,13 @@ def create_system(db: Session, payload: TestSystemCreate) -> TestSystem:
 
 
 def update_system(db: Session, system: TestSystem, payload: TestSystemUpdate) -> TestSystem:
+    ensure_allowed_urls(
+        {
+            "base_url": payload.base_url,
+            "login_url": payload.login_url,
+            "home_url": payload.home_url,
+        }
+    )
     update_data = payload.model_dump(exclude_unset=True, exclude={"default_account"})
     for field_name, value in update_data.items():
         setattr(system, field_name, value)
@@ -67,13 +82,14 @@ def update_system(db: Session, system: TestSystem, payload: TestSystemUpdate) ->
 
 
 def check_connectivity(db: Session, system: TestSystem) -> SystemCheckResult:
+    ensure_allowed_url(system.base_url, "base_url")
     started = time.perf_counter()
     http_status = None
     message = "Connectivity check completed."
     status = "passed"
     metadata: dict[str, Any] = {}
     try:
-        verify_tls = bool((system.config_json or {}).get("verify_tls", True))
+        verify_tls = bool((system.config_json or {}).get("verify_tls", not settings.playwright_ignore_https_errors))
         with httpx.Client(follow_redirects=True, verify=verify_tls, timeout=system.default_timeout_ms / 1000) as client:
             response = client.get(system.base_url)
             http_status = response.status_code
@@ -109,6 +125,7 @@ def check_login(db: Session, system: TestSystem, payload: LoginCheckRequest | No
         raise ValueError("A username and password are required for login check.")
     if not system.login_url:
         raise ValueError("System login_url is required for login check.")
+    ensure_allowed_url(system.login_url, "login_url")
 
     run_dir = _system_check_dir(system, "login")
     screenshot_path = _relative(run_dir / "login-check.png")
@@ -139,33 +156,37 @@ def check_login(db: Session, system: TestSystem, payload: LoginCheckRequest | No
     try:
         emit("progress", "browser", "正在启动浏览器")
         with sync_playwright() as playwright:
-            browser = playwright.chromium.launch(headless=True)
-            page = browser.new_page()
-            page.set_default_timeout(system.default_timeout_ms)
-            emit("progress", "open_login", "正在打开登录页", {"url": system.login_url})
-            response = page.goto(system.login_url, wait_until="domcontentloaded", timeout=system.default_timeout_ms)
-            http_status = response.status if response else None
-            emit("progress", "observe", "正在读取页面")
-            _handle_global_interruptions(page, emit)
-            emit("progress", "input_username", "正在填写用户名")
-            _fill_first(page, ["用户名", "账号", "登录名", "用户名/账号", "username", "account"], username)
-            emit("progress", "input_password", "正在填写密码")
-            _fill_password(page, password)
-            emit("progress", "submit", "正在点击登录")
-            _click_first(page, ["登录", "登 录", "确定", "提交", "Sign in", "Login"])
-            page.wait_for_load_state("domcontentloaded", timeout=system.default_timeout_ms)
-            _handle_global_interruptions(page, emit)
-            emit("progress", "verify", "正在验证登录结果")
-            if _login_success(page, system):
-                status = "passed"
-                message = "Login check passed."
-                emit("success", "completed", "登录检查通过", {"url": page.url})
-            else:
-                message = "Login check did not reach the expected home page or main page signal."
-                emit("error", "completed", message, {"url": page.url})
-            metadata["final_url"] = page.url
-            page.screenshot(path=str(Path(screenshot_path)), full_page=True)
-            browser.close()
+            browser = playwright.chromium.launch(headless=True, **_playwright_launch_options())
+            context = browser.new_context(**_playwright_context_options())
+            page = context.new_page()
+            try:
+                page.set_default_timeout(system.default_timeout_ms)
+                emit("progress", "open_login", "正在打开登录页", {"url": system.login_url})
+                response = page.goto(system.login_url, wait_until="domcontentloaded", timeout=system.default_timeout_ms)
+                http_status = response.status if response else None
+                emit("progress", "observe", "正在读取页面")
+                _handle_global_interruptions(page, emit)
+                emit("progress", "input_username", "正在填写用户名")
+                _fill_first(page, ["用户名", "账号", "登录名", "用户名/账号", "username", "account"], username)
+                emit("progress", "input_password", "正在填写密码")
+                _fill_password(page, password)
+                emit("progress", "submit", "正在点击登录")
+                _click_first(page, ["登录", "登 录", "确定", "提交", "Sign in", "Login"])
+                page.wait_for_load_state("domcontentloaded", timeout=system.default_timeout_ms)
+                _handle_global_interruptions(page, emit)
+                emit("progress", "verify", "正在验证登录结果")
+                if _login_success(page, system):
+                    status = "passed"
+                    message = "Login check passed."
+                    emit("success", "completed", "登录检查通过", {"url": page.url})
+                else:
+                    message = "Login check did not reach the expected home page or main page signal."
+                    emit("error", "completed", message, {"url": page.url})
+                metadata["final_url"] = page.url
+                page.screenshot(path=str(Path(screenshot_path)), full_page=True)
+            finally:
+                context.close()
+                browser.close()
     except (PlaywrightError, PlaywrightTimeoutError, RuntimeError) as exc:
         message = str(exc)
         emit("error", "failed", message)
@@ -234,19 +255,52 @@ def _store_last_check(db: Session, system: TestSystem, key: str, value: dict[str
 
 
 def _capture_page_screenshot(system: TestSystem, url: str, check_type: str) -> str | None:
+    ensure_allowed_url(url, "url")
     run_dir = _system_check_dir(system, check_type)
     run_dir.mkdir(parents=True, exist_ok=True)
     screenshot_path = run_dir / f"{check_type}.png"
     try:
         with sync_playwright() as playwright:
-            browser = playwright.chromium.launch(headless=True)
-            page = browser.new_page()
-            page.goto(url, wait_until="domcontentloaded", timeout=system.default_timeout_ms)
-            page.screenshot(path=str(screenshot_path), full_page=True)
-            browser.close()
+            browser = playwright.chromium.launch(headless=True, **_playwright_launch_options())
+            context = browser.new_context(**_playwright_context_options())
+            page = context.new_page()
+            try:
+                page.goto(url, wait_until="domcontentloaded", timeout=system.default_timeout_ms)
+                page.screenshot(path=str(screenshot_path), full_page=True)
+            finally:
+                context.close()
+                browser.close()
         return _relative(screenshot_path)
     except PlaywrightError:
         return None
+
+
+def _playwright_launch_options() -> dict[str, Any]:
+    options: dict[str, Any] = {}
+    proxy = _playwright_proxy()
+    if proxy:
+        options["proxy"] = proxy
+    return options
+
+
+def _playwright_context_options() -> dict[str, Any]:
+    options: dict[str, Any] = {"ignore_https_errors": settings.playwright_ignore_https_errors}
+    if settings.playwright_user_agent:
+        options["user_agent"] = settings.playwright_user_agent
+    return options
+
+
+def _playwright_proxy() -> dict[str, str] | None:
+    if not settings.playwright_proxy_server:
+        return None
+    proxy = {"server": settings.playwright_proxy_server}
+    if settings.playwright_proxy_bypass:
+        proxy["bypass"] = settings.playwright_proxy_bypass
+    if settings.playwright_proxy_username:
+        proxy["username"] = settings.playwright_proxy_username
+    if settings.playwright_proxy_password:
+        proxy["password"] = settings.playwright_proxy_password.get_secret_value()
+    return proxy
 
 
 def _system_check_dir(system: TestSystem, check_type: str) -> Path:

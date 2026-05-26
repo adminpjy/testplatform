@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.models import FailureSample, RuntimeMessage, TestArtifact, TestCase, TestProject, TestRun, TestStepRun, TestSystem
 from app.schemas.test_runs import TestCaseDSL, TestRunCreate
+from app.utils.url_policy import ensure_allowed_url
 from executor.aitp_executor.runner.case_runner import CaseRunner
 
 
@@ -20,6 +21,7 @@ def create_and_execute_run(db: Session, payload: TestRunCreate) -> TestRun:
 
     system = _resolve_system(db, payload, project)
     dsl = _resolve_dsl(payload, case, project, system)
+    ensure_allowed_url(str(dsl.get("baseUrl") or dsl.get("base_url") or payload.base_url or ""), "base_url")
     run = TestRun(
         run_code=_new_run_code(),
         project_id=project.id,

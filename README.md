@@ -57,12 +57,32 @@ REAL_MIS_PASSWORD=
 LLM defaults:
 
 ```text
-LLM_PROVIDER=mock
-TEST_LLM_BASE_URL=
+LLM_PROVIDER=openai_compatible
+TEST_LLM_BASE_URL=https://ds.ai.sinopec.com/ds_v4_pro/v1/chat/completions
 TEST_LLM_API_KEY=
 TEST_LLM_MODEL=DeepSeek-V4
+TEST_LLM_TIMEOUT_SECONDS=120
+TEST_LLM_MAX_TOKENS=8192
+TEST_LLM_TEMPERATURE=0.6
+TEST_LLM_TOP_P=0.95
 TEST_LLM_STREAM=true
+TEST_LLM_VERIFY_SSL=false
 ```
+
+Keep `TEST_LLM_API_KEY` only in local `.env` or the deployment secret store. Do not commit it.
+
+Formal runtime controls:
+
+```text
+EXECUTOR_MODE=cube
+CUBE_MOCK=true
+LOCAL_BROWSER=true
+RUNS_ROOT=artifacts/runs
+ALLOWED_BASE_URL_PREFIXES=https://work.bypc.com.cn
+PLAYWRIGHT_IGNORE_HTTPS_ERRORS=true
+```
+
+When `RUNS_ROOT` points outside this repository, run evidence is still available through `/files/runs-root/...`.
 
 ## Start
 
@@ -142,7 +162,7 @@ When values are absent, non-sensitive defaults are generated from the ability ru
 Each execution writes evidence under:
 
 ```text
-artifacts/runs/{run_code}/
+{RUNS_ROOT}/{run_code}/
 ```
 
 Expected evidence:

@@ -4,7 +4,7 @@ from typing import Any, Callable
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
-from executor.aitp_executor.browser.local_playwright_provider import LocalPlaywrightProvider
+from executor.aitp_executor.browser.provider_factory import create_sandbox_provider
 from executor.aitp_executor.browser.sandbox_provider import SandboxProvider
 from executor.aitp_executor.goal.goal_executor import GoalExecutor
 from executor.aitp_executor.locator.auto_form_filler import AutoFormFiller
@@ -19,7 +19,7 @@ class CaseRunner:
         provider: SandboxProvider | None = None,
         event_sink: Callable[[dict[str, Any]], None] | None = None,
     ) -> None:
-        self.provider = provider or LocalPlaywrightProvider(headless=True)
+        self.provider = provider or create_sandbox_provider()
         self.element_locator = ElementLocator()
         self.auto_form_filler = AutoFormFiller()
         self.goal_executor = GoalExecutor(locator=self.element_locator)

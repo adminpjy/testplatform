@@ -154,6 +154,7 @@ New-Item -ItemType Directory -Force -Path $runtimeDir | Out-Null
 $env:LLM_PROVIDER = "mock"
 $env:TEST_LLM_STREAM = "true"
 $env:VITE_API_BASE_URL = $baseUrl
+$env:ALLOWED_BASE_URL_PREFIXES = "$baseUrl,$frontendUrl"
 
 $backendOut = Join-Path $runtimeDir "backend-check.out.log"
 $backendErr = Join-Path $runtimeDir "backend-check.err.log"

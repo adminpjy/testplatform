@@ -98,10 +98,10 @@ $analysisPayload = @{
   stream = $true
 } | ConvertTo-Json -Depth 8
 
-$analysis = Invoke-JsonPost -Uri "$apiBase/api/test-runs/analyze" -Body $analysisPayload -TimeoutSec 15
+$analysis = Invoke-JsonPost -Uri "$apiBase/api/test-runs/analyze" -Body $analysisPayload -TimeoutSec 130
 Assert-Value ($analysis.readyToExecute -eq $true) "Natural-language analysis requested more information."
 
-$plan = Invoke-JsonPost -Uri "$apiBase/api/test-runs/plan" -Body $analysisPayload -TimeoutSec 15
+$plan = Invoke-JsonPost -Uri "$apiBase/api/test-runs/plan" -Body $analysisPayload -TimeoutSec 130
 Assert-Value (@($plan.steps).Count -gt 0) "Plan did not return executable steps."
 
 Write-Host "Real-system end-to-end validation passed."

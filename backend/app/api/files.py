@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, status
 from fastapi.responses import FileResponse
 
-from executor.aitp_executor.utils.file_paths import resolve_project_path
+from executor.aitp_executor.utils.file_paths import public_root_name, resolve_project_path
 
 router = APIRouter()
 
@@ -13,9 +13,8 @@ def read_file(file_path: str):
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
-    allowed_roots = {"artifacts", "reports"}
-    first_part = path.relative_to(resolve_project_path(".")).parts[0]
-    if first_part not in allowed_roots:
+    allowed_roots = {"artifacts", "reports", "runs-root"}
+    if public_root_name(file_path) not in allowed_roots:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="File path is not public.")
     if not path.exists() or not path.is_file():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File not found.")

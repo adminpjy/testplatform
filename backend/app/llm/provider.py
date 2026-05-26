@@ -13,7 +13,9 @@ class LLMRequest:
     system_prompt: str
     user_prompt: str
     stream: bool = True
-    temperature: float = 0.0
+    temperature: float | None = None
+    top_p: float | None = None
+    max_tokens: int | None = None
 
 
 class LLMProvider(Protocol):
@@ -34,5 +36,11 @@ def get_llm_provider(config: Settings = settings) -> LLMProvider:
             base_url=config.test_llm_base_url,
             api_key=config.test_llm_api_key.get_secret_value() if config.test_llm_api_key else "",
             model=config.test_llm_model,
+            timeout_seconds=config.test_llm_timeout_seconds,
+            max_tokens=config.test_llm_max_tokens,
+            temperature=config.test_llm_temperature,
+            top_p=config.test_llm_top_p,
+            verify_ssl=config.test_llm_verify_ssl,
+            ca_bundle=config.test_llm_ca_bundle,
         )
     raise LLMProviderError(f"Unsupported LLM provider: {provider_name}")

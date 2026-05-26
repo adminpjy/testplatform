@@ -4,6 +4,22 @@ $ErrorActionPreference = "Stop"
 $runtimeDir = ".runtime"
 New-Item -ItemType Directory -Force -Path $runtimeDir | Out-Null
 
+function Import-DotEnv {
+  if (-not (Test-Path ".env")) {
+    return
+  }
+  Get-Content ".env" | ForEach-Object {
+    $line = $_.Trim()
+    if (-not $line -or $line.StartsWith("#") -or -not $line.Contains("=")) {
+      return
+    }
+    $name, $value = $line.Split("=", 2)
+    if ([string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($name))) {
+      [Environment]::SetEnvironmentVariable($name, $value, "Process")
+    }
+  }
+}
+
 function Find-AvailablePort {
   param([int]$PreferredPort)
 
@@ -119,5 +135,6 @@ function Start-Frontend {
   Write-Host "Frontend started at http://$frontendHost`:$frontendPort with PID $($process.Id)."
 }
 
+Import-DotEnv
 Start-Backend
 Start-Frontend
