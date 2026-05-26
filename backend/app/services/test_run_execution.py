@@ -164,8 +164,15 @@ def _redact_dsl_for_storage(dsl: dict) -> dict:
     for step in redacted.get("steps") or []:
         safe_step = dict(step)
         target = str(safe_step.get("target") or "").lower()
-        if "password" in target or "密码" in target:
+        if "password" in target or "密码" in target or "password" in safe_step:
             safe_step["value"] = "***REDACTED***"
+            safe_step.pop("password", None)
+            if isinstance(safe_step.get("credentials"), dict):
+                safe_credentials = dict(safe_step["credentials"])
+                if "password" in safe_credentials:
+                    safe_credentials.pop("password")
+                    safe_credentials["secret_ref"] = safe_credentials.get("secret_ref", "redacted_password")
+                safe_step["credentials"] = safe_credentials
         safe_steps.append(safe_step)
     redacted["steps"] = safe_steps
     return redacted

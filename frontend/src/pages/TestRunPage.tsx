@@ -681,6 +681,7 @@ function materializeDsl(
     baseUrl: context.baseUrl || planned.baseUrl,
     credentials: {
       username: context.username,
+      password: context.password,
       secret_ref: "runtime_form_password"
     },
     testData: {
@@ -697,6 +698,19 @@ function materializeDsl(
 
 function hydrateStep(step: TestCaseStep, context: { baseUrl: string; username: string; password: string }): TestCaseStep {
   const target = String(step.target || "");
+  if (step.action === "business_goal" && target.includes("登录")) {
+    return {
+      ...step,
+      username: context.username,
+      password: context.password,
+      credentials: {
+        ...(step.credentials || {}),
+        username: context.username,
+        password: context.password,
+        secret_ref: "runtime_form_password"
+      }
+    };
+  }
   if (step.action === "assert_text_exists" && target === "我的待办") {
     return { ...step, action: "assert_url_contains", target: "/todo" };
   }

@@ -1,6 +1,8 @@
+import os
 from typing import Any
 
 from executor.aitp_executor.goal.goal_success_verifier import GoalSuccessVerifier
+from executor.aitp_executor.goal.login_form_resolver import LoginFormResolver
 from executor.aitp_executor.goal.recovery_policy import RecoveryPolicy
 from executor.aitp_executor.locator.business_intent_normalizer import BusinessIntentNormalizer
 from executor.aitp_executor.locator.element_locator import ElementLocator, LocatorResult
@@ -13,11 +15,13 @@ class GoalExecutor:
         locator: ElementLocator | None = None,
         verifier: GoalSuccessVerifier | None = None,
         recovery_policy: RecoveryPolicy | None = None,
+        login_resolver: LoginFormResolver | None = None,
     ) -> None:
         self.locator = locator or ElementLocator()
         self.normalizer = BusinessIntentNormalizer()
         self.verifier = verifier or GoalSuccessVerifier()
         self.recovery_policy = recovery_policy or RecoveryPolicy()
+        self.login_resolver = login_resolver or LoginFormResolver()
 
     def execute(self, page: Any, *, target: str, step: dict[str, Any]) -> dict[str, Any]:
         intent = self.normalizer.normalize(action="business_goal", target=target)
@@ -46,13 +50,37 @@ class GoalExecutor:
         return self._click_goal(page, "click", target, step, intent.name)
 
     def _login(self, page: Any, step: dict[str, Any]) -> dict[str, Any]:
-        username = str(step.get("username") or step.get("credentials", {}).get("username") or "admin")
-        password = str(step.get("password") or step.get("credentials", {}).get("password") or "123456")
-        self.locator.locate(page, action="input", target="用户名", step={}).locator.fill(username)
-        self.locator.locate(page, action="input", target="密码", step={}).locator.fill(password)
-        login = self.locator.locate(page, action="click", target="登录", step={})
-        self._require_locator(login).click()
-        return _outcome(login, verified=True, verify_reason="login_submitted")
+        credentials = dict(step.get("credentials") or {})
+        username = str(step.get("username") or credentials.get("username") or os.getenv("REAL_MIS_USERNAME") or "admin")
+        password = str(step.get("password") or credentials.get("password") or os.getenv("REAL_MIS_PASSWORD") or "123456")
+        page.wait_for_load_state("domcontentloaded")
+        form = self.login_resolver.resolve(page)
+        if form.username_locator is None or form.password_locator is None:
+            raise RuntimeError(
+                "login_form_fields_not_found:"
+                + form.reason
+                + ". The page may use iframe, delayed SSO widgets, or non-standard inputs. "
+                + "Captured candidates: "
+                + str(form.candidates[:6])
+            )
+        form.username_locator.fill(username)
+        form.password_locator.fill(password)
+        if form.submit_locator is not None:
+            form.submit_locator.click()
+        else:
+            form.password_locator.press("Enter")
+        return _outcome(
+            LocatorResult(
+                form.submit_locator or form.password_locator,
+                form.strategy,
+                "login_form",
+                form.confidence,
+                form.reason,
+                candidates=form.candidates,
+            ),
+            verified=True,
+            verify_reason="login_submitted",
+        )
 
     def _approval_pass(self, page: Any, step: dict[str, Any]) -> dict[str, Any]:
         approval = self.locator.locate(page, action="click", target="审批通过", step=step)

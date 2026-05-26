@@ -509,7 +509,12 @@ class CaseRunner:
             return _outcome("table_row_action_exact", f"{row_text}:{action_name}", 0.95, "table row action")
 
         if action == "business_goal":
-            return self.goal_executor.execute(page, target=str(target), step=step)
+            goal_step = dict(step)
+            credentials = dict(dsl.get("credentials") or {})
+            credentials.update(dict(step.get("credentials") or {}))
+            if credentials:
+                goal_step["credentials"] = credentials
+            return self.goal_executor.execute(page, target=str(target), step=goal_step)
 
         raise ValueError(f"Unsupported DSL action: {action}")
 
@@ -767,8 +772,15 @@ def _outcome(strategy: str, element_ref: str, confidence: float, reason: str) ->
 def _redact_step(step: dict[str, Any]) -> dict[str, Any]:
     redacted = dict(step)
     target = str(redacted.get("target") or "").lower()
-    if "password" in target or "密码" in target or redacted.get("secret_ref"):
+    if "password" in target or "密码" in target or redacted.get("secret_ref") or "password" in redacted:
         redacted["value"] = "***REDACTED***"
+        redacted.pop("password", None)
+    if isinstance(redacted.get("credentials"), dict):
+        credentials = dict(redacted["credentials"])
+        if "password" in credentials:
+            credentials.pop("password")
+            credentials["secret_ref"] = credentials.get("secret_ref", "redacted_password")
+        redacted["credentials"] = credentials
     return redacted
 
 
