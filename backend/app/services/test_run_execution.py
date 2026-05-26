@@ -4,7 +4,7 @@ from uuid import uuid4
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import RuntimeMessage, TestArtifact, TestCase, TestProject, TestRun, TestStepRun
+from app.models import FailureSample, RuntimeMessage, TestArtifact, TestCase, TestProject, TestRun, TestStepRun
 from app.schemas.test_runs import TestCaseDSL, TestRunCreate
 from executor.aitp_executor.runner.case_runner import CaseRunner
 
@@ -139,6 +139,7 @@ def _redact_dsl_for_storage(dsl: dict) -> dict:
 
 
 def _persist_execution_result(db: Session, run: TestRun, execution_result: dict) -> None:
+    artifacts = execution_result.get("artifacts", {})
     for step_result in execution_result.get("steps", []):
         step_run = TestStepRun(
             run_id=run.id,
@@ -182,8 +183,9 @@ def _persist_execution_result(db: Session, run: TestRun, execution_result: dict)
             step_result.get("accessibility_snapshot_path"),
             {"step_number": step_result.get("step_number")},
         )
+        if step_run.status == "failed":
+            _add_failure_sample(db, run, step_run, step_result, artifacts)
 
-    artifacts = execution_result.get("artifacts", {})
     artifact_types = {
         "summary": "summary_json",
         "report": "report_html",
@@ -195,6 +197,51 @@ def _persist_execution_result(db: Session, run: TestRun, execution_result: dict)
     for key, artifact_type in artifact_types.items():
         _add_artifact(db, run.id, None, artifact_type, artifacts.get(key), {"run_code": run.run_code})
     db.commit()
+
+
+def _add_failure_sample(
+    db: Session,
+    run: TestRun,
+    step_run: TestStepRun,
+    step_result: dict,
+    artifacts: dict,
+) -> None:
+    db.add(
+        FailureSample(
+            run_id=run.id,
+            step_id=step_run.id,
+            failure_type=_failure_type(step_result),
+            failure_summary=step_result.get("error_summary") or "Step failed without error summary.",
+            screenshot_path=step_result.get("screenshot_path"),
+            dom_snapshot_path=step_result.get("dom_snapshot_path"),
+            accessibility_snapshot_path=step_result.get("accessibility_snapshot_path"),
+            locator_debug_path=artifacts.get("locator_debug"),
+            runtime_stream_path=artifacts.get("runtime_stream"),
+            execution_trace_path=artifacts.get("execution_trace"),
+            report_path=artifacts.get("report"),
+            ai_analysis_json={
+                "status": "pending",
+                "stepAction": step_result.get("action"),
+                "target": step_result.get("target"),
+                "reason": step_result.get("reason"),
+            },
+            suggested_rule_json={
+                "source": "failure_sample",
+                "candidateRuleType": "recovery_policy",
+                "needsHumanReview": True,
+            },
+            status="open",
+        )
+    )
+
+
+def _failure_type(step_result: dict) -> str:
+    if step_result.get("fallback_reason"):
+        return str(step_result["fallback_reason"])
+    if step_result.get("needs_vision_fallback"):
+        return "needs_vision_fallback"
+    action = step_result.get("action") or "unknown_action"
+    return f"{action}_failed"
 
 
 def _add_artifact(

@@ -102,6 +102,80 @@ export interface TestArtifact {
   created_at: string;
 }
 
+export interface FailureSample {
+  id: number;
+  run_id: number;
+  step_id: number | null;
+  failure_type: string | null;
+  failure_summary: string | null;
+  screenshot_path: string | null;
+  dom_snapshot_path: string | null;
+  accessibility_snapshot_path: string | null;
+  locator_debug_path: string | null;
+  runtime_stream_path: string | null;
+  execution_trace_path: string | null;
+  report_path: string | null;
+  ai_analysis_json: Record<string, unknown> | null;
+  suggested_rule_json: Record<string, unknown> | null;
+  status: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export type InterventionAction =
+  | "click"
+  | "input"
+  | "select"
+  | "choose_radio"
+  | "close_dialog"
+  | "confirm_dialog"
+  | "wait"
+  | "retry_step"
+  | "assert_text_exists"
+  | "assert_url_contains";
+
+export interface InterventionPlanStep {
+  action: InterventionAction;
+  target?: string | null;
+  value?: string | null;
+  reason?: string | null;
+}
+
+export interface InterventionPlan {
+  summary: string;
+  steps: InterventionPlanStep[];
+  safety_notes: string[];
+}
+
+export interface HumanIntervention {
+  id: number;
+  run_id: number;
+  step_id: number | null;
+  user_instruction: string | null;
+  llm_plan_json: InterventionPlan | null;
+  execution_result_json: Record<string, unknown> | null;
+  status: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface HumanInterventionCreate {
+  user_instruction: string;
+}
+
+export interface RuleDraft {
+  id: number;
+  source_type: string;
+  source_id: number | null;
+  rule_type: string;
+  rule_name: string;
+  proposed_content_json: Record<string, unknown> | null;
+  reason: string | null;
+  status: string;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface AbilityRule {
   id: number;
   rule_code: string;

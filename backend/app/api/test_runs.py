@@ -10,13 +10,24 @@ from app.db.session import SessionLocal, get_db
 from app.models import TestCase, TestProject
 from app.schemas.test_runs import (
     AnalyzeResult,
+    FailureSampleRead,
+    HumanInterventionCreate,
+    HumanInterventionRead,
     NaturalLanguageTestRequest,
+    RuleDraftRead,
     RuntimeMessageRead,
     TestArtifactRead,
     TestCaseDSL,
     TestRunCreate,
     TestRunRead,
     TestStepRunRead,
+)
+from app.services.human_interventions import (
+    convert_intervention_to_rule_draft,
+    create_human_intervention,
+    execute_human_intervention,
+    list_failure_samples,
+    list_human_interventions,
 )
 from app.services.natural_language_parser import NaturalLanguageParser
 from app.services.test_run_execution import (
@@ -78,6 +89,43 @@ def plan_test_case(payload: NaturalLanguageTestRequest, db: Session = Depends(ge
     return dsl
 
 
+@router.post("/{run_id}/steps/{step_id}/intervene", response_model=HumanInterventionRead)
+def intervene_test_step(
+    run_id: int,
+    step_id: int,
+    payload: HumanInterventionCreate,
+    db: Session = Depends(get_db),
+) -> HumanInterventionRead:
+    try:
+        return create_human_intervention(db, run_id=run_id, step_id=step_id, payload=payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.post("/{run_id}/interventions/{intervention_id}/execute", response_model=HumanInterventionRead)
+def execute_test_run_intervention(
+    run_id: int,
+    intervention_id: int,
+    db: Session = Depends(get_db),
+) -> HumanInterventionRead:
+    try:
+        return execute_human_intervention(db, run_id=run_id, intervention_id=intervention_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.post("/{run_id}/interventions/{intervention_id}/convert-to-rule", response_model=RuleDraftRead)
+def convert_test_run_intervention_to_rule(
+    run_id: int,
+    intervention_id: int,
+    db: Session = Depends(get_db),
+) -> RuleDraftRead:
+    try:
+        return convert_intervention_to_rule_draft(db, run_id=run_id, intervention_id=intervention_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
 @router.get("/{run_id}/stream")
 def stream_test_run_runtime(
     run_id: int,
@@ -116,6 +164,18 @@ def read_test_run_steps(run_id: int, db: Session = Depends(get_db)) -> list[Test
 def read_test_run_artifacts(run_id: int, db: Session = Depends(get_db)) -> list[TestArtifactRead]:
     _ensure_run_exists(db, run_id)
     return list_artifacts(db, run_id)
+
+
+@router.get("/{run_id}/failure-samples", response_model=list[FailureSampleRead])
+def read_test_run_failure_samples(run_id: int, db: Session = Depends(get_db)) -> list[FailureSampleRead]:
+    _ensure_run_exists(db, run_id)
+    return list_failure_samples(db, run_id=run_id)
+
+
+@router.get("/{run_id}/interventions", response_model=list[HumanInterventionRead])
+def read_test_run_interventions(run_id: int, db: Session = Depends(get_db)) -> list[HumanInterventionRead]:
+    _ensure_run_exists(db, run_id)
+    return list_human_interventions(db, run_id=run_id)
 
 
 @router.get("/{run_id}/runtime-messages", response_model=list[RuntimeMessageRead])

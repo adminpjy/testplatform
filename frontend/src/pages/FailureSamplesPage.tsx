@@ -1,25 +1,25 @@
-import { ExternalLink, RefreshCw } from "lucide-react";
+import { ExternalLink, RefreshCw, UserRoundCheck } from "lucide-react";
 import { useEffect, useState } from "react";
 
-import { apiUrl } from "../api/client";
-import { getTestRuns } from "../api/platform";
+import { apiUrl, fileUrl } from "../api/client";
+import { getFailureSamples } from "../api/platform";
 import { StatusBadge } from "../components/StatusBadge";
-import type { TestRun } from "../types/platform";
+import type { FailureSample } from "../types/platform";
 
 export function FailureSamplesPage() {
-  const [runs, setRuns] = useState<TestRun[]>([]);
+  const [samples, setSamples] = useState<FailureSample[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    void loadRuns();
+    void loadSamples();
   }, []);
 
-  async function loadRuns() {
+  async function loadSamples() {
     setLoading(true);
     setError(null);
     try {
-      setRuns((await getTestRuns()).filter((run) => run.status === "failed"));
+      setSamples(await getFailureSamples());
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : String(requestError));
     } finally {
@@ -32,7 +32,7 @@ export function FailureSamplesPage() {
       <section className="surface-panel">
         <div className="panel-heading">
           <h1>失败样本</h1>
-          <button className="secondary-button" type="button" onClick={() => void loadRuns()}>
+          <button className="secondary-button" type="button" onClick={() => void loadSamples()}>
             <RefreshCw size={16} />
             {loading ? "刷新中" : "刷新"}
           </button>
@@ -41,28 +41,40 @@ export function FailureSamplesPage() {
       </section>
 
       <div className="failure-sample-list">
-        {runs.length === 0 ? <section className="surface-panel empty-state">暂无失败样本</section> : null}
-        {runs.map((run) => (
-          <section className="surface-panel failure-sample" key={run.id}>
+        {samples.length === 0 ? <section className="surface-panel empty-state">暂无失败样本</section> : null}
+        {samples.map((sample) => (
+          <section className="surface-panel failure-sample" key={sample.id}>
             <div className="panel-heading">
-              <h2>{run.run_code}</h2>
-              <StatusBadge value={run.status} />
+              <h2>Sample #{sample.id}</h2>
+              <StatusBadge value={sample.status} />
             </div>
             <div className="failure-sample__meta">
-              <span>{run.instruction || "未记录测试目标"}</span>
-              <span>{run.started_at ? new Date(run.started_at).toLocaleString("zh-CN") : "未记录开始时间"}</span>
+              <span>Run #{sample.run_id}</span>
+              <span>Step #{sample.step_id || "-"}</span>
+              <span>{sample.failure_type || "unknown_failure"}</span>
+              <span>{new Date(sample.created_at).toLocaleString("zh-CN")}</span>
             </div>
             <pre className="error-detail error-detail--collapsed">
-              {String(run.summary_json?.errorSummary || "失败摘要待补充")}
+              {sample.failure_summary || "失败摘要待补充"}
             </pre>
+            <div className="artifact-link-grid">
+              {sample.screenshot_path ? <a href={fileUrl(sample.screenshot_path)} target="_blank" rel="noreferrer">截图</a> : null}
+              {sample.dom_snapshot_path ? <a href={fileUrl(sample.dom_snapshot_path)} target="_blank" rel="noreferrer">DOM</a> : null}
+              {sample.accessibility_snapshot_path ? <a href={fileUrl(sample.accessibility_snapshot_path)} target="_blank" rel="noreferrer">Accessibility</a> : null}
+              {sample.locator_debug_path ? <a href={fileUrl(sample.locator_debug_path)} target="_blank" rel="noreferrer">locator-debug</a> : null}
+              {sample.runtime_stream_path ? <a href={fileUrl(sample.runtime_stream_path)} target="_blank" rel="noreferrer">runtime-stream</a> : null}
+            </div>
             <div className="action-bar">
-              <a className="secondary-link" href={apiUrl(`/api/reports/${run.id}`)} target="_blank" rel="noreferrer">
-                <ExternalLink size={16} />
-                打开报告
+              {sample.report_path ? (
+                <a className="secondary-link" href={apiUrl(`/api/reports/${sample.run_id}`)} target="_blank" rel="noreferrer">
+                  <ExternalLink size={16} />
+                  打开报告
+                </a>
+              ) : null}
+              <a className="secondary-link" href="#test-run">
+                <UserRoundCheck size={16} />
+                人工介入
               </a>
-              <button className="ghost-button" type="button" disabled>
-                沉淀规则草案
-              </button>
             </div>
           </section>
         ))}

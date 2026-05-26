@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -131,5 +131,87 @@ class RuntimeMessageRead(BaseModel):
     method: str | None = None
     metadata_json: dict[str, Any] | None = None
     created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class FailureSampleRead(BaseModel):
+    id: int
+    run_id: int
+    step_id: int | None = None
+    failure_type: str | None = None
+    failure_summary: str | None = None
+    screenshot_path: str | None = None
+    dom_snapshot_path: str | None = None
+    accessibility_snapshot_path: str | None = None
+    locator_debug_path: str | None = None
+    runtime_stream_path: str | None = None
+    execution_trace_path: str | None = None
+    report_path: str | None = None
+    ai_analysis_json: dict[str, Any] | None = None
+    suggested_rule_json: dict[str, Any] | None = None
+    status: str
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+InterventionAction = Literal[
+    "click",
+    "input",
+    "select",
+    "choose_radio",
+    "close_dialog",
+    "confirm_dialog",
+    "wait",
+    "retry_step",
+    "assert_text_exists",
+    "assert_url_contains",
+]
+
+
+class InterventionPlanStep(BaseModel):
+    action: InterventionAction
+    target: str | None = None
+    value: str | None = None
+    reason: str | None = None
+
+
+class InterventionPlan(BaseModel):
+    summary: str
+    steps: list[InterventionPlanStep] = Field(default_factory=list)
+    safety_notes: list[str] = Field(default_factory=list)
+
+
+class HumanInterventionCreate(BaseModel):
+    user_instruction: str = Field(min_length=1, max_length=4000)
+
+
+class HumanInterventionRead(BaseModel):
+    id: int
+    run_id: int
+    step_id: int | None = None
+    user_instruction: str | None = None
+    llm_plan_json: dict[str, Any] | None = None
+    execution_result_json: dict[str, Any] | None = None
+    status: str
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class RuleDraftRead(BaseModel):
+    id: int
+    source_type: str
+    source_id: int | None = None
+    rule_type: str
+    rule_name: str
+    proposed_content_json: dict[str, Any] | None = None
+    reason: str | None = None
+    status: str
+    created_at: datetime
+    updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)

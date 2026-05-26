@@ -386,9 +386,18 @@ button:disabled {
 }
 
 .status-badge--running,
-.status-badge--created {
+.status-badge--created,
+.status-badge--planned,
+.status-badge--pending_review,
+.status-badge--open {
   background: #fef3c7;
   color: #92400e;
+}
+
+.status-badge--succeeded,
+.status-badge--enabled {
+  background: #dcfce7;
+  color: #166534;
 }
 
 .screenshot-panel__frame {
@@ -615,6 +624,23 @@ button:disabled {
   gap: 10px;
   color: #64748b;
   font-size: 12px;
+}
+
+.artifact-link-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.artifact-link-grid a {
+  border-radius: 999px;
+  background: #eef2ff;
+  color: #3730a3;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 5px 8px;
+  text-decoration: none;
 }
 
 .report-preview-panel iframe,

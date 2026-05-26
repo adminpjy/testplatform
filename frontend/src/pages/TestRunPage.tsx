@@ -3,11 +3,16 @@ import { useEffect, useMemo, useState } from "react";
 
 import {
   analyzeTestRun,
+  convertInterventionToRule,
   createTestRun,
+  executeIntervention,
   getProjects,
+  getRunFailureSamples,
+  getRunHumanInterventions,
   getTestRunArtifacts,
   getTestRuns,
   getTestRunSteps,
+  interveneStep,
   planTestRun
 } from "../api/platform";
 import { DebugDrawer } from "../components/DebugDrawer";
@@ -18,6 +23,9 @@ import { StatusBadge } from "../components/StatusBadge";
 import { StepTree } from "../components/StepTree";
 import type {
   AnalyzeResult,
+  FailureSample,
+  HumanIntervention,
+  RuleDraft,
   TestArtifact,
   TestCaseDSL,
   TestCaseStep,
@@ -41,6 +49,9 @@ export function TestRunPage() {
   const [activeRun, setActiveRun] = useState<TestRun | null>(null);
   const [steps, setSteps] = useState<TestStepRun[]>([]);
   const [artifacts, setArtifacts] = useState<TestArtifact[]>([]);
+  const [failureSamples, setFailureSamples] = useState<FailureSample[]>([]);
+  const [interventions, setInterventions] = useState<HumanIntervention[]>([]);
+  const [latestRuleDraft, setLatestRuleDraft] = useState<RuleDraft | null>(null);
   const [apiError, setApiError] = useState<string | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isExecuting, setIsExecuting] = useState(false);
@@ -77,9 +88,17 @@ export function TestRunPage() {
 
   async function selectRun(run: TestRun) {
     setActiveRun(run);
-    const [stepList, artifactList] = await Promise.all([getTestRunSteps(run.id), getTestRunArtifacts(run.id)]);
+    const [stepList, artifactList, sampleList, interventionList] = await Promise.all([
+      getTestRunSteps(run.id),
+      getTestRunArtifacts(run.id),
+      getRunFailureSamples(run.id),
+      getRunHumanInterventions(run.id)
+    ]);
     setSteps(stepList);
     setArtifacts(artifactList);
+    setFailureSamples(sampleList);
+    setInterventions(interventionList);
+    setLatestRuleDraft(null);
     setScreenshotRefreshKey(Date.now());
   }
 
@@ -141,6 +160,51 @@ export function TestRunPage() {
       setApiError(error instanceof Error ? error.message : String(error));
     } finally {
       setIsExecuting(false);
+    }
+  }
+
+  async function handleCreateIntervention(userInstruction: string) {
+    if (!activeRun) {
+      setApiError("请先选择失败运行。");
+      return;
+    }
+    const targetStep = steps.find((step) => step.status === "failed") || steps[steps.length - 1];
+    if (!targetStep) {
+      setApiError("当前运行没有可介入的步骤。");
+      return;
+    }
+    setApiError(null);
+    try {
+      const intervention = await interveneStep(activeRun.id, targetStep.id, { user_instruction: userInstruction });
+      setInterventions((current) => [intervention, ...current.filter((item) => item.id !== intervention.id)]);
+    } catch (error) {
+      setApiError(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function handleExecuteIntervention(interventionId: number) {
+    if (!activeRun) {
+      return;
+    }
+    setApiError(null);
+    try {
+      const intervention = await executeIntervention(activeRun.id, interventionId);
+      setInterventions((current) => [intervention, ...current.filter((item) => item.id !== intervention.id)]);
+    } catch (error) {
+      setApiError(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function handleConvertIntervention(interventionId: number) {
+    if (!activeRun) {
+      return;
+    }
+    setApiError(null);
+    try {
+      const draft = await convertInterventionToRule(activeRun.id, interventionId);
+      setLatestRuleDraft(draft);
+    } catch (error) {
+      setApiError(error instanceof Error ? error.message : String(error));
     }
   }
 
@@ -251,7 +315,13 @@ export function TestRunPage() {
         run={activeRun}
         steps={steps}
         artifacts={artifacts}
+        failureSamples={failureSamples}
+        interventions={interventions}
+        latestRuleDraft={latestRuleDraft}
         interventionMode={interventionOpen}
+        onCreateIntervention={handleCreateIntervention}
+        onExecuteIntervention={handleExecuteIntervention}
+        onConvertIntervention={handleConvertIntervention}
         onClose={() => {
           setDrawerOpen(false);
           setInterventionOpen(false);

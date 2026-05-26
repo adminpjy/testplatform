@@ -2,10 +2,10 @@ import { BookOpen, FileWarning, FlaskConical, History, Lightbulb, RefreshCw } fr
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
 
-import { getAbilityRules, getTestRuns } from "../api/platform";
+import { enableRuleDraft, getAbilityRules, getFailureSamples, getHumanInterventions, getRuleDrafts } from "../api/platform";
 import { DataTable } from "../components/DataTable";
 import { StatusBadge } from "../components/StatusBadge";
-import type { AbilityRule, TestRun } from "../types/platform";
+import type { AbilityRule, FailureSample, HumanIntervention, RuleDraft } from "../types/platform";
 
 type AbilityTab = "rules" | "knowledge" | "failures" | "interventions" | "drafts";
 
@@ -20,7 +20,9 @@ const tabs: Array<{ id: AbilityTab; label: string }> = [
 export function AbilityCenterPage() {
   const [activeTab, setActiveTab] = useState<AbilityTab>("rules");
   const [rules, setRules] = useState<AbilityRule[]>([]);
-  const [runs, setRuns] = useState<TestRun[]>([]);
+  const [failureSamples, setFailureSamples] = useState<FailureSample[]>([]);
+  const [interventions, setInterventions] = useState<HumanIntervention[]>([]);
+  const [ruleDrafts, setRuleDrafts] = useState<RuleDraft[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -32,9 +34,16 @@ export function AbilityCenterPage() {
     setLoading(true);
     setError(null);
     try {
-      const [ruleList, runList] = await Promise.all([getAbilityRules(), getTestRuns()]);
+      const [ruleList, sampleList, interventionList, draftList] = await Promise.all([
+        getAbilityRules(),
+        getFailureSamples(),
+        getHumanInterventions(),
+        getRuleDrafts()
+      ]);
       setRules(ruleList);
-      setRuns(runList);
+      setFailureSamples(sampleList);
+      setInterventions(interventionList);
+      setRuleDrafts(draftList);
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : String(requestError));
     } finally {
@@ -49,7 +58,16 @@ export function AbilityCenterPage() {
       return groups;
     }, {});
   }, [rules]);
-  const failedRuns = runs.filter((run) => run.status === "failed");
+
+  async function handleEnableDraft(draftId: number) {
+    setError(null);
+    try {
+      await enableRuleDraft(draftId);
+      await loadData();
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : String(requestError));
+    }
+  }
 
   return (
     <div className="page-stack">
@@ -80,13 +98,9 @@ export function AbilityCenterPage() {
       {activeTab === "knowledge" ? (
         <PlaceholderPanel icon={<BookOpen size={18} />} title="页面知识库" text="页面指纹、语义目标和成功定位路径会在后续运行复盘中沉淀。" />
       ) : null}
-      {activeTab === "failures" ? <FailureMiniView failedRuns={failedRuns} /> : null}
-      {activeTab === "interventions" ? (
-        <PlaceholderPanel icon={<History size={18} />} title="人工介入记录" text="人工介入入口已在测试运行页预留，后续可接入持久化记录列表。" />
-      ) : null}
-      {activeTab === "drafts" ? (
-        <PlaceholderPanel icon={<Lightbulb size={18} />} title="规则草案" text="失败分析和人工介入可形成规则草案，当前页面保留审核入口。" />
-      ) : null}
+      {activeTab === "failures" ? <FailureMiniView samples={failureSamples} /> : null}
+      {activeTab === "interventions" ? <InterventionView interventions={interventions} /> : null}
+      {activeTab === "drafts" ? <RuleDraftView drafts={ruleDrafts} onEnableDraft={handleEnableDraft} /> : null}
     </div>
   );
 }
@@ -118,7 +132,7 @@ function RulesView({ groupedRules }: { groupedRules: Record<string, AbilityRule[
   );
 }
 
-function FailureMiniView({ failedRuns }: { failedRuns: TestRun[] }) {
+function FailureMiniView({ samples }: { samples: FailureSample[] }) {
   return (
     <section className="surface-panel">
       <div className="panel-heading">
@@ -126,17 +140,86 @@ function FailureMiniView({ failedRuns }: { failedRuns: TestRun[] }) {
           <FileWarning size={18} />
           失败样本
         </h2>
-        <span>{failedRuns.length} 条</span>
+        <span>{samples.length} 条</span>
       </div>
       <DataTable
         columns={[
-          { key: "code", title: "运行编码", render: (run) => run.run_code },
-          { key: "instruction", title: "测试目标", render: (run) => run.instruction || "-" },
-          { key: "status", title: "状态", render: (run) => <StatusBadge value={run.status} /> }
+          { key: "id", title: "样本", render: (sample) => `#${sample.id}` },
+          { key: "summary", title: "失败摘要", render: (sample) => sample.failure_summary || "-" },
+          { key: "type", title: "类型", render: (sample) => sample.failure_type || "-" },
+          { key: "status", title: "状态", render: (sample) => <StatusBadge value={sample.status} /> }
         ]}
-        rows={failedRuns}
-        emptyText="暂无失败运行"
-        getRowKey={(run) => run.id}
+        rows={samples}
+        emptyText="暂无失败样本"
+        getRowKey={(sample) => sample.id}
+      />
+    </section>
+  );
+}
+
+function InterventionView({ interventions }: { interventions: HumanIntervention[] }) {
+  return (
+    <section className="surface-panel">
+      <div className="panel-heading">
+        <h2>
+          <History size={18} />
+          人工介入记录
+        </h2>
+        <span>{interventions.length} 条</span>
+      </div>
+      <DataTable
+        columns={[
+          { key: "id", title: "记录", render: (item) => `#${item.id}` },
+          { key: "instruction", title: "用户指令", render: (item) => item.user_instruction || "-" },
+          { key: "status", title: "状态", render: (item) => <StatusBadge value={item.status} /> }
+        ]}
+        rows={interventions}
+        emptyText="暂无人工介入记录"
+        getRowKey={(item) => item.id}
+      />
+    </section>
+  );
+}
+
+function RuleDraftView({
+  drafts,
+  onEnableDraft
+}: {
+  drafts: RuleDraft[];
+  onEnableDraft: (draftId: number) => Promise<void>;
+}) {
+  return (
+    <section className="surface-panel">
+      <div className="panel-heading">
+        <h2>
+          <Lightbulb size={18} />
+          规则草案
+        </h2>
+        <span>{drafts.length} 条</span>
+      </div>
+      <DataTable
+        columns={[
+          { key: "name", title: "草案名称", render: (draft) => draft.rule_name },
+          { key: "type", title: "类型", render: (draft) => draft.rule_type },
+          { key: "status", title: "状态", render: (draft) => <StatusBadge value={draft.status} /> },
+          {
+            key: "action",
+            title: "操作",
+            render: (draft) => (
+              <button
+                className="secondary-button"
+                type="button"
+                disabled={draft.status === "enabled"}
+                onClick={() => void onEnableDraft(draft.id)}
+              >
+                手动启用
+              </button>
+            )
+          }
+        ]}
+        rows={drafts}
+        emptyText="暂无规则草案"
+        getRowKey={(draft) => draft.id}
       />
     </section>
   );

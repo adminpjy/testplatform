@@ -18,11 +18,15 @@ function Invoke-JsonPost {
 }
 $requiredPaths = @(
   "backend/app/api",
+  "backend/app/api/failure_samples.py",
+  "backend/app/api/human_interventions.py",
+  "backend/app/api/rule_drafts.py",
   "backend/app/core",
   "backend/app/db",
   "backend/app/models",
   "backend/app/schemas",
   "backend/app/services",
+  "backend/app/services/human_interventions.py",
   "backend/app/llm",
   "backend/app/execution",
   "backend/app/abilities",
@@ -654,6 +658,92 @@ try {
     Write-Error "Vision fallback missing status was not recorded."
   }
 
+  $lowSteps = Invoke-RestMethod -Uri "$baseUrl/api/test-runs/$($lowConfidenceRun.id)/steps" -TimeoutSec 5
+  $failedLowStep = $lowSteps | Where-Object { $_.status -eq "failed" } | Select-Object -First 1
+  if ($null -eq $failedLowStep) {
+    Write-Error "Low confidence run did not persist a failed step for intervention."
+  }
+
+  $failureSamples = Invoke-RestMethod -Uri "$baseUrl/api/failure-samples?run_id=$($lowConfidenceRun.id)" -TimeoutSec 5
+  if (@($failureSamples).Count -lt 1) {
+    Write-Error "Failed run did not create a FailureSample."
+  }
+  $failureSample = @($failureSamples)[0]
+  $requiredFailureEvidence = @(
+    "screenshot_path",
+    "dom_snapshot_path",
+    "accessibility_snapshot_path",
+    "locator_debug_path",
+    "runtime_stream_path",
+    "execution_trace_path",
+    "report_path"
+  )
+  foreach ($fieldName in $requiredFailureEvidence) {
+    $evidencePath = $failureSample.PSObject.Properties[$fieldName].Value
+    if ([string]::IsNullOrWhiteSpace($evidencePath) -or -not (Test-Path $evidencePath)) {
+      Write-Error "FailureSample evidence '$fieldName' was not persisted on disk."
+    }
+  }
+  if ([string]::IsNullOrWhiteSpace($failureSample.failure_summary)) {
+    Write-Error "FailureSample did not include a failure summary."
+  }
+
+  $interventionPayload = @{
+    user_instruction = "这里先点击继续访问，然后重试原步骤。"
+  } | ConvertTo-Json -Depth 8
+  $intervention = Invoke-JsonPost `
+    -Uri "$baseUrl/api/test-runs/$($lowConfidenceRun.id)/steps/$($failedLowStep.id)/intervene" `
+    -Body $interventionPayload `
+    -TimeoutSec 10
+  if ($intervention.status -ne "planned") {
+    Write-Error "Human intervention was not planned."
+  }
+  $interventionActions = @($intervention.llm_plan_json.steps | ForEach-Object { $_.action })
+  if ($interventionActions -notcontains "click" -or $interventionActions -notcontains "retry_step") {
+    Write-Error "InterventionPlan did not include expected click and retry_step actions."
+  }
+  $allowedInterventionActions = @(
+    "click",
+    "input",
+    "select",
+    "choose_radio",
+    "close_dialog",
+    "confirm_dialog",
+    "wait",
+    "retry_step",
+    "assert_text_exists",
+    "assert_url_contains"
+  )
+  foreach ($action in $interventionActions) {
+    if ($allowedInterventionActions -notcontains $action) {
+      Write-Error "InterventionPlan returned unsupported action '$action'."
+    }
+  }
+
+  $executedIntervention = Invoke-JsonPost `
+    -Uri "$baseUrl/api/test-runs/$($lowConfidenceRun.id)/interventions/$($intervention.id)/execute" `
+    -Body "{}" `
+    -TimeoutSec 10
+  if ($executedIntervention.status -ne "succeeded") {
+    Write-Error "Human intervention execution did not succeed."
+  }
+
+  $ruleDraft = Invoke-JsonPost `
+    -Uri "$baseUrl/api/test-runs/$($lowConfidenceRun.id)/interventions/$($intervention.id)/convert-to-rule" `
+    -Body "{}" `
+    -TimeoutSec 10
+  if ($ruleDraft.status -ne "pending_review") {
+    Write-Error "RuleDraft generated from human intervention is not pending_review."
+  }
+  $ruleDrafts = Invoke-RestMethod -Uri "$baseUrl/api/rule-drafts" -TimeoutSec 5
+  if (@($ruleDrafts | Where-Object { $_.id -eq $ruleDraft.id }).Count -lt 1) {
+    Write-Error "Generated RuleDraft was not listed."
+  }
+  $enabledDraftRule = Invoke-JsonPost -Uri "$baseUrl/api/rule-drafts/$($ruleDraft.id)/enable" -Body "{}" -TimeoutSec 10
+  if ($enabledDraftRule.production_enabled -ne $true) {
+    Write-Error "RuleDraft was not manually enabled as an AbilityRule."
+  }
+
   $runtimeMessages = Invoke-RestMethod -Uri "$baseUrl/api/test-runs/$($approvalGoalRun.id)/runtime-messages" -TimeoutSec 5
   if (@($runtimeMessages).Count -lt 1) {
     Write-Error "Runtime messages were not persisted to the database."
@@ -702,7 +792,7 @@ try {
     Write-Error "Runtime stream did not replay history after completion."
   }
 
-  Write-Host "Stage 8 frontend pages check passed."
+  Write-Host "Stage 9 failure samples and human intervention check passed."
 } finally {
   if ($null -ne $process -and -not $process.HasExited) {
     Stop-Process -Id $process.Id -Force
