@@ -14,7 +14,6 @@ import {
   getTestRuns,
   getTestRunSteps,
   interveneStep,
-  planTestRun,
   streamAnalyzeAndPlan
 } from "../api/platform";
 import { AnalysisTracePanel } from "../components/AnalysisTracePanel";
@@ -73,7 +72,7 @@ export function TestRunPage() {
   const [password, setPassword] = useState("");
   const [testDataJson, setTestDataJson] = useState(DEFAULT_TEST_DATA);
   const [visionFallback, setVisionFallback] = useState(false);
-  const [instruction, setInstruction] = useState("登录系统，进入我的待办，确认页面存在我的待办");
+  const [instruction, setInstruction] = useState("1.打开真实内网系统 https://work.bypc.com.cn/，如果跳转到统一身份认证页面，等待登录页面加载完成，输入测试账号和密码，点击登录，登录后验证进入系统首页。2.进入“工作台-我的待办”3.获取待办列表数量4.循环点击列表中的链接，弹出对话框5.点击“返回”/取消/关闭等代表关闭对话框的按钮，关闭对话框6.反复4-5步，直至所有行被点击.");
   const [analysis, setAnalysis] = useState<AnalyzeResult | null>(null);
   const [plannedDsl, setPlannedDsl] = useState<TestCaseDSL | null>(null);
   const [analysisMessages, setAnalysisMessages] = useState<RuntimeMessage[]>([]);
@@ -114,9 +113,6 @@ export function TestRunPage() {
         setSelectedSystemId(system.id);
         setBaseUrl(resolveSystemUrl(system));
         setUsername(system.accounts[0]?.username || "");
-      }
-      if (runList.length > 0) {
-        await selectRun(runList[0]);
       }
     } catch (error) {
       setApiError(error instanceof Error ? error.message : String(error));
@@ -171,6 +167,7 @@ export function TestRunPage() {
     setAnalysis(null);
     setPlannedDsl(null);
     setAnalysisMessages([]);
+    clearSelectedRun();
     try {
       await streamAnalyzeAndPlan({
         project_id: Number(selectedProjectId),
@@ -183,6 +180,9 @@ export function TestRunPage() {
         stream: true
       }, (wireMessage) => {
         const message = normalizeRuntimeMessage(wireMessage);
+        if (message.phase === "llm_chunk") {
+          return;
+        }
         setAnalysisMessages((current) => appendRuntimeMessage(current, message));
         const metadata = message.metadata;
         if (metadata.analysis && typeof metadata.analysis === "object") {
@@ -207,22 +207,16 @@ export function TestRunPage() {
       setApiError("请先选择项目。");
       return;
     }
+    if (!plannedDsl) {
+      setApiError("请先完成分析并生成 DSL 后再开始执行。");
+      return;
+    }
     setApiError(null);
     setIsExecuting(true);
     setConfigCollapsed(true);
     setActiveTab("steps");
     try {
-      const planned = plannedDsl || await planTestRun({
-          project_id: Number(selectedProjectId),
-          system_id: selectedSystemId ? Number(selectedSystemId) : undefined,
-          instruction,
-          base_url: baseUrl,
-          credentials: { username, password },
-          testData: parseTestData(),
-          settings: { visionFallbackEnabled: visionFallback },
-          stream: true
-        });
-      const executableDsl = materializeDsl(planned, { baseUrl, username, password, visionFallback, instruction, testData: parseTestData() });
+      const executableDsl = materializeDsl(plannedDsl, { baseUrl, username, password, visionFallback, instruction, testData: parseTestData() });
       const run = await createTestRun({
         project_id: Number(selectedProjectId),
         system_id: selectedSystemId ? Number(selectedSystemId) : null,
@@ -251,6 +245,16 @@ export function TestRunPage() {
 
   function openPreview(src: string, title: string) {
     setPreview({ src, title });
+  }
+
+  function clearSelectedRun() {
+    setActiveRun(null);
+    setSteps([]);
+    setArtifacts([]);
+    setFailureSamples([]);
+    setInterventions([]);
+    setLatestRuleDraft(null);
+    setScreenshotRefreshKey(Date.now());
   }
 
   async function handleCreateIntervention(userInstruction: string) {
@@ -298,6 +302,17 @@ export function TestRunPage() {
     }
   }
 
+  const canExecute = Boolean(plannedDsl && selectedProjectId && instruction.trim() && !isAnalyzing && !isExecuting);
+  const executeDisabledReason = executionGateReason({
+    plannedDsl,
+    selectedProjectId,
+    instruction,
+    isAnalyzing,
+    isExecuting,
+    analysisMessages
+  });
+  const canIntervene = Boolean(activeRun && ["failed", "needs_human"].includes(activeRun.status));
+
   return (
     <div className="test-run-workspace">
       <section className="workspace-section">
@@ -321,6 +336,9 @@ export function TestRunPage() {
           instruction={instruction}
           testDataJson={testDataJson}
           analysis={analysis}
+          canExecute={canExecute}
+          executeDisabledReason={executeDisabledReason}
+          canIntervene={canIntervene}
           isAnalyzing={isAnalyzing}
           isExecuting={isExecuting}
           hasActiveRun={Boolean(activeRun)}
@@ -351,7 +369,7 @@ export function TestRunPage() {
         <div className="workspace-section__heading">
           <div>
             <h2>任务分解观察区</h2>
-            <p>查看 LLM 交互状态、流式回复、信息完整性判断和生成的 DSL 步骤。</p>
+            <p>查看 LLM 交互状态、信息完整性判断和生成的 DSL 步骤。</p>
           </div>
         </div>
         {analysisMessages.length > 0 || plannedDsl || isAnalyzing ? (
@@ -368,31 +386,33 @@ export function TestRunPage() {
             <p>实时查看执行消息、Cube 执行环境状态、当前截图和失败摘要。</p>
           </div>
         </div>
-        <div className="main-grid execution-observation-grid" ref={mainViewRef}>
-          <div className="runtime-column">
-            {activeRun ? (
+        {activeRun ? (
+          <div className="main-grid execution-observation-grid" ref={mainViewRef}>
+            <div className="runtime-column">
               <RuntimeStreamPanel runId={activeRun.id} steps={steps} onPreviewScreenshot={openPreview} />
-            ) : (
-              <div className="surface-panel empty-state runtime-empty-state">执行后显示 AI 执行过程</div>
-            )}
+            </div>
+            <div className="screenshot-column">
+              <CurrentScreenshotCard
+                run={activeRun}
+                steps={steps}
+                refreshKey={screenshotRefreshKey}
+                onRefresh={() => setScreenshotRefreshKey(Date.now())}
+                onPreview={openPreview}
+              />
+              <ErrorSummaryCard
+                run={activeRun}
+                steps={steps}
+                apiError={apiError}
+                onIntervention={() => setInterventionOpen(true)}
+                onDebug={() => setDrawerOpen(true)}
+              />
+            </div>
           </div>
-          <div className="screenshot-column">
-            <CurrentScreenshotCard
-              run={activeRun}
-              steps={steps}
-              refreshKey={screenshotRefreshKey}
-              onRefresh={() => setScreenshotRefreshKey(Date.now())}
-              onPreview={openPreview}
-            />
-            <ErrorSummaryCard
-              run={activeRun}
-              steps={steps}
-              apiError={apiError}
-              onIntervention={() => setInterventionOpen(true)}
-              onDebug={() => setDrawerOpen(true)}
-            />
+        ) : (
+          <div className="surface-panel empty-state runtime-empty-state" ref={mainViewRef}>
+            AI 执行观察区仅显示当前执行或从“运行记录”中选择的运行。
           </div>
-        </div>
+        )}
       </section>
 
       <section className="workspace-section result-analysis-section">
@@ -594,6 +614,53 @@ function appendRuntimeMessage(current: RuntimeMessage[], next: RuntimeMessage): 
     return copy;
   }
   return [...current, next].sort((left, right) => left.id - right.id);
+}
+
+function executionGateReason({
+  plannedDsl,
+  selectedProjectId,
+  instruction,
+  isAnalyzing,
+  isExecuting,
+  analysisMessages
+}: {
+  plannedDsl: TestCaseDSL | null;
+  selectedProjectId: number | "";
+  instruction: string;
+  isAnalyzing: boolean;
+  isExecuting: boolean;
+  analysisMessages: RuntimeMessage[];
+}): string | null {
+  if (isExecuting) return "当前正在执行。";
+  if (plannedDsl) return null;
+  if (isAnalyzing) return "正在分析，等待 DSL 生成后才能开始执行。";
+  if (!selectedProjectId) return "请选择项目后再分析。";
+  if (!instruction.trim()) return "请输入自然语言测试目标。";
+  const errorMessage = [...analysisMessages].reverse().find((message) => message.type === "error");
+  if (errorMessage?.content) {
+    return `DSL 未生成：${compactText(errorMessage.content)}`;
+  }
+  const analysis = latestAnalysisResult(analysisMessages);
+  if (analysis && analysis.readyToExecute === false) {
+    const missingFields = Array.isArray(analysis.missingFields) ? analysis.missingFields.map(String) : [];
+    const questions = Array.isArray(analysis.clarifyingQuestions) ? analysis.clarifyingQuestions.map(String) : [];
+    const reasons = [...missingFields.map((field) => `缺少 ${field}`), ...questions];
+    return reasons.length > 0 ? `DSL 未生成：${reasons[0]}` : "DSL 未生成：当前信息不足。";
+  }
+  if (analysisMessages.length > 0) {
+    return "DSL 未生成：请查看任务分解观察区中的失败原因。";
+  }
+  return "请先点击“分析”，生成 DSL 后再开始执行。";
+}
+
+function latestAnalysisResult(messages: RuntimeMessage[]): Record<string, unknown> | null {
+  const message = [...messages].reverse().find((item) => item.metadata.analysis && typeof item.metadata.analysis === "object");
+  return message?.metadata.analysis as Record<string, unknown> | null;
+}
+
+function compactText(value: string): string {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  return normalized.length > 90 ? `${normalized.slice(0, 90)}...` : normalized;
 }
 
 function materializeDsl(

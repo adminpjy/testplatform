@@ -119,7 +119,7 @@ export function readableRuntimeMessage(message: RuntimeMessage): string {
     return message.content || "执行环境已经启动完成，可以开始打开被测系统。";
   }
   if (message.phase === "llm_response") {
-    return message.content || "大模型流式回复已接收完成，正在进入结构化处理。";
+    return message.content || "大模型回复已接收完成，正在进入结构化处理。";
   }
   if (message.phase === "vision") {
     return "常规页面结构定位置信度不足，正在准备使用截图识别作为兜底。";

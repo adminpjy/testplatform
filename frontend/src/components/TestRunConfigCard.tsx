@@ -16,6 +16,9 @@ export function TestRunConfigCard({
   instruction,
   testDataJson,
   analysis,
+  canExecute,
+  executeDisabledReason,
+  canIntervene,
   isAnalyzing,
   isExecuting,
   hasActiveRun,
@@ -47,6 +50,9 @@ export function TestRunConfigCard({
   instruction: string;
   testDataJson: string;
   analysis: AnalyzeResult | null;
+  canExecute: boolean;
+  executeDisabledReason: string | null;
+  canIntervene: boolean;
   isAnalyzing: boolean;
   isExecuting: boolean;
   hasActiveRun: boolean;
@@ -150,11 +156,11 @@ export function TestRunConfigCard({
           <Search size={16} />
           {isAnalyzing ? "分析中" : "分析"}
         </button>
-        <button className="primary-button" type="button" onClick={onExecute} disabled={isExecuting || !instruction}>
+        <button className="primary-button" type="button" onClick={onExecute} disabled={isExecuting || isAnalyzing || !canExecute}>
           <Play size={16} />
           {isExecuting ? "执行中" : "开始执行"}
         </button>
-        <button className="secondary-button" type="button" onClick={onIntervention} disabled={!hasActiveRun}>
+        <button className="secondary-button" type="button" onClick={onIntervention} disabled={!canIntervene}>
           <UserRoundCheck size={16} />
           人工介入
         </button>
@@ -162,6 +168,7 @@ export function TestRunConfigCard({
           <Bug size={16} />
           调试详情
         </button>
+        {executeDisabledReason ? <span className="execution-gate-note">{executeDisabledReason}</span> : null}
       </div>
     </section>
   );

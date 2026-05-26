@@ -1,5 +1,5 @@
 import { AlertTriangle, Bot, CheckCircle2, Loader2 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef } from "react";
 
 import type { TestCaseDSL } from "../types/platform";
 import type { RuntimeMessage } from "../types/runtime";
@@ -15,15 +15,13 @@ export function AnalysisTracePanel({
   analyzing: boolean;
   dsl: TestCaseDSL | null;
 }) {
-  const [showChunks, setShowChunks] = useState(true);
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const visibleMessages = messages.filter((message) => message.phase !== "llm_chunk");
-  const chunks = useMemo(() => collectChunks(messages), [messages]);
-  const status = useMemo(() => buildAnalysisStatus(messages, dsl), [messages, dsl]);
+  const status = useMemo(() => buildAnalysisStatus(visibleMessages, dsl, analyzing), [visibleMessages, dsl, analyzing]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [messages]);
+  }, [visibleMessages.length]);
 
   if (!analyzing && messages.length === 0 && !dsl) {
     return null;
@@ -57,14 +55,9 @@ export function AnalysisTracePanel({
           <small>{status.latestMessage}</small>
         </div>
         <div>
-          <span>流式回复</span>
-          <strong>{status.analyzeChunks + status.planChunks} 段</strong>
-          <small>分析 {status.analyzeChunks} 段，DSL {status.planChunks} 段</small>
-        </div>
-        <div>
           <span>DSL 步骤</span>
           <strong>{status.dslSteps > 0 ? `${status.dslSteps} 步` : "待生成"}</strong>
-          <small>{dsl ? "已生成可执行步骤" : "信息足够后自动生成"}</small>
+          <small>{status.dslDetail}</small>
         </div>
       </div>
 
@@ -115,47 +108,21 @@ export function AnalysisTracePanel({
               <JsonCollapseBlock title="查看完整 DSL JSON" value={dsl} />
             </>
           ) : (
-            <div className="empty-state">分析完成且信息足够后展示 DSL</div>
+            <div className="dsl-empty-reason">
+              <strong>{status.dslTitle}</strong>
+              <p>{status.dslDetail}</p>
+              {status.dslReasons.length > 0 ? (
+                <ul>
+                  {status.dslReasons.map((reason) => (
+                    <li key={reason}>{reason}</li>
+                  ))}
+                </ul>
+              ) : null}
+            </div>
           )}
         </aside>
       </div>
-
-      {(chunks.analyze || chunks.plan) && showChunks ? (
-        <div className="llm-chunk-grid">
-          <button className="ghost-button llm-chunk-grid__toggle" type="button" onClick={() => setShowChunks(false)}>
-            收起 LLM 原始流式输出
-          </button>
-          {chunks.analyze ? (
-            <div>
-              <strong>Analyze 流式输出</strong>
-              <pre className="metadata-block llm-chunk-block">{chunks.analyze}</pre>
-            </div>
-          ) : null}
-          {chunks.plan ? (
-            <div>
-              <strong>Plan / DSL 流式输出</strong>
-              <pre className="metadata-block llm-chunk-block">{chunks.plan}</pre>
-            </div>
-          ) : null}
-        </div>
-      ) : chunks.analyze || chunks.plan ? (
-        <button className="ghost-button" type="button" onClick={() => setShowChunks(true)}>
-          展开 LLM 原始流式输出
-        </button>
-      ) : null}
     </section>
-  );
-}
-
-function collectChunks(messages: RuntimeMessage[]): { analyze: string; plan: string } {
-  return messages.reduce(
-    (result, message) => {
-      if (message.phase !== "llm_chunk") return result;
-      const stage = message.metadata.stage === "plan" ? "plan" : "analyze";
-      result[stage] += message.content || "";
-      return result;
-    },
-    { analyze: "", plan: "" }
   );
 }
 
@@ -177,11 +144,10 @@ function phaseLabel(phase: string): string {
   return phase;
 }
 
-function buildAnalysisStatus(messages: RuntimeMessage[], dsl: TestCaseDSL | null) {
+function buildAnalysisStatus(messages: RuntimeMessage[], dsl: TestCaseDSL | null, analyzing: boolean) {
   const providerMessage = messages.find((message) => metadataValue(message, "provider") || metadataValue(message, "model"));
   const latest = [...messages].reverse().find((message) => message.phase !== "llm_chunk");
-  const analyzeChunks = messages.filter((message) => message.phase === "llm_chunk" && message.metadata.stage !== "plan").length;
-  const planChunks = messages.filter((message) => message.phase === "llm_chunk" && message.metadata.stage === "plan").length;
+  const dslStatus = buildDslStatus(messages, dsl, analyzing);
   return {
     provider: metadataValue(providerMessage, "provider") || "mock",
     model: metadataValue(providerMessage, "model") || "DeepSeek-V4",
@@ -189,10 +155,61 @@ function buildAnalysisStatus(messages: RuntimeMessage[], dsl: TestCaseDSL | null
     isMock: metadataValue(providerMessage, "mock") === "true" || metadataValue(providerMessage, "provider") === "mock",
     currentStage: latest ? readableTitle(latest) : "等待分析",
     latestMessage: latest?.content || "点击分析后显示 LLM 交互状态",
-    analyzeChunks,
-    planChunks,
-    dslSteps: dsl?.steps.length || 0
+    dslSteps: dsl?.steps.length || 0,
+    ...dslStatus
   };
+}
+
+function buildDslStatus(messages: RuntimeMessage[], dsl: TestCaseDSL | null, analyzing: boolean) {
+  if (dsl && dsl.steps.length > 0) {
+    return {
+      dslTitle: "DSL 已生成",
+      dslDetail: "已生成可执行步骤，可以开始执行。",
+      dslReasons: []
+    };
+  }
+  if (analyzing) {
+    return {
+      dslTitle: "正在生成 DSL",
+      dslDetail: "正在等待 LLM 返回并校验结构化步骤。",
+      dslReasons: []
+    };
+  }
+  const errorMessage = [...messages].reverse().find((message) => message.type === "error");
+  if (errorMessage) {
+    return {
+      dslTitle: "DSL 未生成",
+      dslDetail: "分析流程失败，未获得可执行 DSL。",
+      dslReasons: [errorMessage.content || "分析失败，但后端未返回具体错误。"]
+    };
+  }
+  const analysis = latestAnalysis(messages);
+  if (analysis && analysis.readyToExecute === false) {
+    const missingFields = Array.isArray(analysis.missingFields) ? analysis.missingFields.map(String) : [];
+    const questions = Array.isArray(analysis.clarifyingQuestions) ? analysis.clarifyingQuestions.map(String) : [];
+    return {
+      dslTitle: "需要补充信息",
+      dslDetail: "当前信息不足，暂不生成 DSL。",
+      dslReasons: [...missingFields.map((item) => `缺少字段：${item}`), ...questions]
+    };
+  }
+  if (messages.length > 0) {
+    return {
+      dslTitle: "DSL 未生成",
+      dslDetail: "LLM 未返回符合平台 DSL 结构的结果。",
+      dslReasons: ["请查看左侧分析消息中的错误，补充信息后重新分析。"]
+    };
+  }
+  return {
+    dslTitle: "等待分析",
+    dslDetail: "点击“分析”后生成 DSL。",
+    dslReasons: []
+  };
+}
+
+function latestAnalysis(messages: RuntimeMessage[]): Record<string, unknown> | null {
+  const message = [...messages].reverse().find((item) => item.metadata.analysis && typeof item.metadata.analysis === "object");
+  return message?.metadata.analysis as Record<string, unknown> | null;
 }
 
 function metadataValue(message: RuntimeMessage | undefined, key: string): string | null {
