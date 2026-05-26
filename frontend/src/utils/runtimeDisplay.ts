@@ -3,6 +3,10 @@ import type { TestStepRun } from "../types/platform";
 
 export type RuntimeFilter = "all" | "action" | "page" | "llm" | "vision" | "error";
 
+export interface RuntimeDetailView {
+  lines: string[];
+}
+
 const phaseTitles: Record<string, string> = {
   understanding: "正在理解测试用例",
   planning: "正在生成测试步骤",
@@ -131,9 +135,74 @@ export function runtimeFilterOf(message: RuntimeMessage): RuntimeFilter {
   return "action";
 }
 
+export function runtimeDetailView(message: RuntimeMessage): RuntimeDetailView | null {
+  const metadata = message.metadata || {};
+  const lines: string[] = [];
+  const stepNumber = metadataValue(metadata, "step_number");
+  const target = metadataValue(metadata, "target");
+  const action = metadataValue(metadata, "action");
+  const url = metadataValue(metadata, "url");
+  const steps = metadataValue(metadata, "steps");
+  const status = metadataValue(metadata, "status");
+  const strategy = metadataValue(metadata, "strategy");
+  const confidence = metadataValue(metadata, "confidence");
+  const fallbackReason = metadataValue(metadata, "fallback_reason");
+  const requested = metadataValue(metadata, "requested");
+  const summary = metadataValue(metadata, "summary");
+  const report = metadataValue(metadata, "report");
+
+  if (stepNumber) lines.push(`步骤编号：S${String(stepNumber).padStart(3, "0")}`);
+  if (action) lines.push(`执行动作：${actionTitles[String(action)] || String(action)}`);
+  if (target) lines.push(`操作目标：${target}`);
+  if (url) lines.push(`访问地址：${url}`);
+  if (steps) lines.push(`预计步骤数：${steps}`);
+  if (status) lines.push(`处理状态：${status}`);
+  if (strategy) lines.push(`定位来源：${locatorStrategyLabel(String(strategy))}`);
+  if (confidence) lines.push(`定位置信度：${formatConfidence(confidence)}`);
+  if (fallbackReason) lines.push(`兜底原因：${fallbackReason}`);
+  if (requested !== null && message.phase === "vision") {
+    lines.push(`视觉兜底配置：${requested === "true" ? "已开启" : "未开启"}`);
+  }
+  if (summary) lines.push(`摘要文件：${summary}`);
+  if (report) lines.push(`报告文件：${report}`);
+
+  if (lines.length === 0) {
+    return null;
+  }
+  return { lines };
+}
+
 export function metadataString(message: RuntimeMessage, key: string): string | null {
   const value = message.metadata[key];
   return typeof value === "string" || typeof value === "number" ? String(value) : null;
+}
+
+function metadataValue(metadata: Record<string, unknown>, key: string): string | null {
+  const value = metadata[key];
+  if (value === undefined || value === null || value === "") return null;
+  if (typeof value === "boolean") return value ? "true" : "false";
+  if (typeof value === "string" || typeof value === "number") return String(value);
+  return null;
+}
+
+function locatorStrategyLabel(value: string): string {
+  if (value.startsWith("page_semantic")) return "页面语义定位";
+  if (value.startsWith("low_confidence_semantic")) return "低置信度页面语义定位";
+  if (value === "playwright_button_exact") return "按钮精确匹配";
+  if (value === "playwright_label_exact") return "表单标签精确匹配";
+  if (value === "playwright_text_exact") return "文本精确匹配";
+  if (value === "explicit_selector") return "显式选择器";
+  if (value === "knowledge_base") return "知识库规则";
+  if (value === "llm_resolver") return "大模型辅助判断";
+  if (value === "vision_fallback") return "视觉兜底";
+  if (value === "url") return "页面地址";
+  return value;
+}
+
+function formatConfidence(value: string): string {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return value;
+  return `${Math.round(numeric * 100)}%`;
 }
 
 function isTechnicalToken(value: string): boolean {

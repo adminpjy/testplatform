@@ -20,6 +20,7 @@ import {
   methodLabel,
   readableRuntimeMessage,
   readableRuntimeTitle,
+  runtimeDetailView,
   runtimeFilterOf,
   type RuntimeFilter
 } from "../utils/runtimeDisplay";
@@ -138,6 +139,7 @@ export function RuntimeStreamPanel({
           const step = findMessageStep(message, steps);
           const screenshot = step?.screenshot_path ? fileUrl(step.screenshot_path) : null;
           const loading = index === visibleMessages.length - 1 && connected && message.type === "progress";
+          const detail = runtimeDetailView(message);
           return (
             <article className={`runtime-stream-message runtime-stream-message--${message.type}`} key={message.id}>
               <div className="runtime-stream-message__icon">{messageIcon(message, loading)}</div>
@@ -164,13 +166,17 @@ export function RuntimeStreamPanel({
                   ) : (
                     <span className="runtime-stream-message__no-shot">暂无截图</span>
                   )}
-                  {Object.keys(message.metadata).length > 0 ? (
+                  {detail ? (
                     <details className="runtime-stream-message__details">
                       <summary>
                         <Eye size={14} />
                         查看详情
                       </summary>
-                      <pre className="metadata-block">{JSON.stringify(message.metadata, null, 2)}</pre>
+                      <ul className="runtime-detail-list">
+                        {detail.lines.map((line) => (
+                          <li key={line}>{line}</li>
+                        ))}
+                      </ul>
                     </details>
                   ) : null}
                 </div>

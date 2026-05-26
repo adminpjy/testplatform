@@ -216,6 +216,24 @@
   font-weight: 700;
 }
 
+.runtime-detail-list {
+  display: grid;
+  gap: 6px;
+  max-height: 220px;
+  overflow: auto;
+  margin: 6px 0 0;
+  border-radius: 7px;
+  background: #f8fafc;
+  padding: 10px 12px 10px 28px;
+  color: #334155;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.runtime-detail-list li {
+  overflow-wrap: anywhere;
+}
+
 .runtime-stream-message__spinner {
   animation: runtime-spin 900ms linear infinite;
 }
