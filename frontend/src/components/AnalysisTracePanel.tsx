@@ -19,6 +19,7 @@ export function AnalysisTracePanel({
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const visibleMessages = messages.filter((message) => message.phase !== "llm_chunk");
   const chunks = useMemo(() => collectChunks(messages), [messages]);
+  const status = useMemo(() => buildAnalysisStatus(messages, dsl), [messages, dsl]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
@@ -33,9 +34,32 @@ export function AnalysisTracePanel({
       <div className="panel-heading">
         <h2>
           <Bot size={16} />
-          LLM 分析与 DSL 生成
+          任务分解观察
         </h2>
         <span>{analyzing ? "流式分析中" : "分析已结束"}</span>
+      </div>
+
+      <div className="llm-status-grid">
+        <div>
+          <span>LLM 交互</span>
+          <strong>{status.provider} / {status.model}</strong>
+          <small>{status.endpoint || "使用本地 Mock Provider"}</small>
+        </div>
+        <div>
+          <span>当前状态</span>
+          <strong>{status.currentStage}</strong>
+          <small>{status.latestMessage}</small>
+        </div>
+        <div>
+          <span>流式回复</span>
+          <strong>{status.analyzeChunks + status.planChunks} 段</strong>
+          <small>分析 {status.analyzeChunks} 段，DSL {status.planChunks} 段</small>
+        </div>
+        <div>
+          <span>DSL 步骤</span>
+          <strong>{status.dslSteps > 0 ? `${status.dslSteps} 步` : "待生成"}</strong>
+          <small>{dsl ? "已生成可执行步骤" : "信息足够后自动生成"}</small>
+        </div>
       </div>
 
       <div className="analysis-trace-grid">
@@ -130,7 +154,8 @@ function collectChunks(messages: RuntimeMessage[]): { analyze: string; plan: str
 }
 
 function readableTitle(message: RuntimeMessage): string {
-  if (message.phase === "llm_request") return "正在调用 LLM";
+  if (message.phase === "llm_request") return message.metadata.stage === "plan" ? "正在调用 LLM 生成 DSL" : "正在调用 LLM 分析目标";
+  if (message.phase === "llm_response") return message.metadata.stage === "plan" ? "DSL 回复已接收" : "分析回复已接收";
   if (message.phase === "json_repair") return "正在校验 LLM JSON 输出";
   if (message.phase === "analysis_result") return "分析结果已生成";
   if (message.phase === "dsl_generated") return "DSL 已生成";
@@ -139,10 +164,34 @@ function readableTitle(message: RuntimeMessage): string {
 
 function phaseLabel(phase: string): string {
   if (phase === "llm_request") return "LLM 请求";
+  if (phase === "llm_response") return "LLM 回复";
   if (phase === "json_repair") return "JSON 提取/修复";
   if (phase === "analysis_result") return "信息完整性判断";
   if (phase === "dsl_generated") return "DSL 生成";
   return phase;
+}
+
+function buildAnalysisStatus(messages: RuntimeMessage[], dsl: TestCaseDSL | null) {
+  const providerMessage = messages.find((message) => metadataValue(message, "provider") || metadataValue(message, "model"));
+  const latest = [...messages].reverse().find((message) => message.phase !== "llm_chunk");
+  const analyzeChunks = messages.filter((message) => message.phase === "llm_chunk" && message.metadata.stage !== "plan").length;
+  const planChunks = messages.filter((message) => message.phase === "llm_chunk" && message.metadata.stage === "plan").length;
+  return {
+    provider: metadataValue(providerMessage, "provider") || "mock",
+    model: metadataValue(providerMessage, "model") || "DeepSeek-V4",
+    endpoint: metadataValue(providerMessage, "endpoint"),
+    currentStage: latest ? readableTitle(latest) : "等待分析",
+    latestMessage: latest?.content || "点击分析后显示 LLM 交互状态",
+    analyzeChunks,
+    planChunks,
+    dslSteps: dsl?.steps.length || 0
+  };
+}
+
+function metadataValue(message: RuntimeMessage | undefined, key: string): string | null {
+  const value = message?.metadata[key];
+  if (value === undefined || value === null || value === "") return null;
+  return typeof value === "string" || typeof value === "number" || typeof value === "boolean" ? String(value) : null;
 }
 
 function messageIcon(message: RuntimeMessage, analyzing: boolean) {

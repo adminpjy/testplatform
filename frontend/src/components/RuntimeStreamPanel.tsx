@@ -18,6 +18,7 @@ import type { TestStepRun } from "../types/platform";
 import type { RuntimeMessage } from "../types/runtime";
 import {
   methodLabel,
+  metadataString,
   readableRuntimeMessage,
   readableRuntimeTitle,
   runtimeDetailView,
@@ -137,7 +138,8 @@ export function RuntimeStreamPanel({
         {emptyText ? <div className="runtime-stream-panel__empty">{emptyText}</div> : null}
         {visibleMessages.map((message, index) => {
           const step = findMessageStep(message, steps);
-          const screenshot = step?.screenshot_path ? fileUrl(step.screenshot_path) : null;
+          const eventScreenshotPath = metadataString(message, "screenshot_path") || metadataString(message, "screenshotUrl");
+          const screenshot = step?.screenshot_path ? fileUrl(step.screenshot_path) : eventScreenshotPath ? fileUrl(eventScreenshotPath) : null;
           const loading = index === visibleMessages.length - 1 && connected && message.type === "progress";
           const detail = runtimeDetailView(message);
           return (
@@ -158,7 +160,7 @@ export function RuntimeStreamPanel({
                     <button
                       className="ghost-button"
                       type="button"
-                      onClick={() => onPreviewScreenshot?.(screenshot, step?.step_name || "步骤截图")}
+                      onClick={() => onPreviewScreenshot?.(screenshot, step?.step_name || readableRuntimeTitle(message))}
                     >
                       <Image size={14} />
                       查看截图

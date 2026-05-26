@@ -11,6 +11,8 @@ const phaseTitles: Record<string, string> = {
   understanding: "正在理解测试用例",
   planning: "正在生成测试步骤",
   browser: "正在准备浏览器环境",
+  sandbox_starting: "正在拉起执行环境",
+  sandbox_ready: "执行环境已就绪",
   open_system: "正在打开被测系统",
   open_url: "正在打开页面",
   login: "正在登录系统",
@@ -28,6 +30,7 @@ const phaseTitles: Record<string, string> = {
   llm_resolver: "正在调用大模型辅助判断",
   llm_request: "正在调用大模型",
   llm_chunk: "正在接收大模型流式输出",
+  llm_response: "大模型回复已接收",
   json_repair: "正在校验结构化 JSON",
   analysis_result: "正在生成分析结论",
   dsl_generated: "正在生成 DSL 步骤",
@@ -74,7 +77,11 @@ const methodLabels: Record<string, string> = {
   llm_element_resolver: "大模型辅助判断",
   vision_resolver: "视觉兜底",
   human_intervention: "人工介入",
-  system_login_check: "登录检查"
+  system_login_check: "登录检查",
+  llm_provider: "大模型",
+  natural_language_parser: "测试目标解析",
+  json_utils: "JSON 校验",
+  sandbox_provider: "执行环境"
 };
 
 export function readableRuntimeTitle(message: RuntimeMessage): string {
@@ -104,6 +111,15 @@ export function readableRuntimeMessage(message: RuntimeMessage): string {
   }
   if (message.phase === "llm_resolver") {
     return "页面存在多个相似操作，正在结合上下文进行判断。";
+  }
+  if (message.phase === "sandbox_starting") {
+    return message.content || "正在准备隔离的浏览器执行环境。";
+  }
+  if (message.phase === "sandbox_ready") {
+    return message.content || "执行环境已经启动完成，可以开始打开被测系统。";
+  }
+  if (message.phase === "llm_response") {
+    return message.content || "大模型流式回复已接收完成，正在进入结构化处理。";
   }
   if (message.phase === "vision") {
     return "常规页面结构定位置信度不足，正在准备使用截图识别作为兜底。";
@@ -150,11 +166,36 @@ export function runtimeDetailView(message: RuntimeMessage): RuntimeDetailView | 
   const requested = metadataValue(metadata, "requested");
   const summary = metadataValue(metadata, "summary");
   const report = metadataValue(metadata, "report");
+  const provider = metadataValue(metadata, "provider");
+  const model = metadataValue(metadata, "model");
+  const endpoint = metadataValue(metadata, "endpoint");
+  const stage = metadataValue(metadata, "stage");
+  const stream = metadataValue(metadata, "stream");
+  const chunkCount = metadataValue(metadata, "chunkCount");
+  const rawLength = metadataValue(metadata, "rawLength");
+  const modeLabel = metadataValue(metadata, "mode_label");
+  const sandboxStatus = metadataValue(metadata, "sandbox_status");
+  const cubeMock = metadataValue(metadata, "cube_mock");
+  const localBrowser = metadataValue(metadata, "local_browser");
 
   if (stepNumber) lines.push(`步骤编号：S${String(stepNumber).padStart(3, "0")}`);
   if (action) lines.push(`执行动作：${actionTitles[String(action)] || String(action)}`);
   if (target) lines.push(`操作目标：${target}`);
   if (url) lines.push(`访问地址：${url}`);
+  if (provider || model) lines.push(`大模型：${[provider, model].filter(Boolean).join(" / ")}`);
+  if (endpoint) lines.push(`模型接口：${endpoint}`);
+  if (stage) lines.push(`处理阶段：${stage === "plan" ? "DSL 生成" : "目标分析"}`);
+  if (stream !== null && message.method === "llm_provider") lines.push(`流式输出：${stream === "true" ? "开启" : "关闭"}`);
+  if (chunkCount) lines.push(`流式片段：${chunkCount} 段`);
+  if (rawLength) lines.push(`回复长度：${rawLength} 字符`);
+  if (modeLabel) lines.push(`执行环境：${modeLabel}`);
+  if (sandboxStatus) lines.push(`环境状态：${sandboxStatus === "ready" ? "已就绪" : "启动中"}`);
+  if (cubeMock !== null && message.method === "sandbox_provider") {
+    lines.push(`Cube Mock：${cubeMock === "true" ? "开启" : "关闭"}`);
+  }
+  if (localBrowser !== null && message.method === "sandbox_provider") {
+    lines.push(`本地浏览器承载：${localBrowser === "true" ? "是" : "否"}`);
+  }
   if (steps) lines.push(`预计步骤数：${steps}`);
   if (status) lines.push(`处理状态：${status}`);
   if (strategy) lines.push(`定位来源：${locatorStrategyLabel(String(strategy))}`);

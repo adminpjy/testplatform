@@ -1,3 +1,4 @@
+import os
 from datetime import datetime, timezone
 from typing import Any, Callable
 
@@ -33,14 +34,37 @@ class CaseRunner:
         results: list[dict[str, Any]] = []
         status = "passed"
         error_summary = None
+        session = None
+        sandbox_screenshot_path = None
 
         self._emit_runtime(writer, "text", "understanding", "正在理解测试用例", "runner", {"run_code": run_code})
         self._emit_runtime(writer, "progress", "planning", "正在生成测试步骤", "runner", {"steps": len(steps)})
-        self._emit_runtime(writer, "progress", "browser", "正在启动浏览器", "playwright", {"headless": True})
 
-        session = self.provider.start()
         try:
+            sandbox_metadata = _sandbox_metadata(self.provider)
+            self._emit_runtime(
+                writer,
+                "progress",
+                "sandbox_starting",
+                sandbox_metadata["starting_message"],
+                "sandbox_provider",
+                sandbox_metadata,
+            )
+            session = self.provider.start()
             page = session.page
+            sandbox_screenshot_path = self._write_sandbox_screenshot(page, writer)
+            self._emit_runtime(
+                writer,
+                "success",
+                "sandbox_ready",
+                sandbox_metadata["ready_message"],
+                "sandbox_provider",
+                {
+                    **sandbox_metadata,
+                    "sandbox_status": "ready",
+                    "screenshot_path": sandbox_screenshot_path,
+                },
+            )
             base_url = dsl.get("baseUrl") or dsl.get("base_url")
             if base_url:
                 writer.append_jsonl("execution-trace.jsonl", {"type": "base_url.open", "url": base_url})
@@ -59,7 +83,8 @@ class CaseRunner:
             error_summary = str(exc)
             self._emit_runtime(writer, "error", "failed", str(error_summary), "runner", {"run_code": run_code})
         finally:
-            session.close()
+            if session is not None:
+                session.close()
 
         ended_at = _utc_now()
         summary = {
@@ -99,6 +124,7 @@ class CaseRunner:
                 "locator_debug": writer.relative(writer.path("locator-debug.jsonl")),
                 "execution_trace": writer.relative(writer.path("execution-trace.jsonl")),
                 "runtime_stream": writer.relative(writer.path("runtime-stream.jsonl")),
+                "sandbox_screenshot": sandbox_screenshot_path,
             },
         }
 
@@ -451,6 +477,14 @@ class CaseRunner:
         except PlaywrightError:
             return None
 
+    def _write_sandbox_screenshot(self, page: Any, writer: ArtifactWriter) -> str | None:
+        try:
+            path = writer.path("screenshots", "sandbox-started.png")
+            page.screenshot(path=str(path), full_page=True)
+            return writer.relative(path)
+        except PlaywrightError:
+            return None
+
     def _write_dom_snapshot(self, page: Any, writer: ArtifactWriter, step_number: int) -> str | None:
         try:
             path = writer.dom_snapshot_path(step_number)
@@ -527,6 +561,52 @@ def _json_dumps(value: Any) -> str:
     import json
 
     return json.dumps(value, ensure_ascii=False, indent=2, default=str)
+
+
+def _sandbox_metadata(provider: SandboxProvider) -> dict[str, Any]:
+    mode = os.getenv("EXECUTOR_MODE", "local").strip().lower() or "local"
+    cube_mock = _env_bool("CUBE_MOCK", True)
+    local_browser = _env_bool("LOCAL_BROWSER", True)
+    provider_name = provider.__class__.__name__
+    is_cube = mode == "cube" or provider_name == "CubeSandboxProvider"
+    if is_cube:
+        mode_label = "Cube Sandbox"
+        if cube_mock or local_browser:
+            starting_message = "正在拉起 Cube Sandbox 执行环境，并使用本地浏览器承载本阶段运行。"
+            ready_message = "Cube Sandbox 执行环境已就绪，已准备开始页面操作。"
+        else:
+            starting_message = "正在拉起 Cube Sandbox 执行环境。"
+            ready_message = "Cube Sandbox 执行环境已就绪。"
+    else:
+        mode_label = "本地 Headless Chromium"
+        starting_message = "正在启动本地 Headless Chromium 执行环境。"
+        ready_message = "本地 Headless Chromium 执行环境已就绪。"
+    return {
+        "mode": mode,
+        "mode_label": mode_label,
+        "provider": provider_name,
+        "cube_mock": cube_mock,
+        "local_browser": local_browser,
+        "cube_api_url": _safe_env_url("CUBE_API_URL"),
+        "cube_cdp_port": os.getenv("CUBE_CDP_PORT", ""),
+        "sandbox_status": "starting",
+        "starting_message": starting_message,
+        "ready_message": ready_message,
+    }
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None or value == "":
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _safe_env_url(name: str) -> str | None:
+    value = os.getenv(name, "").strip()
+    if not value:
+        return None
+    return value
 
 
 def _runtime_event(

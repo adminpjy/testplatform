@@ -83,11 +83,15 @@ def list_artifacts(db: Session, run_id: int) -> list[TestArtifact]:
 
 
 def latest_screenshot(db: Session, run_id: int) -> TestArtifact | None:
-    return db.scalars(
-        select(TestArtifact)
-        .where(TestArtifact.run_id == run_id, TestArtifact.artifact_type == "screenshot")
-        .order_by(TestArtifact.id.desc())
-    ).first()
+    for artifact_type in ("screenshot", "failure_screenshot", "sandbox_screenshot"):
+        artifact = db.scalars(
+            select(TestArtifact)
+            .where(TestArtifact.run_id == run_id, TestArtifact.artifact_type == artifact_type)
+            .order_by(TestArtifact.id.desc())
+        ).first()
+        if artifact is not None:
+            return artifact
+    return None
 
 
 def report_artifact(db: Session, run_id: int) -> TestArtifact | None:
@@ -222,6 +226,7 @@ def _persist_execution_result(db: Session, run: TestRun, execution_result: dict)
         "locator_debug": "locator_debug",
         "execution_trace": "execution_trace",
         "runtime_stream": "runtime_stream",
+        "sandbox_screenshot": "sandbox_screenshot",
     }
     for key, artifact_type in artifact_types.items():
         _add_artifact(db, run.id, None, artifact_type, artifacts.get(key), {"run_code": run.run_code})

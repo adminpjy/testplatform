@@ -300,113 +300,149 @@ export function TestRunPage() {
 
   return (
     <div className="test-run-workspace">
-      <TestRunConfigCard
-        collapsed={configCollapsed}
-        testDataOpen={testDataOpen}
-        projects={projects}
-        systems={systems}
-        selectedProjectId={selectedProjectId}
-        selectedSystemId={selectedSystemId}
-        baseUrl={baseUrl}
-        username={username}
-        password={password}
-        visionFallback={visionFallback}
-        instruction={instruction}
-        testDataJson={testDataJson}
-        analysis={analysis}
-        isAnalyzing={isAnalyzing}
-        isExecuting={isExecuting}
-        hasActiveRun={Boolean(activeRun)}
-        onToggleCollapsed={() => setConfigCollapsed((value) => !value)}
-        onToggleTestData={() => setTestDataOpen((value) => !value)}
-        onProjectChange={handleProjectChange}
-        onSystemChange={(value) => {
-          if (value === "") {
-            setSelectedSystemId("");
-            return;
-          }
-          handleSystemChange(value);
-        }}
-        onBaseUrlChange={setBaseUrl}
-        onUsernameChange={setUsername}
-        onPasswordChange={setPassword}
-        onVisionFallbackChange={setVisionFallback}
-        onInstructionChange={setInstruction}
-        onTestDataChange={setTestDataJson}
-        onAnalyze={() => void handleAnalyze()}
-        onExecute={() => void handleExecute()}
-        onIntervention={() => setInterventionOpen(true)}
-        onDebug={() => setDrawerOpen(true)}
-      />
-
-      <AnalysisTracePanel messages={analysisMessages} analyzing={isAnalyzing} dsl={plannedDsl} />
-
-      <div className="main-grid" ref={mainViewRef}>
-        <div className="runtime-column">
-          {activeRun ? (
-            <RuntimeStreamPanel runId={activeRun.id} steps={steps} onPreviewScreenshot={openPreview} />
-          ) : (
-            <div className="surface-panel empty-state runtime-empty-state">执行后显示 AI 执行过程</div>
-          )}
+      <section className="workspace-section">
+        <div className="workspace-section__heading">
+          <div>
+            <h2>基础配置区</h2>
+            <p>选择被测系统、账号、测试数据和自然语言测试目标。</p>
+          </div>
         </div>
-        <div className="screenshot-column">
-          <CurrentScreenshotCard
-            run={activeRun}
-            steps={steps}
-            refreshKey={screenshotRefreshKey}
-            onRefresh={() => setScreenshotRefreshKey(Date.now())}
-            onPreview={openPreview}
-          />
-          <ErrorSummaryCard
-            run={activeRun}
-            steps={steps}
-            apiError={apiError}
-            onIntervention={() => setInterventionOpen(true)}
-            onDebug={() => setDrawerOpen(true)}
-          />
-        </div>
-      </div>
+        <TestRunConfigCard
+          collapsed={configCollapsed}
+          testDataOpen={testDataOpen}
+          projects={projects}
+          systems={systems}
+          selectedProjectId={selectedProjectId}
+          selectedSystemId={selectedSystemId}
+          baseUrl={baseUrl}
+          username={username}
+          password={password}
+          visionFallback={visionFallback}
+          instruction={instruction}
+          testDataJson={testDataJson}
+          analysis={analysis}
+          isAnalyzing={isAnalyzing}
+          isExecuting={isExecuting}
+          hasActiveRun={Boolean(activeRun)}
+          onToggleCollapsed={() => setConfigCollapsed((value) => !value)}
+          onToggleTestData={() => setTestDataOpen((value) => !value)}
+          onProjectChange={handleProjectChange}
+          onSystemChange={(value) => {
+            if (value === "") {
+              setSelectedSystemId("");
+              return;
+            }
+            handleSystemChange(value);
+          }}
+          onBaseUrlChange={setBaseUrl}
+          onUsernameChange={setUsername}
+          onPasswordChange={setPassword}
+          onVisionFallbackChange={setVisionFallback}
+          onInstructionChange={setInstruction}
+          onTestDataChange={setTestDataJson}
+          onAnalyze={() => void handleAnalyze()}
+          onExecute={() => void handleExecute()}
+          onIntervention={() => setInterventionOpen(true)}
+          onDebug={() => setDrawerOpen(true)}
+        />
+      </section>
 
-      <section className="surface-panel tabs-area">
-        <div className="tab-strip test-run-tabs">
-          {TEST_RUN_TABS.map((tab) => (
-            <button
-              className={activeTab === tab.id ? "tab-button tab-button--active" : "tab-button"}
-              key={tab.id}
-              type="button"
-              onClick={() => setActiveTab(tab.id)}
-            >
-              {tab.label}
-            </button>
-          ))}
+      <section className="workspace-section task-observation-section">
+        <div className="workspace-section__heading">
+          <div>
+            <h2>任务分解观察区</h2>
+            <p>查看 LLM 交互状态、流式回复、信息完整性判断和生成的 DSL 步骤。</p>
+          </div>
         </div>
-        <div className="tab-content-panel">
-          {activeTab === "steps" ? <StepScreenshotList steps={steps} artifacts={artifacts} onPreview={openPreview} /> : null}
-          {activeTab === "history" ? (
-            <RunHistoryTab runs={runs} activeRun={activeRun} onSelectRun={(run) => void selectRun(run, true)} />
-          ) : null}
-          {activeTab === "failures" ? (
-            <FailureAnalysisTab
+        {analysisMessages.length > 0 || plannedDsl || isAnalyzing ? (
+          <AnalysisTracePanel messages={analysisMessages} analyzing={isAnalyzing} dsl={plannedDsl} />
+        ) : (
+          <div className="surface-panel empty-state">点击“分析”后显示 LLM 交互状态和 DSL 步骤预览</div>
+        )}
+      </section>
+
+      <section className="workspace-section execution-observation-section">
+        <div className="workspace-section__heading">
+          <div>
+            <h2>AI 执行观察区</h2>
+            <p>实时查看执行消息、Cube 执行环境状态、当前截图和失败摘要。</p>
+          </div>
+        </div>
+        <div className="main-grid execution-observation-grid" ref={mainViewRef}>
+          <div className="runtime-column">
+            {activeRun ? (
+              <RuntimeStreamPanel runId={activeRun.id} steps={steps} onPreviewScreenshot={openPreview} />
+            ) : (
+              <div className="surface-panel empty-state runtime-empty-state">执行后显示 AI 执行过程</div>
+            )}
+          </div>
+          <div className="screenshot-column">
+            <CurrentScreenshotCard
               run={activeRun}
               steps={steps}
-              failureSamples={failureSamples}
+              refreshKey={screenshotRefreshKey}
+              onRefresh={() => setScreenshotRefreshKey(Date.now())}
+              onPreview={openPreview}
+            />
+            <ErrorSummaryCard
+              run={activeRun}
+              steps={steps}
               apiError={apiError}
               onIntervention={() => setInterventionOpen(true)}
               onDebug={() => setDrawerOpen(true)}
-              onPreview={openPreview}
             />
-          ) : null}
-          {activeTab === "debug" ? (
-            <DebugDetailsTab
-              run={activeRun}
-              steps={steps}
-              artifacts={artifacts}
-              failureSamples={failureSamples}
-              interventions={interventions}
-            />
-          ) : null}
-          {activeTab === "artifacts" ? <ReportArtifactsTab run={activeRun} artifacts={artifacts} /> : null}
+          </div>
         </div>
+      </section>
+
+      <section className="workspace-section result-analysis-section">
+        <div className="workspace-section__heading">
+          <div>
+            <h2>结果分析区</h2>
+            <p>查看步骤截图、运行记录、失败样本、调试详情和报告产物。</p>
+          </div>
+        </div>
+        <section className="surface-panel tabs-area">
+          <div className="tab-strip test-run-tabs">
+            {TEST_RUN_TABS.map((tab) => (
+              <button
+                className={activeTab === tab.id ? "tab-button tab-button--active" : "tab-button"}
+                key={tab.id}
+                type="button"
+                onClick={() => setActiveTab(tab.id)}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+          <div className="tab-content-panel">
+            {activeTab === "steps" ? <StepScreenshotList steps={steps} artifacts={artifacts} onPreview={openPreview} /> : null}
+            {activeTab === "history" ? (
+              <RunHistoryTab runs={runs} activeRun={activeRun} onSelectRun={(run) => void selectRun(run, true)} />
+            ) : null}
+            {activeTab === "failures" ? (
+              <FailureAnalysisTab
+                run={activeRun}
+                steps={steps}
+                failureSamples={failureSamples}
+                apiError={apiError}
+                onIntervention={() => setInterventionOpen(true)}
+                onDebug={() => setDrawerOpen(true)}
+                onPreview={openPreview}
+              />
+            ) : null}
+            {activeTab === "debug" ? (
+              <DebugDetailsTab
+                run={activeRun}
+                steps={steps}
+                artifacts={artifacts}
+                failureSamples={failureSamples}
+                interventions={interventions}
+              />
+            ) : null}
+            {activeTab === "artifacts" ? <ReportArtifactsTab run={activeRun} artifacts={artifacts} /> : null}
+          </div>
+        </section>
       </section>
 
       <DebugDrawer
@@ -546,6 +582,7 @@ function artifactLabel(type: string): string {
   if (type === "summary") return "summary.json";
   if (type === "report") return "report.html";
   if (type === "screenshot") return "步骤截图";
+  if (type === "sandbox_screenshot") return "执行环境启动截图";
   return type;
 }
 

@@ -225,11 +225,41 @@ a {
   gap: 16px;
 }
 
+.workspace-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.workspace-section__heading {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.workspace-section__heading h2 {
+  margin: 0;
+  color: #172033;
+  font-size: 17px;
+  font-weight: 800;
+}
+
+.workspace-section__heading p {
+  margin: 3px 0 0;
+  color: #64748b;
+  font-size: 13px;
+}
+
 .main-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.4fr) minmax(360px, 0.8fr);
   gap: 16px;
   align-items: start;
+}
+
+.execution-observation-grid {
+  grid-template-columns: minmax(0, 1fr) minmax(500px, 1fr);
 }
 
 .runtime-column,
@@ -569,16 +599,47 @@ button:disabled {
   padding: 16px;
 }
 
+.llm-status-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.llm-status-grid > div {
+  min-width: 0;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #f8fafc;
+  padding: 10px;
+}
+
+.llm-status-grid span,
+.llm-status-grid small {
+  display: block;
+  overflow-wrap: anywhere;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.llm-status-grid strong {
+  display: block;
+  overflow-wrap: anywhere;
+  margin: 4px 0;
+  color: #172033;
+  font-size: 14px;
+}
+
 .analysis-trace-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1.2fr) minmax(340px, 0.8fr);
+  grid-template-columns: minmax(280px, 0.72fr) minmax(520px, 1.28fr);
   gap: 14px;
   align-items: start;
 }
 
 .analysis-trace-stream {
   display: flex;
-  max-height: 440px;
+  max-height: 340px;
   flex-direction: column;
   gap: 10px;
   overflow: auto;
@@ -647,6 +708,7 @@ button:disabled {
   border-radius: 8px;
   background: #ffffff;
   padding: 12px;
+  min-height: 340px;
 }
 
 .dsl-preview-panel__heading {
@@ -663,7 +725,7 @@ button:disabled {
 
 .dsl-step-list {
   display: flex;
-  max-height: 260px;
+  max-height: 340px;
   flex-direction: column;
   gap: 8px;
   overflow: auto;
@@ -703,16 +765,18 @@ button:disabled {
 
 .llm-chunk-grid {
   display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
   margin-top: 12px;
 }
 
 .llm-chunk-grid__toggle {
+  grid-column: 1 / -1;
   justify-self: start;
 }
 
 .llm-chunk-block {
-  max-height: 220px;
+  max-height: 150px;
 }
 
 .project-context {
@@ -904,8 +968,8 @@ button:disabled {
 .screenshot-card__image-button {
   display: grid;
   width: 100%;
-  min-height: 240px;
-  max-height: 420px;
+  min-height: 320px;
+  max-height: 560px;
   place-items: center;
   overflow: hidden;
   border: 1px solid #e2e8f0;
@@ -917,7 +981,7 @@ button:disabled {
 .screenshot-card__image-button img {
   display: block;
   width: 100%;
-  max-height: 420px;
+  max-height: 560px;
   object-fit: contain;
 }
 
@@ -1416,6 +1480,11 @@ button:disabled {
   .ability-rule-grid,
   .settings-grid,
   .toggle-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .llm-status-grid,
+  .llm-chunk-grid {
     grid-template-columns: 1fr;
   }
 

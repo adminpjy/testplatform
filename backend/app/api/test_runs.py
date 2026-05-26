@@ -2,6 +2,7 @@ import json
 import time
 from collections.abc import Iterator
 from datetime import datetime, timezone
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from fastapi.responses import StreamingResponse
@@ -309,6 +310,7 @@ def _analysis_events(payload: NaturalLanguageTestRequest) -> Iterator[str]:
         {
             "provider": settings.llm_provider,
             "model": settings.test_llm_model,
+            "endpoint": _safe_llm_endpoint(),
             "stream": payload.stream if payload.stream is not None else settings.test_llm_stream,
             "password_policy": "credentials and password-like text are redacted before prompt construction",
         },
@@ -319,10 +321,14 @@ def _analysis_events(payload: NaturalLanguageTestRequest) -> Iterator[str]:
         yield emit(
             "progress",
             "llm_request",
-            "正在构造分析提示词，准备调用 LLM。",
+            f"正在调用 {settings.test_llm_model} 分析测试目标。",
             "llm_provider",
             {
                 "stage": "analyze",
+                "provider": settings.llm_provider,
+                "model": settings.test_llm_model,
+                "endpoint": _safe_llm_endpoint(),
+                "stream": payload.stream if payload.stream is not None else settings.test_llm_stream,
                 "systemPrompt": analyze_request.system_prompt,
                 "userPrompt": analyze_request.user_prompt,
                 "inputPayload": sanitized_payload,
@@ -341,6 +347,19 @@ def _analysis_events(payload: NaturalLanguageTestRequest) -> Iterator[str]:
                 "llm_provider",
                 {"stage": "analyze", "chunkIndex": chunk_index},
             )
+        yield emit(
+            "success",
+            "llm_response",
+            "LLM 分析回复接收完成。",
+            "llm_provider",
+            {
+                "stage": "analyze",
+                "provider": settings.llm_provider,
+                "model": settings.test_llm_model,
+                "chunkCount": chunk_index,
+                "rawLength": len(analyze_raw),
+            },
+        )
         yield emit(
             "progress",
             "json_repair",
@@ -363,10 +382,14 @@ def _analysis_events(payload: NaturalLanguageTestRequest) -> Iterator[str]:
             yield emit(
                 "progress",
                 "llm_request",
-                "正在构造 DSL 生成提示词，准备调用 LLM。",
+                f"正在调用 {settings.test_llm_model} 生成 DSL 步骤。",
                 "llm_provider",
                 {
                     "stage": "plan",
+                    "provider": settings.llm_provider,
+                    "model": settings.test_llm_model,
+                    "endpoint": _safe_llm_endpoint(),
+                    "stream": payload.stream if payload.stream is not None else settings.test_llm_stream,
                     "systemPrompt": plan_request.system_prompt,
                     "userPrompt": plan_request.user_prompt,
                     "allowedActions": sorted(ALLOWED_DSL_ACTIONS),
@@ -384,6 +407,19 @@ def _analysis_events(payload: NaturalLanguageTestRequest) -> Iterator[str]:
                     "llm_provider",
                     {"stage": "plan", "chunkIndex": chunk_index},
                 )
+            yield emit(
+                "success",
+                "llm_response",
+                "LLM DSL 回复接收完成。",
+                "llm_provider",
+                {
+                    "stage": "plan",
+                    "provider": settings.llm_provider,
+                    "model": settings.test_llm_model,
+                    "chunkCount": chunk_index,
+                    "rawLength": len(plan_raw),
+                },
+            )
             yield emit(
                 "progress",
                 "json_repair",
@@ -429,3 +465,12 @@ def _resolve_start_after_id(after_id: int, last_event_id: str | None) -> int:
 
 def _is_terminal_status(status_value: str | None) -> bool:
     return status_value in {"passed", "failed", "cancelled", "aborted", "missing"}
+
+
+def _safe_llm_endpoint() -> str | None:
+    if not settings.test_llm_base_url:
+        return None
+    parsed = urlparse(settings.test_llm_base_url)
+    if not parsed.scheme or not parsed.netloc:
+        return None
+    return f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
