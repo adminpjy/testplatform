@@ -1,101 +1,58 @@
 # Enterprise MIS Intelligent Functional Testing Platform Production v1
 
-This repository contains the project skeleton for an AI-assisted functional testing platform for existing enterprise MIS systems.
+This repository contains a production-ready first phase for an intelligent functional testing platform focused on existing enterprise MIS systems.
 
-The current foundation includes:
+It includes:
 
-- Backend skeleton: FastAPI, SQLAlchemy, Pydantic.
-- Frontend skeleton: React, Vite, TypeScript.
-- Executor skeleton: Python Playwright.
-- Mock MIS demo placeholder for future local verification.
-- Runtime data directories for artifacts and reports.
-- PowerShell scripts for local lifecycle commands.
-- Backend stage 1 service startup, database connection, automatic table creation, default project initialization, and project APIs.
-- MIS base ability pack initialization and RuleResolver for common enterprise MIS testing goals.
-- LLM provider abstraction with Mock and OpenAI-compatible providers, stream parsing, JSON extraction, and natural-language test planning.
-- Local Mock MIS demo system for Playwright-accessible login, dashboard, todo approval, user management, and detail navigation scenarios.
-- Local Playwright executor with SandboxProvider abstraction, per-step evidence capture, persisted artifacts, summary JSON, and HTML reports.
-- Goal driven executor and semantic locator for business-level DSL steps such as entering todo lists, approval pass, approval flow view, and form field resolution.
+- FastAPI backend with persistent SQLAlchemy models and automatic table initialization.
+- React + Vite + TypeScript frontend for test runs, ability center, failure samples, reports, demo entry, and settings.
+- Python Playwright executor with local headless browser execution and evidence capture.
+- Built-in MIS ability rules, RuleResolver, natural-language analysis, runtime stream, failure samples, human intervention, and rule drafts.
+- Local Mock MIS Demo for validating login, todo approval, approval flow, user management, and detail navigation.
 
-No complex business implementation is included in this stage.
+## Requirements
 
-## Repository Layout
+- Windows PowerShell
+- Python 3.11+
+- Node.js 18+
+- PostgreSQL is recommended. If `DATABASE_URL` is not set, the backend uses SQLite at `data/aitp.db`.
 
-```text
-backend/          FastAPI service skeleton
-frontend/         React + Vite frontend skeleton
-executor/         Playwright executor package skeleton
-mock-mis-demo/    Local MIS-like demo app placeholder
-config/           Ability and runtime configuration
-scripts/          Local lifecycle scripts
-data/             Local persistent runtime data
-artifacts/        Execution artifacts
-reports/          Generated test reports
+Install Python and browser dependencies:
+
+```powershell
+pip install -r backend\requirements.txt
+pip install -r executor\requirements.txt
+python -m playwright install chromium
+```
+
+Install frontend dependencies:
+
+```powershell
+npm --prefix frontend install
+npm --prefix mock-mis-demo install
 ```
 
 ## Environment
 
-Copy `.env.example` to `.env` before running later phases.
+Create a local environment file:
 
 ```powershell
 Copy-Item .env.example .env
 ```
 
-## Backend
+Default PostgreSQL connection:
 
-The backend reads `DATABASE_URL` from the environment or `.env`.
+```text
+DATABASE_URL=postgresql+psycopg2://admin:123456@host.docker.internal:5432/postgres
+```
 
-When `DATABASE_URL` is absent, it falls back to:
+Fallback when `DATABASE_URL` is absent:
 
 ```text
 sqlite:///./data/aitp.db
 ```
 
-Start the backend:
-
-```powershell
-.\scripts\start.ps1
-```
-
-Stop the backend:
-
-```powershell
-.\scripts\stop.ps1
-```
-
-Initialize tables without starting the HTTP service:
-
-```powershell
-.\scripts\init-db.ps1
-```
-
-Implemented endpoints:
-
-```text
-GET  /health
-GET  /api/system/info
-GET  /api/projects
-POST /api/projects
-GET  /api/projects/{id}
-GET  /api/abilities/rules
-POST /api/abilities/rules
-PUT  /api/abilities/rules/{id}
-POST /api/abilities/rules/{id}/enable
-POST /api/abilities/rules/{id}/disable
-POST /api/abilities/resolve
-POST /api/test-runs/analyze
-POST /api/test-runs/plan
-POST /api/test-runs
-GET  /api/test-runs
-GET  /api/test-runs/{runId}
-GET  /api/test-runs/{runId}/steps
-GET  /api/test-runs/{runId}/artifacts
-GET  /api/test-runs/{runId}/latest-screenshot
-GET  /api/reports/{runId}
-GET  /files/{path}
-```
-
-LLM configuration:
+LLM defaults:
 
 ```text
 LLM_PROVIDER=mock
@@ -105,29 +62,74 @@ TEST_LLM_MODEL=DeepSeek-V4
 TEST_LLM_STREAM=true
 ```
 
-`mock` is the default provider and is available without external credentials. The OpenAI-compatible provider reads credentials from environment variables and does not print API keys.
+The mock provider works without external credentials. External provider secrets are read from environment variables.
 
-## Mock MIS Demo
+## Start Locally
 
-Start the backend and local MIS demo together:
+Start backend, frontend, and the local MIS demo:
 
 ```powershell
 .\scripts\start.ps1
 ```
 
-The demo is available at:
+Typical URLs:
 
 ```text
-http://127.0.0.1:5174/login
+Backend:       http://127.0.0.1:8000
+Frontend:      http://127.0.0.1:5173
+Mock MIS Demo: http://127.0.0.1:5174/login
 ```
 
-Login credentials:
+If a default frontend or demo port is occupied, the script chooses the next available port and prints it.
+
+Stop managed local services:
+
+```powershell
+.\scripts\stop.ps1
+```
+
+Initialize database tables without starting the HTTP service:
+
+```powershell
+.\scripts\init-db.ps1
+```
+
+## Validation
+
+Run the normal project check:
+
+```powershell
+.\scripts\check.ps1
+```
+
+Run the full local end-to-end validation:
+
+```powershell
+.\scripts\e2e-demo.ps1
+```
+
+The end-to-end script starts temporary backend, frontend, and demo services, then verifies:
+
+- `/health` and database connectivity.
+- Base ability rule initialization.
+- Natural-language analysis and DSL planning.
+- Login and navigation to todo.
+- Approval pass with conflicting todo actions.
+- User management create, update, and delete.
+- Runtime stream persistence and SSE replay.
+- Latest screenshot and HTML report endpoints.
+- Failure sample evidence files.
+- Ability center APIs for rules, failure samples, interventions, and rule drafts.
+
+## Mock MIS Demo
+
+Login:
 
 ```text
 admin / 123456
 ```
 
-Supported demo routes:
+Routes:
 
 ```text
 /login
@@ -139,15 +141,17 @@ Supported demo routes:
 /users
 ```
 
-## Playwright Executor
+The todo page intentionally contains both `审批` and `查看审批流程` actions to validate business-intent disambiguation.
 
-The stage 5 executor runs locally with Playwright headless and writes evidence under:
+## Runtime Artifacts
+
+Each execution writes evidence under:
 
 ```text
 artifacts/runs/{run_code}/
 ```
 
-Each run writes:
+Expected files include:
 
 ```text
 summary.json
@@ -161,44 +165,49 @@ dom/
 accessibility/
 ```
 
-The executor is currently local-only, with `SandboxProvider` retained as the boundary for later sandbox integration.
-
-Stage 6 adds business-goal execution for:
+## Main APIs
 
 ```text
-登录系统
-进入我的待办
-查询记录
-新增记录
-修改记录
-删除记录
-打开详情
-查看审批流程
-审批通过
-审批驳回
+GET  /health
+GET  /api/system/info
+GET  /api/projects
+POST /api/projects
+GET  /api/projects/{id}
+
+GET  /api/abilities/rules
+POST /api/abilities/rules
+PUT  /api/abilities/rules/{id}
+POST /api/abilities/rules/{id}/enable
+POST /api/abilities/rules/{id}/disable
+POST /api/abilities/resolve
+
+POST /api/test-runs/analyze
+POST /api/test-runs/plan
+POST /api/test-runs
+GET  /api/test-runs
+GET  /api/test-runs/{runId}
+GET  /api/test-runs/{runId}/steps
+GET  /api/test-runs/{runId}/artifacts
+GET  /api/test-runs/{runId}/latest-screenshot
+GET  /api/test-runs/{runId}/stream
+GET  /api/test-runs/{runId}/runtime-messages
+
+POST /api/test-runs/{runId}/steps/{stepId}/intervene
+POST /api/test-runs/{runId}/interventions/{interventionId}/execute
+POST /api/test-runs/{runId}/interventions/{interventionId}/convert-to-rule
+
+GET  /api/failure-samples
+GET  /api/human-interventions
+GET  /api/rule-drafts
+POST /api/rule-drafts/{draftId}/enable
+
+GET  /api/reports/{runId}
+GET  /files/{path}
 ```
 
-Locator resolution order:
+## Notes
 
-```text
-knowledge base
-explicit selector
-Playwright role/label/text
-PageSemantic
-BusinessIntent
-CandidateRanker
-AmbiguityResolver
-LLM resolver
-VisionResolver
-ActionVerifier
-```
-
-When confidence is too low and vision is unavailable, locator debug records `vision_fallback_not_configured`.
-
-## Check
-
-```powershell
-.\scripts\check.ps1
-```
-
-The check validates the expected skeleton, compiles the backend, starts a temporary API process, verifies `/health`, checks database connectivity, and confirms that at least one project exists.
+- Test data persists in the configured database.
+- Execution artifacts persist on disk.
+- Long error details are folded in the frontend to keep pages usable.
+- The first phase runs locally with Playwright headless and keeps the browser-provider boundary for later remote execution.
