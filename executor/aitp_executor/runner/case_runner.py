@@ -1,4 +1,5 @@
 import os
+import re
 from datetime import datetime, timezone
 from typing import Any, Callable
 
@@ -70,6 +71,15 @@ class CaseRunner:
                 writer.append_jsonl("execution-trace.jsonl", {"type": "base_url.open", "url": base_url})
                 self._emit_runtime(writer, "progress", "open_system", "正在打开系统", "playwright", {"url": base_url})
                 page.goto(base_url, wait_until="domcontentloaded")
+                if self._continue_security_interstitial(page):
+                    self._emit_runtime(
+                        writer,
+                        "warning",
+                        "global_interruption",
+                        "检测到证书安全提示，已按配置继续访问。",
+                        "playwright",
+                        {"interruption": "security_interstitial", "url": page.url},
+                    )
 
             for index, step in enumerate(steps, start=1):
                 result = self._run_step(page, writer, index, step, dsl)
@@ -387,6 +397,7 @@ class CaseRunner:
         if action == "open_url":
             url = step.get("url") or target
             page.goto(url, wait_until="domcontentloaded")
+            self._continue_security_interstitial(page)
             return _outcome("url", str(url), 1.0, "url opened")
 
         if action == "input":
@@ -438,6 +449,39 @@ class CaseRunner:
             page.locator("table").first.wait_for(state="visible")
             return _outcome("table_visible", "table", 1.0, "table visible")
 
+        if action == "query_table_count":
+            count = self._table_row_count(page)
+            empty_strategy = str(step.get("emptyStrategy") or step.get("empty_strategy") or "pass")
+            if count == 0 and empty_strategy != "pass":
+                raise AssertionError("Table has no rows.")
+            return _outcome("table_count", str(count), 0.92, _json_dumps({"row_count": count, "empty_strategy": empty_strategy}))
+
+        if action == "for_each_table_row":
+            result = self._for_each_table_row(page, step)
+            return _outcome("table_row_loop", str(result["processed_rows"]), 0.84, _json_dumps(result))
+
+        if action == "open_row_link_or_detail":
+            opened = self._open_first_table_row(page)
+            return _outcome("row_link_or_detail", "first_row", 0.78, _json_dumps(opened))
+
+        if action == "wait_for_dialog":
+            appeared = self._wait_for_dialog(page)
+            if not appeared:
+                raise AssertionError("Dialog did not appear.")
+            return _outcome("dialog_visible", "dialog", 0.88, "dialog visible")
+
+        if action == "close_dialog_by_common_controls":
+            closed = self._close_dialog_by_common_controls(page)
+            if not closed:
+                raise AssertionError("Dialog close control was not found.")
+            return _outcome("dialog_closed", "common_controls", 0.82, "dialog closed")
+
+        if action == "continue_until_all_rows_processed":
+            return _outcome("loop_checkpoint", "all_rows_processed", 0.8, "loop handled by for_each_table_row")
+
+        if action == "summary_assert":
+            return _outcome("summary_assert", str(target or "summary"), 0.9, "summary assertion recorded")
+
         if action == "auto_fill_form":
             test_data = dict(dsl.get("testData") or {})
             test_data.update(step.get("testData") or {})
@@ -484,6 +528,193 @@ class CaseRunner:
             return writer.relative(path)
         except PlaywrightError:
             return None
+
+    def _continue_security_interstitial(self, page: Any) -> bool:
+        if not _env_bool("PLAYWRIGHT_AUTO_CONTINUE_SECURITY_INTERSTITIAL", False):
+            return False
+        try:
+            if page.locator("#details-button").count() > 0:
+                page.locator("#details-button").first.click()
+                page.wait_for_timeout(200)
+            if page.locator("#proceed-link").count() > 0:
+                page.locator("#proceed-link").first.click()
+                page.wait_for_load_state("domcontentloaded", timeout=5_000)
+                return True
+            for text in ["高级", "继续访问", "继续前往", "接受风险并继续"]:
+                candidate = page.get_by_text(text, exact=False)
+                if candidate.count() > 0:
+                    candidate.first.click()
+                    page.wait_for_timeout(300)
+                    if text != "高级":
+                        return True
+            if page.locator("#proceed-link").count() > 0:
+                page.locator("#proceed-link").first.click()
+                page.wait_for_load_state("domcontentloaded", timeout=5_000)
+                return True
+        except PlaywrightError:
+            return False
+        return False
+
+    def _table_row_count(self, page: Any) -> int:
+        rows = self._table_rows(page)
+        count = rows.count()
+        visible_rows = 0
+        for index in range(count):
+            try:
+                row = rows.nth(index)
+                text = row.inner_text(timeout=800).strip()
+                if text:
+                    visible_rows += 1
+            except PlaywrightError:
+                continue
+        return visible_rows
+
+    def _table_rows(self, page: Any) -> Any:
+        selectors = [
+            "table tbody tr",
+            ".ant-table-tbody tr",
+            ".el-table__body tbody tr",
+            "[role='row']",
+        ]
+        best = page.locator(selectors[0])
+        best_count = 0
+        for selector in selectors:
+            try:
+                locator = page.locator(selector)
+                count = locator.count()
+                if count > best_count:
+                    best = locator
+                    best_count = count
+            except PlaywrightError:
+                continue
+        return best
+
+    def _for_each_table_row(self, page: Any, step: dict[str, Any]) -> dict[str, Any]:
+        max_rows = int(step.get("maxRows") or step.get("max_rows") or 200)
+        empty_strategy = str(step.get("emptyStrategy") or step.get("empty_strategy") or "pass")
+        row_count = self._table_row_count(page)
+        if row_count == 0:
+            if empty_strategy == "pass":
+                return {"row_count": 0, "processed_rows": 0, "status": "empty_pass"}
+            raise AssertionError("Table has no rows.")
+
+        processed = 0
+        failures: list[dict[str, Any]] = []
+        limit = min(row_count, max_rows)
+        for index in range(limit):
+            try:
+                rows = self._table_rows(page)
+                row = rows.nth(index)
+                before_url = page.url
+                self._click_row_entry(row)
+                page.wait_for_timeout(500)
+                dialog_opened = self._wait_for_dialog(page, timeout_ms=2_000)
+                closed = False
+                if dialog_opened:
+                    closed = self._close_dialog_by_common_controls(page)
+                elif page.url != before_url:
+                    page.go_back(wait_until="domcontentloaded")
+                    closed = True
+                processed += 1
+                if dialog_opened and not closed:
+                    failures.append({"row": index + 1, "error": "dialog_close_failed"})
+            except Exception as exc:
+                failures.append({"row": index + 1, "error": str(exc)})
+        if failures:
+            raise RuntimeError("table_row_loop_failed:" + _json_dumps({"processed_rows": processed, "failures": failures[:5]}))
+        return {"row_count": row_count, "processed_rows": processed, "status": "processed"}
+
+    def _open_first_table_row(self, page: Any) -> dict[str, Any]:
+        rows = self._table_rows(page)
+        if rows.count() == 0:
+            return {"row_count": 0, "opened": False}
+        self._click_row_entry(rows.first)
+        page.wait_for_timeout(500)
+        return {"row_count": rows.count(), "opened": True}
+
+    def _click_row_entry(self, row: Any) -> None:
+        selectors = [
+            "a",
+            "button",
+            "[role='button']",
+            ".ant-btn",
+            ".el-button",
+            "td a",
+            "td button",
+        ]
+        for selector in selectors:
+            try:
+                candidate = row.locator(selector)
+                count = candidate.count()
+                if count > 0:
+                    candidate.first.click()
+                    return
+            except PlaywrightError:
+                continue
+        try:
+            row.dblclick()
+            return
+        except PlaywrightError as exc:
+            raise RuntimeError("No clickable row entry was found.") from exc
+
+    def _wait_for_dialog(self, page: Any, *, timeout_ms: int = 5_000) -> bool:
+        selectors = [
+            "[role='dialog']",
+            "[aria-modal='true']",
+            ".ant-modal",
+            ".el-dialog",
+            ".modal",
+            ".drawer",
+            ".ant-drawer",
+            ".el-drawer",
+        ]
+        for selector in selectors:
+            try:
+                locator = page.locator(selector).first
+                if locator.count() > 0:
+                    locator.wait_for(state="visible", timeout=timeout_ms)
+                    return True
+            except PlaywrightError:
+                continue
+        return False
+
+    def _close_dialog_by_common_controls(self, page: Any) -> bool:
+        for name in ["返回", "取消", "关闭", "确定", "我知道了"]:
+            try:
+                button = page.get_by_role("button", name=name, exact=True)
+                if button.count() > 0:
+                    button.first.click()
+                    page.wait_for_timeout(300)
+                    return True
+                text = page.get_by_text(name, exact=True)
+                if text.count() == 1:
+                    text.click()
+                    page.wait_for_timeout(300)
+                    return True
+            except PlaywrightError:
+                continue
+        for selector in [
+            ".ant-modal-close",
+            ".el-dialog__headerbtn",
+            ".modal .close",
+            "[aria-label='Close']",
+            "[aria-label='关闭']",
+            "[title='关闭']",
+        ]:
+            try:
+                candidate = page.locator(selector)
+                if candidate.count() > 0:
+                    candidate.first.click()
+                    page.wait_for_timeout(300)
+                    return True
+            except PlaywrightError:
+                continue
+        try:
+            page.keyboard.press("Escape")
+            page.wait_for_timeout(300)
+            return True
+        except PlaywrightError:
+            return False
 
     def _write_dom_snapshot(self, page: Any, writer: ArtifactWriter, step_number: int) -> str | None:
         try:

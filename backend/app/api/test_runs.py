@@ -371,7 +371,7 @@ def _analysis_events(payload: NaturalLanguageTestRequest) -> Iterator[str]:
             "json_utils",
             {"stage": "analyze", "rawLength": len(analyze_raw)},
         )
-        analysis = parser.parse_analysis(analyze_raw)
+        analysis = parser.parse_analysis(analyze_raw, payload)
         yield emit(
             "success" if analysis.readyToExecute else "warning",
             "analysis_result",

@@ -21,6 +21,17 @@ class LocalPlaywrightProvider:
 
 def _launch_options() -> dict:
     options: dict = {}
+    args: list[str] = []
+    if _bool_env("PLAYWRIGHT_IGNORE_HTTPS_ERRORS", False) or _bool_env("PLAYWRIGHT_AUTO_CONTINUE_SECURITY_INTERSTITIAL", False):
+        args.extend(
+            [
+                "--ignore-certificate-errors",
+                "--allow-insecure-localhost",
+                "--allow-running-insecure-content",
+            ]
+        )
+    if args:
+        options["args"] = args
     proxy = _proxy_options()
     if proxy:
         options["proxy"] = proxy
@@ -29,7 +40,8 @@ def _launch_options() -> dict:
 
 def _context_options() -> dict:
     options: dict = {
-        "ignore_https_errors": _bool_env("PLAYWRIGHT_IGNORE_HTTPS_ERRORS", False),
+        "ignore_https_errors": _bool_env("PLAYWRIGHT_IGNORE_HTTPS_ERRORS", False)
+        or _bool_env("PLAYWRIGHT_AUTO_CONTINUE_SECURITY_INTERSTITIAL", False),
     }
     user_agent = os.getenv("PLAYWRIGHT_USER_AGENT", "").strip()
     if user_agent:

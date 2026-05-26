@@ -277,6 +277,17 @@ def _capture_page_screenshot(system: TestSystem, url: str, check_type: str) -> s
 
 def _playwright_launch_options() -> dict[str, Any]:
     options: dict[str, Any] = {}
+    args: list[str] = []
+    if settings.playwright_ignore_https_errors or settings.playwright_auto_continue_security_interstitial:
+        args.extend(
+            [
+                "--ignore-certificate-errors",
+                "--allow-insecure-localhost",
+                "--allow-running-insecure-content",
+            ]
+        )
+    if args:
+        options["args"] = args
     proxy = _playwright_proxy()
     if proxy:
         options["proxy"] = proxy
@@ -284,7 +295,10 @@ def _playwright_launch_options() -> dict[str, Any]:
 
 
 def _playwright_context_options() -> dict[str, Any]:
-    options: dict[str, Any] = {"ignore_https_errors": settings.playwright_ignore_https_errors}
+    options: dict[str, Any] = {
+        "ignore_https_errors": settings.playwright_ignore_https_errors
+        or settings.playwright_auto_continue_security_interstitial
+    }
     if settings.playwright_user_agent:
         options["user_agent"] = settings.playwright_user_agent
     return options
@@ -364,6 +378,19 @@ def _click_first(page: Any, names: list[str]) -> None:
 
 
 def _handle_global_interruptions(page: Any, emit) -> None:
+    if settings.playwright_auto_continue_security_interstitial:
+        try:
+            if page.locator("#details-button").count() > 0:
+                emit("warning", "global_interruption", "检测到证书安全提示，正在展开高级选项", {"button": "高级"})
+                page.locator("#details-button").first.click()
+                page.wait_for_timeout(200)
+            if page.locator("#proceed-link").count() > 0:
+                emit("warning", "global_interruption", "检测到证书安全提示，正在继续访问", {"button": "继续访问"})
+                page.locator("#proceed-link").first.click()
+                page.wait_for_load_state("domcontentloaded", timeout=5000)
+                return
+        except PlaywrightError:
+            pass
     for name in ["我知道了", "关闭", "跳过", "稍后", "继续访问", "确定"]:
         button = page.get_by_role("button", name=name, exact=True)
         if button.count() > 0:
