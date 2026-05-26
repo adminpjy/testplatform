@@ -1,0 +1,23 @@
+import { navigationItems, type AppRoute } from "../routes/navigation";
+
+export function TopNav({ route }: { route: AppRoute }) {
+  return (
+    <header className="top-nav">
+      <a className="top-nav__brand" href="#test-run">
+        <strong>AI MIS Test</strong>
+        <span>智能功能测试平台</span>
+      </a>
+      <nav className="top-nav__links" aria-label="主导航">
+        {navigationItems.map((item) => {
+          const Icon = item.icon;
+          return (
+            <a className={route === item.id ? "top-nav__item top-nav__item--active" : "top-nav__item"} href={`#${item.id}`} key={item.id}>
+              <Icon size={16} />
+              <span>{item.label}</span>
+            </a>
+          );
+        })}
+      </nav>
+    </header>
+  );
+}

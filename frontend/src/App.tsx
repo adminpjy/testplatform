@@ -7,6 +7,7 @@ import { ReportsPage } from "./pages/ReportsPage";
 import { SystemSettingsPage } from "./pages/SystemSettingsPage";
 import { TestRunPage } from "./pages/TestRunPage";
 import { TestSystemsPage } from "./pages/TestSystemsPage";
+import { TopNav } from "./components/TopNav";
 import "./styles/app.css";
 
 export default function App() {
@@ -21,25 +22,9 @@ export default function App() {
   const activeItem = useMemo(() => navigationItems.find((item) => item.id === route), [route]);
 
   return (
-    <div className="app-shell">
-      <aside className="app-sidebar">
-        <div className="brand-block">
-          <strong>AI MIS Test</strong>
-          <span>智能功能测试平台</span>
-        </div>
-        <nav className="app-nav" aria-label="主导航">
-          {navigationItems.map((item) => {
-            const Icon = item.icon;
-            return (
-              <a className={route === item.id ? "app-nav__item app-nav__item--active" : "app-nav__item"} href={`#${item.id}`} key={item.id}>
-                <Icon size={18} />
-                <span>{item.label}</span>
-              </a>
-            );
-          })}
-        </nav>
-      </aside>
-      <main className="app-main">
+    <div className="page-shell">
+      <TopNav route={route} />
+      <main className="page-content">
         <header className="app-topbar">
           <div>
             <h1>{activeItem?.label || "测试运行"}</h1>

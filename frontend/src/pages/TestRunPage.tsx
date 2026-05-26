@@ -1,6 +1,7 @@
-import { Bot, Bug, Play, Search, UserRoundCheck } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { ExternalLink } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 
+import { apiUrl, fileUrl } from "../api/client";
 import {
   analyzeTestRun,
   convertInterventionToRule,
@@ -18,10 +19,13 @@ import {
 } from "../api/platform";
 import { DebugDrawer } from "../components/DebugDrawer";
 import { ErrorSummaryCard } from "../components/ErrorSummaryCard";
+import { CurrentScreenshotCard } from "../components/CurrentScreenshotCard";
+import { JsonCollapseBlock } from "../components/JsonCollapseBlock";
+import { RunHistoryTab } from "../components/RunHistoryTab";
 import { RuntimeStreamPanel } from "../components/RuntimeStreamPanel";
-import { ScreenshotPanel } from "../components/ScreenshotPanel";
-import { StatusBadge } from "../components/StatusBadge";
-import { StepTree } from "../components/StepTree";
+import { ScreenshotPreviewModal } from "../components/ScreenshotPreviewModal";
+import { StepScreenshotList } from "../components/StepScreenshotList";
+import { TestRunConfigCard } from "../components/TestRunConfigCard";
 import type {
   AnalyzeResult,
   FailureSample,
@@ -44,6 +48,16 @@ const DEFAULT_TEST_DATA = `{
   "开始日期": "2026-06-01",
   "结束日期": "2026-06-03"
 }`;
+
+type TestRunTab = "steps" | "history" | "failures" | "debug" | "artifacts";
+
+const TEST_RUN_TABS: Array<{ id: TestRunTab; label: string }> = [
+  { id: "steps", label: "步骤与截图" },
+  { id: "history", label: "运行记录" },
+  { id: "failures", label: "失败分析" },
+  { id: "debug", label: "调试详情" },
+  { id: "artifacts", label: "报告与产物" }
+];
 
 export function TestRunPage() {
   const [projects, setProjects] = useState<TestProject[]>([]);
@@ -70,19 +84,15 @@ export function TestRunPage() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [interventionOpen, setInterventionOpen] = useState(false);
   const [screenshotRefreshKey, setScreenshotRefreshKey] = useState(Date.now());
+  const [configCollapsed, setConfigCollapsed] = useState(false);
+  const [testDataOpen, setTestDataOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState<TestRunTab>("steps");
+  const [preview, setPreview] = useState<{ src: string; title: string } | null>(null);
+  const mainViewRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     void bootstrap();
   }, []);
-
-  const selectedProject = useMemo(
-    () => projects.find((project) => project.id === selectedProjectId) || null,
-    [projects, selectedProjectId]
-  );
-  const selectedSystem = useMemo(
-    () => systems.find((system) => system.id === selectedSystemId) || null,
-    [systems, selectedSystemId]
-  );
 
   async function bootstrap() {
     try {
@@ -108,7 +118,7 @@ export function TestRunPage() {
     }
   }
 
-  async function selectRun(run: TestRun) {
+  async function selectRun(run: TestRun, focusRuntime = false) {
     setActiveRun(run);
     const [stepList, artifactList, sampleList, interventionList] = await Promise.all([
       getTestRunSteps(run.id),
@@ -122,6 +132,12 @@ export function TestRunPage() {
     setInterventions(interventionList);
     setLatestRuleDraft(null);
     setScreenshotRefreshKey(Date.now());
+    if (focusRuntime) {
+      setActiveTab("steps");
+      window.setTimeout(() => {
+        mainViewRef.current?.scrollIntoView({ block: "start", behavior: "smooth" });
+      }, 50);
+    }
   }
 
   function handleProjectChange(projectId: number) {
@@ -173,6 +189,8 @@ export function TestRunPage() {
     }
     setApiError(null);
     setIsExecuting(true);
+    setConfigCollapsed(true);
+    setActiveTab("steps");
     try {
       const planned = await planTestRun({
         project_id: Number(selectedProjectId),
@@ -209,6 +227,10 @@ export function TestRunPage() {
       setApiError(error instanceof Error ? error.message : String(error));
       throw error;
     }
+  }
+
+  function openPreview(src: string, title: string) {
+    setPreview({ src, title });
   }
 
   async function handleCreateIntervention(userInstruction: string) {
@@ -257,129 +279,114 @@ export function TestRunPage() {
   }
 
   return (
-    <div className="page-grid page-grid--test-run">
-      <section className="surface-panel test-run-form">
-        <div className="panel-heading">
-          <h1>测试运行</h1>
-          {activeRun ? <StatusBadge value={activeRun.status} /> : <span>等待执行</span>}
-        </div>
+    <div className="test-run-workspace">
+      <TestRunConfigCard
+        collapsed={configCollapsed}
+        testDataOpen={testDataOpen}
+        projects={projects}
+        systems={systems}
+        selectedProjectId={selectedProjectId}
+        selectedSystemId={selectedSystemId}
+        baseUrl={baseUrl}
+        username={username}
+        password={password}
+        visionFallback={visionFallback}
+        instruction={instruction}
+        testDataJson={testDataJson}
+        analysis={analysis}
+        isAnalyzing={isAnalyzing}
+        isExecuting={isExecuting}
+        hasActiveRun={Boolean(activeRun)}
+        onToggleCollapsed={() => setConfigCollapsed((value) => !value)}
+        onToggleTestData={() => setTestDataOpen((value) => !value)}
+        onProjectChange={handleProjectChange}
+        onSystemChange={(value) => {
+          if (value === "") {
+            setSelectedSystemId("");
+            return;
+          }
+          handleSystemChange(value);
+        }}
+        onBaseUrlChange={setBaseUrl}
+        onUsernameChange={setUsername}
+        onPasswordChange={setPassword}
+        onVisionFallbackChange={setVisionFallback}
+        onInstructionChange={setInstruction}
+        onTestDataChange={setTestDataJson}
+        onAnalyze={() => void handleAnalyze()}
+        onExecute={() => void handleExecute()}
+        onIntervention={() => setInterventionOpen(true)}
+        onDebug={() => setDrawerOpen(true)}
+      />
 
-        <div className="form-grid">
-          <label>
-            <span>项目选择</span>
-            <select value={selectedProjectId} onChange={(event) => handleProjectChange(Number(event.target.value))}>
-              {projects.map((project) => (
-                <option value={project.id} key={project.id}>
-                  {project.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            <span>被测系统</span>
-            <select value={selectedSystemId} onChange={(event) => {
-              const value = event.target.value;
-              if (!value) {
-                setSelectedSystemId("");
-                return;
-              }
-              handleSystemChange(Number(value));
-            }}>
-              <option value="">未选择</option>
-              {systems.map((system) => (
-                <option value={system.id} key={system.id}>
-                  {system.system_name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            <span>baseUrl</span>
-            <input value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} />
-          </label>
-          <label>
-            <span>用户名</span>
-            <input value={username} onChange={(event) => setUsername(event.target.value)} />
-          </label>
-          <label>
-            <span>密码</span>
-            <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} />
-          </label>
+      <div className="main-grid" ref={mainViewRef}>
+        <div className="runtime-column">
+          {activeRun ? (
+            <RuntimeStreamPanel runId={activeRun.id} steps={steps} onPreviewScreenshot={openPreview} />
+          ) : (
+            <div className="surface-panel empty-state runtime-empty-state">执行后显示 AI 执行过程</div>
+          )}
         </div>
-
-        <label className="toggle-row">
-          <input
-            type="checkbox"
-            checked={visionFallback}
-            onChange={(event) => setVisionFallback(event.target.checked)}
+        <div className="screenshot-column">
+          <CurrentScreenshotCard
+            run={activeRun}
+            steps={steps}
+            refreshKey={screenshotRefreshKey}
+            onRefresh={() => setScreenshotRefreshKey(Date.now())}
+            onPreview={openPreview}
           />
-          <span>启用视觉兜底</span>
-        </label>
-
-        <label className="stacked-field">
-          <span>自然语言测试目标</span>
-          <textarea value={instruction} rows={5} onChange={(event) => setInstruction(event.target.value)} />
-        </label>
-
-        <label className="stacked-field">
-          <span>测试数据补充 JSON</span>
-          <textarea value={testDataJson} rows={7} onChange={(event) => setTestDataJson(event.target.value)} />
-        </label>
-
-        <div className="action-bar">
-          <button className="secondary-button" type="button" onClick={handleAnalyze} disabled={isAnalyzing || !instruction}>
-            <Search size={16} />
-            {isAnalyzing ? "分析中" : "分析"}
-          </button>
-          <button className="primary-button" type="button" onClick={handleExecute} disabled={isExecuting || !instruction}>
-            <Play size={16} />
-            {isExecuting ? "执行中" : "开始执行"}
-          </button>
-          <button className="secondary-button" type="button" onClick={() => setInterventionOpen(true)} disabled={!activeRun}>
-            <UserRoundCheck size={16} />
-            人工介入
-          </button>
-          <button className="ghost-button" type="button" onClick={() => setDrawerOpen(true)} disabled={!activeRun}>
-            <Bug size={16} />
-            调试详情
-          </button>
+          <ErrorSummaryCard
+            run={activeRun}
+            steps={steps}
+            apiError={apiError}
+            onIntervention={() => setInterventionOpen(true)}
+            onDebug={() => setDrawerOpen(true)}
+          />
         </div>
+      </div>
 
-        {analysis ? <AnalysisPanel analysis={analysis} /> : null}
-        {selectedProject ? (
-          <div className="project-context">
-            <strong>{selectedSystem?.system_name || selectedProject.name}</strong>
-            <span>{selectedSystem?.environment || selectedProject.environment || "test"}</span>
-          </div>
-        ) : null}
-      </section>
-
-      <section className="surface-panel run-history">
-        <div className="panel-heading">
-          <h2>运行记录</h2>
-          <span>{runs.length} 条</span>
-        </div>
-        <div className="run-history__list">
-          {runs.slice(0, 8).map((run) => (
+      <section className="surface-panel tabs-area">
+        <div className="tab-strip test-run-tabs">
+          {TEST_RUN_TABS.map((tab) => (
             <button
-              className={activeRun?.id === run.id ? "run-history__item run-history__item--active" : "run-history__item"}
-              key={run.id}
+              className={activeTab === tab.id ? "tab-button tab-button--active" : "tab-button"}
+              key={tab.id}
               type="button"
-              onClick={() => void selectRun(run)}
+              onClick={() => setActiveTab(tab.id)}
             >
-              <span>{run.run_code}</span>
-              <StatusBadge value={run.status} />
+              {tab.label}
             </button>
           ))}
         </div>
+        <div className="tab-content-panel">
+          {activeTab === "steps" ? <StepScreenshotList steps={steps} artifacts={artifacts} onPreview={openPreview} /> : null}
+          {activeTab === "history" ? (
+            <RunHistoryTab runs={runs} activeRun={activeRun} onSelectRun={(run) => void selectRun(run, true)} />
+          ) : null}
+          {activeTab === "failures" ? (
+            <FailureAnalysisTab
+              run={activeRun}
+              steps={steps}
+              failureSamples={failureSamples}
+              apiError={apiError}
+              onIntervention={() => setInterventionOpen(true)}
+              onDebug={() => setDrawerOpen(true)}
+              onPreview={openPreview}
+            />
+          ) : null}
+          {activeTab === "debug" ? (
+            <DebugDetailsTab
+              run={activeRun}
+              steps={steps}
+              artifacts={artifacts}
+              failureSamples={failureSamples}
+              interventions={interventions}
+            />
+          ) : null}
+          {activeTab === "artifacts" ? <ReportArtifactsTab run={activeRun} artifacts={artifacts} /> : null}
+        </div>
       </section>
 
-      <div className="runtime-region">
-        {activeRun ? <RuntimeStreamPanel runId={activeRun.id} /> : <div className="surface-panel empty-state">执行后显示 Runtime Stream</div>}
-      </div>
-      <ScreenshotPanel run={activeRun} refreshKey={screenshotRefreshKey} onRefresh={() => setScreenshotRefreshKey(Date.now())} />
-      <StepTree steps={steps} />
-      <ErrorSummaryCard run={activeRun} steps={steps} apiError={apiError} />
       <DebugDrawer
         open={drawerOpen || interventionOpen}
         title={interventionOpen ? "人工介入" : "调试详情"}
@@ -398,28 +405,126 @@ export function TestRunPage() {
           setInterventionOpen(false);
         }}
       />
+      <ScreenshotPreviewModal src={preview?.src || null} title={preview?.title} onClose={() => setPreview(null)} />
     </div>
   );
 }
 
-function AnalysisPanel({ analysis }: { analysis: AnalyzeResult }) {
+function FailureAnalysisTab({
+  run,
+  steps,
+  failureSamples,
+  apiError,
+  onIntervention,
+  onDebug,
+  onPreview
+}: {
+  run: TestRun | null;
+  steps: TestStepRun[];
+  failureSamples: FailureSample[];
+  apiError: string | null;
+  onIntervention: () => void;
+  onDebug: () => void;
+  onPreview: (src: string, title: string) => void;
+}) {
+  if (!run && !apiError) {
+    return <div className="empty-state">选择运行后显示失败分析</div>;
+  }
   return (
-    <section className="analysis-panel">
-      <div className="analysis-panel__title">
-        <Bot size={16} />
-        <strong>{analysis.readyToExecute ? "信息足够，可以执行" : "需要补充信息"}</strong>
-        <span>置信度 {Math.round(analysis.confidence * 100)}%</span>
-      </div>
-      <p>{analysis.understoodGoal || analysis.normalizedInstruction}</p>
-      {analysis.clarifyingQuestions.length > 0 ? (
-        <ul>
-          {analysis.clarifyingQuestions.map((question) => (
-            <li key={question}>{question}</li>
-          ))}
-        </ul>
-      ) : null}
-    </section>
+    <div className="failure-analysis-tab">
+      <ErrorSummaryCard run={run} steps={steps} apiError={apiError} onIntervention={onIntervention} onDebug={onDebug} />
+      {failureSamples.length === 0 ? (
+        <div className="empty-state">当前运行没有失败样本</div>
+      ) : (
+        <div className="failure-sample-list">
+          {failureSamples.map((sample) => {
+            const screenshot = sample.screenshot_path ? fileUrl(sample.screenshot_path) : null;
+            return (
+              <article className="failure-sample" key={sample.id}>
+                <div className="panel-heading">
+                  <h2>{sample.failure_type || "失败样本"}</h2>
+                  <span>{sample.status}</span>
+                </div>
+                <p>{sample.failure_summary || "暂无摘要"}</p>
+                {screenshot ? (
+                  <button className="failure-sample__screenshot" type="button" onClick={() => onPreview(screenshot, "失败截图")}>
+                    <img src={screenshot} alt="失败截图" />
+                  </button>
+                ) : null}
+                <div className="artifact-link-grid">
+                  {sample.dom_snapshot_path ? <a href={fileUrl(sample.dom_snapshot_path)} target="_blank" rel="noreferrer">DOM Snapshot</a> : null}
+                  {sample.accessibility_snapshot_path ? <a href={fileUrl(sample.accessibility_snapshot_path)} target="_blank" rel="noreferrer">Accessibility Snapshot</a> : null}
+                  {sample.locator_debug_path ? <a href={fileUrl(sample.locator_debug_path)} target="_blank" rel="noreferrer">locator-debug</a> : null}
+                  {sample.runtime_stream_path ? <a href={fileUrl(sample.runtime_stream_path)} target="_blank" rel="noreferrer">运行消息</a> : null}
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      )}
+    </div>
   );
+}
+
+function DebugDetailsTab({
+  run,
+  steps,
+  artifacts,
+  failureSamples,
+  interventions
+}: {
+  run: TestRun | null;
+  steps: TestStepRun[];
+  artifacts: TestArtifact[];
+  failureSamples: FailureSample[];
+  interventions: HumanIntervention[];
+}) {
+  if (!run) {
+    return <div className="empty-state">选择运行后显示调试详情</div>;
+  }
+  return (
+    <div className="debug-details-tab">
+      <JsonCollapseBlock title="查看运行 JSON" value={run} />
+      <JsonCollapseBlock title="查看步骤 JSON" value={steps} />
+      <JsonCollapseBlock title="查看产物 JSON" value={artifacts} />
+      <JsonCollapseBlock title="查看失败样本 JSON" value={failureSamples} />
+      <JsonCollapseBlock title="查看人工介入 JSON" value={interventions} />
+    </div>
+  );
+}
+
+function ReportArtifactsTab({ run, artifacts }: { run: TestRun | null; artifacts: TestArtifact[] }) {
+  if (!run) {
+    return <div className="empty-state">选择运行后显示报告与产物</div>;
+  }
+  return (
+    <div className="report-artifacts-tab">
+      <a className="secondary-link" href={apiUrl(`/api/reports/${run.id}`)} target="_blank" rel="noreferrer">
+        <ExternalLink size={14} />
+        打开测试报告
+      </a>
+      <div className="artifact-link-grid artifact-link-grid--dense">
+        {artifacts.map((artifact) => (
+          <a href={fileUrl(artifact.file_path)} target="_blank" rel="noreferrer" key={artifact.id}>
+            {artifactLabel(artifact.artifact_type)}
+          </a>
+        ))}
+      </div>
+      {artifacts.length === 0 ? <div className="empty-state">暂无产物</div> : null}
+    </div>
+  );
+}
+
+function artifactLabel(type: string): string {
+  if (type === "dom_snapshot") return "DOM Snapshot";
+  if (type === "accessibility_snapshot") return "Accessibility Snapshot";
+  if (type === "locator_debug") return "locator-debug";
+  if (type === "runtime_stream") return "运行消息";
+  if (type === "execution_trace") return "执行轨迹";
+  if (type === "summary") return "summary.json";
+  if (type === "report") return "report.html";
+  if (type === "screenshot") return "步骤截图";
+  return type;
 }
 
 function materializeDsl(
