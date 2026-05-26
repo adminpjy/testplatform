@@ -1,4 +1,5 @@
 import json
+from collections.abc import Iterator
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -37,19 +38,7 @@ class OpenAICompatibleProvider:
         if not self.api_key:
             raise LLMProviderError("TEST_LLM_API_KEY is required for the OpenAI-compatible provider.")
 
-        payload = {
-            "model": self.model,
-            "messages": [
-                {"role": "system", "content": request.system_prompt},
-                {"role": "user", "content": request.user_prompt},
-            ],
-            "temperature": request.temperature if request.temperature is not None else self.temperature,
-            "top_p": request.top_p if request.top_p is not None else self.top_p,
-            "stream": request.stream,
-        }
-        max_tokens = request.max_tokens if request.max_tokens is not None else self.max_tokens
-        if max_tokens > 0:
-            payload["max_tokens"] = max_tokens
+        payload = self._payload(request, stream=request.stream)
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
@@ -63,6 +52,35 @@ class OpenAICompatibleProvider:
             self._raise_for_status(response)
             body = response.json()
             return body["choices"][0]["message"]["content"]
+
+    def stream_complete(self, request: LLMRequest) -> Iterator[str]:
+        if not self.base_url:
+            raise LLMProviderError("TEST_LLM_BASE_URL is required for the OpenAI-compatible provider.")
+        if not self.api_key:
+            raise LLMProviderError("TEST_LLM_API_KEY is required for the OpenAI-compatible provider.")
+
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+        with httpx.Client(timeout=float(self.timeout_seconds), verify=self._verify_value()) as client:
+            yield from self._stream_chunks(client, self._completion_url(), self._payload(request, stream=True), headers)
+
+    def _payload(self, request: LLMRequest, *, stream: bool) -> dict:
+        payload = {
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": request.system_prompt},
+                {"role": "user", "content": request.user_prompt},
+            ],
+            "temperature": request.temperature if request.temperature is not None else self.temperature,
+            "top_p": request.top_p if request.top_p is not None else self.top_p,
+            "stream": stream,
+        }
+        max_tokens = request.max_tokens if request.max_tokens is not None else self.max_tokens
+        if max_tokens > 0:
+            payload["max_tokens"] = max_tokens
+        return payload
 
     def _completion_url(self) -> str:
         if self.base_url.endswith("/chat/completions"):
@@ -89,6 +107,15 @@ class OpenAICompatibleProvider:
         payload: dict,
         headers: dict,
     ) -> str:
+        return "".join(self._stream_chunks(client, url, payload, headers))
+
+    def _stream_chunks(
+        self,
+        client: httpx.Client,
+        url: str,
+        payload: dict,
+        headers: dict,
+    ) -> Iterator[str]:
         chunks: list[str] = []
         with client.stream("POST", url, json=payload, headers=headers) as response:
             self._raise_for_status(response)
@@ -108,7 +135,7 @@ class OpenAICompatibleProvider:
                 content = delta.get("content")
                 if content:
                     chunks.append(content)
-        return "".join(chunks)
+                    yield content
 
     @staticmethod
     def _raise_for_status(response: httpx.Response) -> None:

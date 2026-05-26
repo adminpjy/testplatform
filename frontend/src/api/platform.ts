@@ -1,4 +1,4 @@
-import { getJson, postJson, putJson } from "./client";
+import { apiUrl, getJson, postJson, putJson } from "./client";
 import type {
   AbilityRule,
   AbilityKnowledge,
@@ -60,6 +60,46 @@ export function analyzeTestRun(payload: NaturalLanguageTestRequest): Promise<Ana
 
 export function planTestRun(payload: NaturalLanguageTestRequest): Promise<TestCaseDSL> {
   return postJson<TestCaseDSL>("/api/test-runs/plan", payload);
+}
+
+export async function streamAnalyzeAndPlan(
+  payload: NaturalLanguageTestRequest,
+  onMessage: (message: RuntimeMessageWire) => void
+): Promise<void> {
+  const response = await fetch(apiUrl("/api/test-runs/analyze-stream"), {
+    method: "POST",
+    headers: {
+      Accept: "text/event-stream",
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(payload)
+  });
+  if (!response.ok || !response.body) {
+    throw new Error(`Analyze stream failed with HTTP ${response.status}.`);
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const events = buffer.split(/\n\n/);
+    buffer = events.pop() || "";
+    for (const eventText of events) {
+      const message = parseSseMessage(eventText);
+      if (message) {
+        onMessage(message);
+      }
+    }
+  }
+  if (buffer.trim()) {
+    const message = parseSseMessage(buffer);
+    if (message) {
+      onMessage(message);
+    }
+  }
 }
 
 export function createTestRun(payload: TestRunCreate): Promise<TestRun> {
@@ -130,4 +170,19 @@ export function getAbilityRules(): Promise<AbilityRule[]> {
 
 export function getAbilityKnowledge(): Promise<AbilityKnowledge[]> {
   return getJson<AbilityKnowledge[]>("/api/abilities/knowledge");
+}
+
+function parseSseMessage(eventText: string): RuntimeMessageWire | null {
+  const dataLines = eventText
+    .split(/\r?\n/)
+    .filter((line) => line.startsWith("data:"))
+    .map((line) => line.slice(5).trimStart());
+  if (dataLines.length === 0) {
+    return null;
+  }
+  try {
+    return JSON.parse(dataLines.join("\n")) as RuntimeMessageWire;
+  } catch {
+    return null;
+  }
 }

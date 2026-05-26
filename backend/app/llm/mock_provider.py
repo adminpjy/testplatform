@@ -1,5 +1,6 @@
 import json
 import re
+from collections.abc import Iterator
 from typing import Any
 
 from app.llm.json_utils import parse_json_object
@@ -8,16 +9,22 @@ from app.llm.provider import LLMRequest
 
 class MockLLMProvider:
     def complete(self, request: LLMRequest) -> str:
-        payload = _extract_input_payload(request.user_prompt)
-        if "TASK: plan" in request.user_prompt:
-            response = _mock_plan(payload)
-        else:
-            response = _mock_analyze(payload)
-
-        text = json.dumps(response, ensure_ascii=False)
+        text = json.dumps(_mock_response(request), ensure_ascii=False)
         if request.stream:
             return _as_data_stream(text)
         return text
+
+    def stream_complete(self, request: LLMRequest) -> Iterator[str]:
+        text = json.dumps(_mock_response(request), ensure_ascii=False)
+        for index in range(0, len(text), 32):
+            yield text[index : index + 32]
+
+
+def _mock_response(request: LLMRequest) -> dict[str, Any]:
+    payload = _extract_input_payload(request.user_prompt)
+    if "TASK: plan" in request.user_prompt:
+        return _mock_plan(payload)
+    return _mock_analyze(payload)
 
 
 def _extract_input_payload(prompt: str) -> dict[str, Any]:

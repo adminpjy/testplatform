@@ -113,6 +113,8 @@ class CaseRunner:
         started_at = _utc_now()
         action = str(step.get("action") or "")
         target = str(step.get("target") or step.get("selector") or "")
+        locatable_action = action in {"input", "click", "confirm_dialog", "navigate_menu", "select", "upload_file", "business_goal"}
+        vision_requested = bool((dsl.get("settings") or {}).get("visionFallbackEnabled"))
         self._emit_runtime(
             writer,
             "progress",
@@ -130,7 +132,7 @@ class CaseRunner:
                 "goal_executor",
                 {"step_number": step_number, "target": target},
             )
-        if action in {"input", "click", "confirm_dialog", "navigate_menu", "select", "upload_file", "business_goal"}:
+        if locatable_action:
             self._emit_runtime(
                 writer,
                 "progress",
@@ -138,6 +140,22 @@ class CaseRunner:
                 "正在读取页面",
                 "page_observer",
                 {"step_number": step_number, "action": action, "target": target},
+            )
+            self._emit_runtime(
+                writer,
+                "progress",
+                "llm_resolver",
+                "LLM 辅助定位已就绪，将在页面语义定位置信度不足时调用。",
+                "llm_element_resolver",
+                {"step_number": step_number, "action": action, "target": target},
+            )
+            self._emit_runtime(
+                writer,
+                "progress" if vision_requested else "text",
+                "vision",
+                "视觉兜底已开启，将在 DOM 和 LLM 无法确认时启用。" if vision_requested else "视觉兜底未开启，本步骤不会执行视觉识别。",
+                "vision_resolver",
+                {"step_number": step_number, "action": action, "target": target, "requested": vision_requested},
             )
             self._emit_runtime(
                 writer,
@@ -181,6 +199,8 @@ class CaseRunner:
         candidates: list[dict[str, Any]] = []
         try:
             outcome = self._execute_action(page, step, dsl)
+            if locatable_action:
+                self._emit_locator_decision_runtime(writer, step_number, action, target, outcome, vision_requested)
             locator_strategy = outcome.get("locator_strategy")
             element_ref = outcome.get("element_ref")
             confidence = outcome.get("confidence", 1.0)
@@ -264,6 +284,61 @@ class CaseRunner:
             {"step_number": step_number, "action": action, "target": target},
         )
         return result
+
+    def _emit_locator_decision_runtime(
+        self,
+        writer: ArtifactWriter,
+        step_number: int,
+        action: str,
+        target: str,
+        outcome: dict[str, Any],
+        vision_requested: bool,
+    ) -> None:
+        strategy = str(outcome.get("locator_strategy") or "")
+        confidence = outcome.get("confidence")
+        if strategy == "llm_resolver":
+            self._emit_runtime(
+                writer,
+                "success",
+                "llm_resolver",
+                "LLM 已参与元素判断，并返回候选定位。",
+                "llm_element_resolver",
+                {"step_number": step_number, "action": action, "target": target, "strategy": strategy, "confidence": confidence},
+            )
+        else:
+            self._emit_runtime(
+                writer,
+                "text",
+                "llm_resolver",
+                "LLM 未触发：当前步骤已通过确定性定位或页面语义定位完成。",
+                "llm_element_resolver",
+                {"step_number": step_number, "action": action, "target": target, "strategy": strategy, "confidence": confidence},
+            )
+
+        if outcome.get("needs_vision_fallback"):
+            self._emit_runtime(
+                writer,
+                "warning",
+                "vision",
+                "视觉兜底已触发，正在记录兜底状态和截图证据。",
+                "vision_resolver",
+                {
+                    "step_number": step_number,
+                    "action": action,
+                    "target": target,
+                    "fallback_reason": outcome.get("fallback_reason"),
+                    "requested": vision_requested,
+                },
+            )
+        else:
+            self._emit_runtime(
+                writer,
+                "text",
+                "vision",
+                "视觉兜底未触发：当前定位置信度足够。" if vision_requested else "视觉兜底未开启，本步骤未执行视觉识别。",
+                "vision_resolver",
+                {"step_number": step_number, "action": action, "target": target, "requested": vision_requested},
+            )
 
     def _emit_runtime(
         self,

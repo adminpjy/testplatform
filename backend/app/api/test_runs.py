@@ -1,6 +1,7 @@
 import json
 import time
 from collections.abc import Iterator
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from fastapi.responses import StreamingResponse
@@ -8,7 +9,9 @@ from sqlalchemy.orm import Session
 
 from app.db.session import SessionLocal, get_db
 from app.models import TestCase, TestProject
+from app.core.config import settings
 from app.schemas.test_runs import (
+    ALLOWED_DSL_ACTIONS,
     AnalyzeResult,
     FailureSampleRead,
     HumanInterventionCreate,
@@ -60,6 +63,19 @@ def read_test_runs(db: Session = Depends(get_db)) -> list[TestRunRead]:
 @router.post("/analyze", response_model=AnalyzeResult)
 def analyze_test_goal(payload: NaturalLanguageTestRequest) -> AnalyzeResult:
     return NaturalLanguageParser().analyze(payload)
+
+
+@router.post("/analyze-stream")
+def stream_analyze_test_goal(payload: NaturalLanguageTestRequest):
+    return StreamingResponse(
+        _analysis_events(payload),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.post("/plan", response_model=TestCaseDSL)
@@ -264,6 +280,141 @@ def _format_sse(message) -> str:
     }
     data = json.dumps(payload, ensure_ascii=False, default=str)
     return f"id: {message.id}\nevent: {event_type}\ndata: {data}\n\n"
+
+
+def _analysis_events(payload: NaturalLanguageTestRequest) -> Iterator[str]:
+    event_id = 0
+
+    def emit(message_type: str, phase: str, content: str, method: str, metadata: dict | None = None) -> str:
+        nonlocal event_id
+        event_id += 1
+        body = {
+            "id": event_id,
+            "runId": None,
+            "type": message_type,
+            "phase": phase,
+            "content": content,
+            "method": method,
+            "metadata": metadata or {},
+            "createdAt": datetime.now(timezone.utc).isoformat(),
+        }
+        return f"id: {event_id}\nevent: {message_type}\ndata: {json.dumps(body, ensure_ascii=False, default=str)}\n\n"
+
+    parser = NaturalLanguageParser()
+    yield emit(
+        "progress",
+        "understanding",
+        "正在理解测试目标，并准备安全的 LLM 输入。",
+        "natural_language_parser",
+        {
+            "provider": settings.llm_provider,
+            "model": settings.test_llm_model,
+            "stream": payload.stream if payload.stream is not None else settings.test_llm_stream,
+            "password_policy": "credentials and password-like text are redacted before prompt construction",
+        },
+    )
+    try:
+        sanitized_payload = parser.sanitized_input_payload(payload)
+        analyze_request = parser.build_analyze_request(payload)
+        yield emit(
+            "progress",
+            "llm_request",
+            "正在构造分析提示词，准备调用 LLM。",
+            "llm_provider",
+            {
+                "stage": "analyze",
+                "systemPrompt": analyze_request.system_prompt,
+                "userPrompt": analyze_request.user_prompt,
+                "inputPayload": sanitized_payload,
+            },
+        )
+
+        analyze_raw = ""
+        chunk_index = 0
+        for chunk in parser.provider.stream_complete(analyze_request):
+            analyze_raw += chunk
+            chunk_index += 1
+            yield emit(
+                "progress",
+                "llm_chunk",
+                chunk,
+                "llm_provider",
+                {"stage": "analyze", "chunkIndex": chunk_index},
+            )
+        yield emit(
+            "progress",
+            "json_repair",
+            "LLM 分析输出接收完成，正在提取并校验 JSON。",
+            "json_utils",
+            {"stage": "analyze", "rawLength": len(analyze_raw)},
+        )
+        analysis = parser.parse_analysis(analyze_raw)
+        yield emit(
+            "success" if analysis.readyToExecute else "warning",
+            "analysis_result",
+            "分析完成：信息足够，可以生成 DSL。" if analysis.readyToExecute else "分析完成：需要补充信息。",
+            "natural_language_parser",
+            {"analysis": analysis.model_dump()},
+        )
+
+        dsl = None
+        if analysis.readyToExecute:
+            plan_request = parser.build_plan_request(payload)
+            yield emit(
+                "progress",
+                "llm_request",
+                "正在构造 DSL 生成提示词，准备调用 LLM。",
+                "llm_provider",
+                {
+                    "stage": "plan",
+                    "systemPrompt": plan_request.system_prompt,
+                    "userPrompt": plan_request.user_prompt,
+                    "allowedActions": sorted(ALLOWED_DSL_ACTIONS),
+                },
+            )
+            plan_raw = ""
+            chunk_index = 0
+            for chunk in parser.provider.stream_complete(plan_request):
+                plan_raw += chunk
+                chunk_index += 1
+                yield emit(
+                    "progress",
+                    "llm_chunk",
+                    chunk,
+                    "llm_provider",
+                    {"stage": "plan", "chunkIndex": chunk_index},
+                )
+            yield emit(
+                "progress",
+                "json_repair",
+                "LLM DSL 输出接收完成，正在提取、修复并校验步骤 JSON。",
+                "json_utils",
+                {"stage": "plan", "rawLength": len(plan_raw)},
+            )
+            dsl = parser.parse_plan(plan_raw, payload)
+            yield emit(
+                "success",
+                "dsl_generated",
+                f"DSL 已生成，共 {len(dsl.steps)} 个步骤。",
+                "natural_language_parser",
+                {"dsl": dsl.model_dump()},
+            )
+
+        yield emit(
+            "success",
+            "completed",
+            "自然语言分析流程完成。",
+            "natural_language_parser",
+            {"analysis": analysis.model_dump(), "dsl": dsl.model_dump() if dsl else None},
+        )
+    except Exception as exc:
+        yield emit(
+            "error",
+            "failed",
+            str(exc),
+            "natural_language_parser",
+            {"provider": settings.llm_provider, "model": settings.test_llm_model},
+        )
 
 
 def _resolve_start_after_id(after_id: int, last_event_id: str | None) -> int:

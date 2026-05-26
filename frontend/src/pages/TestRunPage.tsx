@@ -3,7 +3,6 @@ import { useEffect, useRef, useState } from "react";
 
 import { apiUrl, fileUrl } from "../api/client";
 import {
-  analyzeTestRun,
   convertInterventionToRule,
   createTestRun,
   executeIntervention,
@@ -15,8 +14,10 @@ import {
   getTestRuns,
   getTestRunSteps,
   interveneStep,
-  planTestRun
+  planTestRun,
+  streamAnalyzeAndPlan
 } from "../api/platform";
+import { AnalysisTracePanel } from "../components/AnalysisTracePanel";
 import { DebugDrawer } from "../components/DebugDrawer";
 import { ErrorSummaryCard } from "../components/ErrorSummaryCard";
 import { CurrentScreenshotCard } from "../components/CurrentScreenshotCard";
@@ -39,6 +40,8 @@ import type {
   TestStepRun,
   TestSystem
 } from "../types/platform";
+import type { RuntimeMessage } from "../types/runtime";
+import { normalizeRuntimeMessage } from "../types/runtime";
 
 const DEFAULT_TEST_DATA = `{
   "用户名": "test001",
@@ -72,6 +75,8 @@ export function TestRunPage() {
   const [visionFallback, setVisionFallback] = useState(false);
   const [instruction, setInstruction] = useState("登录系统，进入我的待办，确认页面存在我的待办");
   const [analysis, setAnalysis] = useState<AnalyzeResult | null>(null);
+  const [plannedDsl, setPlannedDsl] = useState<TestCaseDSL | null>(null);
+  const [analysisMessages, setAnalysisMessages] = useState<RuntimeMessage[]>([]);
   const [activeRun, setActiveRun] = useState<TestRun | null>(null);
   const [steps, setSteps] = useState<TestStepRun[]>([]);
   const [artifacts, setArtifacts] = useState<TestArtifact[]>([]);
@@ -163,8 +168,11 @@ export function TestRunPage() {
   async function handleAnalyze() {
     setApiError(null);
     setIsAnalyzing(true);
+    setAnalysis(null);
+    setPlannedDsl(null);
+    setAnalysisMessages([]);
     try {
-      const result = await analyzeTestRun({
+      await streamAnalyzeAndPlan({
         project_id: Number(selectedProjectId),
         system_id: selectedSystemId ? Number(selectedSystemId) : undefined,
         instruction,
@@ -173,8 +181,20 @@ export function TestRunPage() {
         testData: parseTestData(),
         settings: { visionFallbackEnabled: visionFallback },
         stream: true
+      }, (wireMessage) => {
+        const message = normalizeRuntimeMessage(wireMessage);
+        setAnalysisMessages((current) => appendRuntimeMessage(current, message));
+        const metadata = message.metadata;
+        if (metadata.analysis && typeof metadata.analysis === "object") {
+          setAnalysis(metadata.analysis as AnalyzeResult);
+        }
+        if (metadata.dsl && typeof metadata.dsl === "object") {
+          setPlannedDsl(metadata.dsl as TestCaseDSL);
+        }
+        if (message.type === "error") {
+          setApiError(message.content || "分析失败。");
+        }
       });
-      setAnalysis(result);
     } catch (error) {
       setApiError(error instanceof Error ? error.message : String(error));
     } finally {
@@ -192,16 +212,16 @@ export function TestRunPage() {
     setConfigCollapsed(true);
     setActiveTab("steps");
     try {
-      const planned = await planTestRun({
-        project_id: Number(selectedProjectId),
-        system_id: selectedSystemId ? Number(selectedSystemId) : undefined,
-        instruction,
-        base_url: baseUrl,
-        credentials: { username, password },
-        testData: parseTestData(),
-        settings: { visionFallbackEnabled: visionFallback },
-        stream: true
-      });
+      const planned = plannedDsl || await planTestRun({
+          project_id: Number(selectedProjectId),
+          system_id: selectedSystemId ? Number(selectedSystemId) : undefined,
+          instruction,
+          base_url: baseUrl,
+          credentials: { username, password },
+          testData: parseTestData(),
+          settings: { visionFallbackEnabled: visionFallback },
+          stream: true
+        });
       const executableDsl = materializeDsl(planned, { baseUrl, username, password, visionFallback, instruction, testData: parseTestData() });
       const run = await createTestRun({
         project_id: Number(selectedProjectId),
@@ -318,6 +338,8 @@ export function TestRunPage() {
         onIntervention={() => setInterventionOpen(true)}
         onDebug={() => setDrawerOpen(true)}
       />
+
+      <AnalysisTracePanel messages={analysisMessages} analyzing={isAnalyzing} dsl={plannedDsl} />
 
       <div className="main-grid" ref={mainViewRef}>
         <div className="runtime-column">
@@ -525,6 +547,16 @@ function artifactLabel(type: string): string {
   if (type === "report") return "report.html";
   if (type === "screenshot") return "步骤截图";
   return type;
+}
+
+function appendRuntimeMessage(current: RuntimeMessage[], next: RuntimeMessage): RuntimeMessage[] {
+  const existingIndex = current.findIndex((message) => message.id === next.id);
+  if (existingIndex >= 0) {
+    const copy = [...current];
+    copy[existingIndex] = next;
+    return copy;
+  }
+  return [...current, next].sort((left, right) => left.id - right.id);
 }
 
 function materializeDsl(

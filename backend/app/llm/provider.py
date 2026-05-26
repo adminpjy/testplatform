@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from collections.abc import Iterator
 from typing import Protocol
 
 from app.core.config import Settings, settings
@@ -20,6 +21,9 @@ class LLMRequest:
 
 class LLMProvider(Protocol):
     def complete(self, request: LLMRequest) -> str:
+        pass
+
+    def stream_complete(self, request: LLMRequest) -> Iterator[str]:
         pass
 
 

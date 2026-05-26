@@ -565,6 +565,156 @@ button:disabled {
   padding-left: 18px;
 }
 
+.analysis-trace-panel {
+  padding: 16px;
+}
+
+.analysis-trace-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(340px, 0.8fr);
+  gap: 14px;
+  align-items: start;
+}
+
+.analysis-trace-stream {
+  display: flex;
+  max-height: 440px;
+  flex-direction: column;
+  gap: 10px;
+  overflow: auto;
+  border-radius: 8px;
+  background: #f8fafc;
+  padding: 10px;
+}
+
+.analysis-trace-message {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  gap: 10px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 10px;
+}
+
+.analysis-trace-message--success {
+  border-color: #86efac;
+  background: #f0fdf4;
+}
+
+.analysis-trace-message--warning {
+  border-color: #fde68a;
+  background: #fffbeb;
+}
+
+.analysis-trace-message--error {
+  border-color: #fecaca;
+  background: #fef2f2;
+}
+
+.analysis-trace-message__icon {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border-radius: 999px;
+  background: #eef2ff;
+  color: #3730a3;
+}
+
+.analysis-trace-message__title {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.analysis-trace-message__title time {
+  color: #64748b;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.analysis-trace-message p {
+  margin: 6px 0 0;
+  overflow-wrap: anywhere;
+  color: #334155;
+  line-height: 1.5;
+}
+
+.dsl-preview-panel {
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 12px;
+}
+
+.dsl-preview-panel__heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.dsl-preview-panel__heading span {
+  color: #64748b;
+  font-size: 12px;
+}
+
+.dsl-step-list {
+  display: flex;
+  max-height: 260px;
+  flex-direction: column;
+  gap: 8px;
+  overflow: auto;
+  margin: 12px 0;
+  padding: 0;
+  list-style: none;
+}
+
+.dsl-step-list li {
+  display: grid;
+  grid-template-columns: 48px 128px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  border-radius: 7px;
+  background: #f8fafc;
+  padding: 8px;
+}
+
+.dsl-step-list span {
+  color: #2563eb;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.dsl-step-list strong {
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+
+.dsl-step-list em {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: #64748b;
+  font-size: 12px;
+  font-style: normal;
+}
+
+.llm-chunk-grid {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.llm-chunk-grid__toggle {
+  justify-self: start;
+}
+
+.llm-chunk-block {
+  max-height: 220px;
+}
+
 .project-context {
   display: flex;
   gap: 8px;
@@ -1259,6 +1409,7 @@ button:disabled {
 
 @media (max-width: 1180px) {
   .main-grid,
+  .analysis-trace-grid,
   .page-grid--test-run,
   .page-grid--reports,
   .page-grid--systems,

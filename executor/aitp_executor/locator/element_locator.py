@@ -39,7 +39,7 @@ class ElementLocator:
         self.normalizer = normalizer or BusinessIntentNormalizer()
         self.ranker = ranker or CandidateRanker()
         self.ambiguity_resolver = ambiguity_resolver or AmbiguityResolver()
-        self.llm_resolver = llm_resolver or LLMElementResolver(configured=False)
+        self.llm_resolver = llm_resolver or LLMElementResolver()
         self.vision_resolver = vision_resolver or VisionResolver(configured=False)
 
     def locate(self, page: Any, *, action: str, target: str, step: dict[str, Any] | None = None) -> LocatorResult:
