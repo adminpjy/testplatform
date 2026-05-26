@@ -1355,6 +1355,13 @@ button:disabled {
   font-size: 13px;
 }
 
+.debug-section__hint {
+  margin: 0 0 10px;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
 .debug-section pre {
   max-height: 240px;
   overflow: auto;
@@ -1363,6 +1370,56 @@ button:disabled {
   color: #e2e8f0;
   font-size: 12px;
   padding: 10px;
+}
+
+.debug-feedback {
+  border: 1px solid #bfdbfe;
+  border-radius: 6px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 13px;
+  margin-top: 10px;
+  padding: 8px 10px;
+}
+
+.intervention-plan-card {
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #f8fafc;
+  margin-top: 10px;
+  padding: 10px;
+}
+
+.intervention-plan-card__meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: #475569;
+  font-size: 12px;
+}
+
+.intervention-plan-card p {
+  margin: 8px 0;
+  color: #334155;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.intervention-plan-card ol {
+  margin: 8px 0 0 20px;
+  padding: 0;
+}
+
+.intervention-plan-card li {
+  margin: 6px 0;
+  color: #1e293b;
+  font-size: 13px;
+}
+
+.intervention-plan-card small {
+  display: block;
+  color: #64748b;
+  line-height: 1.5;
 }
 
 .data-table {

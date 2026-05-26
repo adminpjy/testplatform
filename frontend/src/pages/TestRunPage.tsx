@@ -92,6 +92,7 @@ export function TestRunPage() {
   const [testDataOpen, setTestDataOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<TestRunTab>("steps");
   const [preview, setPreview] = useState<{ src: string; title: string } | null>(null);
+  const [runtimeReloadKey, setRuntimeReloadKey] = useState(0);
   const mainViewRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -133,6 +134,7 @@ export function TestRunPage() {
     setInterventions(interventionList);
     setLatestRuleDraft(null);
     setScreenshotRefreshKey(Date.now());
+    setRuntimeReloadKey((value) => value + 1);
     if (focusRuntime) {
       setActiveTab("steps");
       window.setTimeout(() => {
@@ -255,6 +257,7 @@ export function TestRunPage() {
     setInterventions([]);
     setLatestRuleDraft(null);
     setScreenshotRefreshKey(Date.now());
+    setRuntimeReloadKey((value) => value + 1);
   }
 
   async function handleCreateIntervention(userInstruction: string) {
@@ -271,8 +274,10 @@ export function TestRunPage() {
     try {
       const intervention = await interveneStep(activeRun.id, targetStep.id, { user_instruction: userInstruction });
       setInterventions((current) => [intervention, ...current.filter((item) => item.id !== intervention.id)]);
+      await reloadRunDetails(activeRun);
     } catch (error) {
       setApiError(error instanceof Error ? error.message : String(error));
+      throw error;
     }
   }
 
@@ -284,8 +289,10 @@ export function TestRunPage() {
     try {
       const intervention = await executeIntervention(activeRun.id, interventionId);
       setInterventions((current) => [intervention, ...current.filter((item) => item.id !== intervention.id)]);
+      await reloadRunDetails(activeRun);
     } catch (error) {
       setApiError(error instanceof Error ? error.message : String(error));
+      throw error;
     }
   }
 
@@ -297,9 +304,26 @@ export function TestRunPage() {
     try {
       const draft = await convertInterventionToRule(activeRun.id, interventionId);
       setLatestRuleDraft(draft);
+      setRuntimeReloadKey((value) => value + 1);
     } catch (error) {
       setApiError(error instanceof Error ? error.message : String(error));
+      throw error;
     }
+  }
+
+  async function reloadRunDetails(run: TestRun) {
+    const [stepList, artifactList, sampleList, interventionList] = await Promise.all([
+      getTestRunSteps(run.id),
+      getTestRunArtifacts(run.id),
+      getRunFailureSamples(run.id),
+      getRunHumanInterventions(run.id)
+    ]);
+    setSteps(stepList);
+    setArtifacts(artifactList);
+    setFailureSamples(sampleList);
+    setInterventions(interventionList);
+    setScreenshotRefreshKey(Date.now());
+    setRuntimeReloadKey((value) => value + 1);
   }
 
   const canExecute = Boolean(plannedDsl && selectedProjectId && instruction.trim() && !isAnalyzing && !isExecuting);
@@ -389,7 +413,12 @@ export function TestRunPage() {
         {activeRun ? (
           <div className="main-grid execution-observation-grid" ref={mainViewRef}>
             <div className="runtime-column">
-              <RuntimeStreamPanel runId={activeRun.id} steps={steps} onPreviewScreenshot={openPreview} />
+              <RuntimeStreamPanel
+                key={`${activeRun.id}-${runtimeReloadKey}`}
+                runId={activeRun.id}
+                steps={steps}
+                onPreviewScreenshot={openPreview}
+              />
             </div>
             <div className="screenshot-column">
               <CurrentScreenshotCard

@@ -21,6 +21,7 @@ const phaseTitles: Record<string, string> = {
   navigate_menu: "正在导航菜单",
   verify: "正在验证执行结果",
   observe: "正在读取页面结构",
+  page_ready: "正在等待页面加载完成",
   page_reading: "正在读取页面结构",
   page_semantic: "正在分析页面语义",
   locate: "正在分析候选元素",
@@ -81,7 +82,8 @@ const methodLabels: Record<string, string> = {
   llm_provider: "大模型",
   natural_language_parser: "测试目标解析",
   json_utils: "JSON 校验",
-  sandbox_provider: "执行环境"
+  sandbox_provider: "执行环境",
+  page_waiter: "页面加载等待"
 };
 
 export function readableRuntimeTitle(message: RuntimeMessage): string {
@@ -108,6 +110,11 @@ export function readableRuntimeMessage(message: RuntimeMessage): string {
   }
   if (message.phase === "locate") {
     return "正在分析页面上的按钮、输入框、菜单和表格，判断哪个元素最符合当前测试目标。";
+  }
+  if (message.phase === "page_ready") {
+    return message.type === "success"
+      ? "页面主要内容已经可见，继续执行下一步。"
+      : "正在等待页面主体内容、表单、菜单或列表加载完成。";
   }
   if (message.phase === "llm_resolver") {
     return "页面存在多个相似操作，正在结合上下文进行判断。";
@@ -148,6 +155,7 @@ export function runtimeFilterOf(message: RuntimeMessage): RuntimeFilter {
   if (text.includes("semantic") || text.includes("observe") || text.includes("locate") || text.includes("candidate")) {
     return "page";
   }
+  if (text.includes("page_ready") || text.includes("page_waiter")) return "page";
   return "action";
 }
 
@@ -177,6 +185,10 @@ export function runtimeDetailView(message: RuntimeMessage): RuntimeDetailView | 
   const sandboxStatus = metadataValue(metadata, "sandbox_status");
   const cubeMock = metadataValue(metadata, "cube_mock");
   const localBrowser = metadataValue(metadata, "local_browser");
+  const waitedMs = metadataValue(metadata, "waited_ms");
+  const textLength = metadataValue(metadata, "text_length");
+  const controlCount = metadataValue(metadata, "control_count");
+  const loadingVisible = metadataValue(metadata, "loading_visible");
 
   if (stepNumber) lines.push(`步骤编号：S${String(stepNumber).padStart(3, "0")}`);
   if (action) lines.push(`执行动作：${actionTitles[String(action)] || String(action)}`);
@@ -195,6 +207,12 @@ export function runtimeDetailView(message: RuntimeMessage): RuntimeDetailView | 
   }
   if (localBrowser !== null && message.method === "sandbox_provider") {
     lines.push(`本地浏览器承载：${localBrowser === "true" ? "是" : "否"}`);
+  }
+  if (waitedMs) lines.push(`页面等待耗时：${waitedMs} ms`);
+  if (textLength) lines.push(`页面文本长度：${textLength}`);
+  if (controlCount) lines.push(`可操作元素数量：${controlCount}`);
+  if (loadingVisible !== null && message.method === "page_waiter") {
+    lines.push(`加载遮罩：${loadingVisible === "true" ? "仍可见" : "未发现"}`);
   }
   if (steps) lines.push(`预计步骤数：${steps}`);
   if (status) lines.push(`处理状态：${status}`);

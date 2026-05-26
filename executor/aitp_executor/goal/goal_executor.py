@@ -6,6 +6,7 @@ from executor.aitp_executor.goal.login_form_resolver import LoginFormResolver
 from executor.aitp_executor.goal.recovery_policy import RecoveryPolicy
 from executor.aitp_executor.locator.business_intent_normalizer import BusinessIntentNormalizer
 from executor.aitp_executor.locator.element_locator import ElementLocator, LocatorResult
+from executor.aitp_executor.runner.page_waiter import wait_for_page_ready
 
 
 class GoalExecutor:
@@ -53,7 +54,7 @@ class GoalExecutor:
         credentials = dict(step.get("credentials") or {})
         username = str(step.get("username") or credentials.get("username") or os.getenv("REAL_MIS_USERNAME") or "admin")
         password = str(step.get("password") or credentials.get("password") or os.getenv("REAL_MIS_PASSWORD") or "123456")
-        page.wait_for_load_state("domcontentloaded")
+        wait_for_page_ready(page)
         form = self.login_resolver.resolve(page)
         if form.username_locator is None or form.password_locator is None:
             raise RuntimeError(
@@ -69,6 +70,8 @@ class GoalExecutor:
             form.submit_locator.click()
         else:
             form.password_locator.press("Enter")
+        page.wait_for_timeout(600)
+        wait_for_page_ready(page)
         return _outcome(
             LocatorResult(
                 form.submit_locator or form.password_locator,
@@ -83,21 +86,30 @@ class GoalExecutor:
         )
 
     def _approval_pass(self, page: Any, step: dict[str, Any]) -> dict[str, Any]:
+        wait_for_page_ready(page)
         approval = self.locator.locate(page, action="click", target="审批通过", step=step)
         self._require_locator(approval).click()
+        wait_for_page_ready(page)
         self._complete_approval_dialog(page, decision="通过")
+        wait_for_page_ready(page)
         verified, verify_reason = self.verifier.verify(page, "approval_pass")
         return _outcome(approval, verified=verified, verify_reason=verify_reason)
 
     def _approval_reject(self, page: Any, step: dict[str, Any]) -> dict[str, Any]:
+        wait_for_page_ready(page)
         approval = self.locator.locate(page, action="click", target="审批驳回", step=step)
         self._require_locator(approval).click()
+        wait_for_page_ready(page)
         self._complete_approval_dialog(page, decision="驳回")
+        wait_for_page_ready(page)
         return _outcome(approval, verified=True, verify_reason="approval_reject_submitted")
 
     def _click_goal(self, page: Any, action: str, target: str, step: dict[str, Any], intent_name: str) -> dict[str, Any]:
+        wait_for_page_ready(page)
         result = self.locator.locate(page, action=action, target=target, step=step)
         self._require_locator(result).click()
+        page.wait_for_timeout(500)
+        wait_for_page_ready(page)
         verified, verify_reason = self.verifier.verify(page, intent_name)
         return _outcome(result, verified=verified, verify_reason=verify_reason)
 

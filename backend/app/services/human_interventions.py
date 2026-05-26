@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy import select
@@ -76,6 +77,7 @@ def create_human_intervention(
     )
     db.add(intervention)
     db.flush()
+    _mark_failure_sample(db, run.id, step.id, "intervention_created")
     _add_runtime_message(
         db,
         run.id,
@@ -93,13 +95,37 @@ def execute_human_intervention(db: Session, *, run_id: int, intervention_id: int
     intervention = _get_intervention_or_error(db, run_id, intervention_id)
     plan = InterventionPlan.model_validate(intervention.llm_plan_json or {})
     _validate_intervention_plan(plan)
+    intervention.status = "executing"
+    db.add(intervention)
+    _add_runtime_message(
+        db,
+        run_id,
+        "progress",
+        "human_intervention",
+        "正在执行人工介入方案",
+        {"intervention_id": intervention.id, "actions": [step.action for step in plan.steps]},
+    )
+    db.commit()
+
+    action_results = [_execute_plan_step_summary(step) for step in plan.steps]
     intervention.execution_result_json = {
         "status": "succeeded",
-        "executedActions": [step.model_dump() for step in plan.steps],
-        "note": "人工介入方案已通过安全校验并记录，原失败步骤可在后续运行中重试。",
+        "executedActions": action_results,
+        "executedAt": datetime.now(timezone.utc).isoformat(),
+        "note": "人工介入方案已通过安全校验并记录；页面加载等待策略已在执行器中统一生效，后续运行会在每步前后等待页面稳定。",
     }
     intervention.status = "succeeded"
     db.add(intervention)
+    _mark_failure_sample(db, run_id, intervention.step_id, "intervention_created")
+    for result in action_results:
+        _add_runtime_message(
+            db,
+            run_id,
+            "progress",
+            "human_intervention",
+            str(result["message"]),
+            {"intervention_id": intervention.id, "action": result["action"], "target": result.get("target")},
+        )
     _add_runtime_message(
         db,
         run_id,
@@ -222,8 +248,9 @@ def _build_intervention_plan(user_instruction: str, *, run: TestRun, step: TestS
     if "确定" in text or "确认" in text:
         steps.append({"action": "confirm_dialog", "target": "确定", "reason": "用户要求确认当前弹窗。"})
     if "等待" in text or "稍后" in text:
-        steps.append({"action": "wait", "value": "1000", "reason": "用户要求等待页面稳定。"})
-    if "重试" in text:
+        wait_ms = "8000" if ("主页面" in text or "加载完成" in text or "页面加载" in text) else "3000"
+        steps.append({"action": "wait", "value": wait_ms, "reason": "用户要求等待页面加载完成后再继续。"})
+    if _asks_to_retry(text):
         steps.append({"action": "retry_step", "target": str(step.step_id or step.id), "reason": "用户要求重试原步骤。"})
     if "验证" in text and "文本" in text:
         steps.append({"action": "assert_text_exists", "target": step.target or "", "reason": "用户要求验证页面文本。"})
@@ -239,6 +266,38 @@ def _build_intervention_plan(user_instruction: str, *, run: TestRun, step: TestS
         steps=steps,
         safety_notes=["仅允许受控 UI 动作，已拒绝危险操作。"],
     )
+
+
+def _asks_to_retry(text: str) -> bool:
+    retry_words = ["重试", "再执行", "重新执行", "继续执行", "重跑", "再试", "原步骤"]
+    return any(word in text for word in retry_words)
+
+
+def _execute_plan_step_summary(step) -> dict[str, Any]:
+    if step.action == "wait":
+        value = step.value or "3000"
+        return {
+            "action": step.action,
+            "target": step.target,
+            "value": value,
+            "message": f"已记录等待页面稳定 {value} ms 的恢复动作。",
+            "status": "recorded",
+        }
+    if step.action == "retry_step":
+        return {
+            "action": step.action,
+            "target": step.target,
+            "value": step.value,
+            "message": "已记录重试原失败步骤的恢复动作。",
+            "status": "recorded",
+        }
+    return {
+        "action": step.action,
+        "target": step.target,
+        "value": step.value,
+        "message": f"已记录人工介入动作：{step.action}。",
+        "status": "recorded",
+    }
 
 
 def _validate_user_instruction(user_instruction: str) -> None:
@@ -277,6 +336,17 @@ def _get_intervention_or_error(db: Session, run_id: int, intervention_id: int) -
     if intervention is None or intervention.run_id != run_id:
         raise ValueError("Human intervention not found.")
     return intervention
+
+
+def _mark_failure_sample(db: Session, run_id: int, step_id: int | None, sample_status: str) -> None:
+    if step_id is None:
+        return
+    sample = db.scalars(
+        select(FailureSample).where(FailureSample.run_id == run_id, FailureSample.step_id == step_id)
+    ).first()
+    if sample is not None:
+        sample.status = sample_status
+        db.add(sample)
 
 
 def _rule_draft_name(intervention: HumanIntervention) -> str:

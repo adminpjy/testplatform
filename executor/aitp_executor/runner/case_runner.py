@@ -13,6 +13,7 @@ from executor.aitp_executor.locator.auto_form_filler import AutoFormFiller
 from executor.aitp_executor.locator.element_locator import ElementLocator
 from executor.aitp_executor.reports.artifact_writer import ArtifactWriter
 from executor.aitp_executor.reports.report_writer import ReportWriter
+from executor.aitp_executor.runner.page_waiter import wait_for_page_ready
 
 
 class CaseRunner:
@@ -80,6 +81,7 @@ class CaseRunner:
                         "playwright",
                         {"interruption": "security_interstitial", "url": page.url},
                     )
+                self._wait_for_page_ready(writer, page, step_number=None, reason="open_system")
 
             for index, step in enumerate(steps, start=1):
                 result = self._run_step(page, writer, index, step, dsl)
@@ -223,6 +225,7 @@ class CaseRunner:
             "execution-trace.jsonl",
             {"type": "step.execute", "step_number": step_number, "step": _redact_step(step)},
         )
+        self._wait_for_page_ready(writer, page, step_number=step_number, reason="before_step")
 
         status = "passed"
         error_summary = None
@@ -235,6 +238,8 @@ class CaseRunner:
         candidates: list[dict[str, Any]] = []
         try:
             outcome = self._execute_action(page, step, dsl)
+            page_ready = self._wait_for_page_ready(writer, page, step_number=step_number, reason="after_action")
+            outcome["page_ready"] = page_ready
             if locatable_action:
                 self._emit_locator_decision_runtime(writer, step_number, action, target, outcome, vision_requested)
             locator_strategy = outcome.get("locator_strategy")
@@ -320,6 +325,36 @@ class CaseRunner:
             {"step_number": step_number, "action": action, "target": target},
         )
         return result
+
+    def _wait_for_page_ready(
+        self,
+        writer: ArtifactWriter,
+        page: Any,
+        *,
+        step_number: int | None,
+        reason: str,
+    ) -> dict[str, Any]:
+        metadata = {"step_number": step_number, "reason": reason}
+        self._emit_runtime(
+            writer,
+            "progress",
+            "page_ready",
+            "正在等待页面加载完成",
+            "page_waiter",
+            metadata,
+        )
+        state = wait_for_page_ready(page)
+        payload = {**metadata, **state.as_dict()}
+        writer.append_jsonl("execution-trace.jsonl", {"type": "page.ready", **payload})
+        self._emit_runtime(
+            writer,
+            "success" if state.ready else "warning",
+            "page_ready",
+            "页面已加载完成" if state.ready else "页面加载等待超时，继续执行并保留证据。",
+            "page_waiter",
+            payload,
+        )
+        return state.as_dict()
 
     def _emit_locator_decision_runtime(
         self,
@@ -619,6 +654,7 @@ class CaseRunner:
                     closed = self._close_dialog_by_common_controls(page)
                 elif page.url != before_url:
                     page.go_back(wait_until="domcontentloaded")
+                    wait_for_page_ready(page)
                     closed = True
                 processed += 1
                 if dialog_opened and not closed:

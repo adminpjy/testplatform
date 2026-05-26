@@ -34,20 +34,26 @@ export function DebugDrawer({
   onConvertIntervention,
   onClose
 }: DebugDrawerProps) {
-  const [instruction, setInstruction] = useState("这里先点击继续访问，然后重试原步骤。");
+  const [instruction, setInstruction] = useState("等待主页面加载完成后再执行原步骤。");
   const [busy, setBusy] = useState(false);
+  const [feedback, setFeedback] = useState<string | null>(null);
   const latestIntervention = interventions[0] || null;
 
   useEffect(() => {
     if (interventionMode) {
-      setInstruction("这里先点击继续访问，然后重试原步骤。");
+      setInstruction("等待主页面加载完成后再执行原步骤。");
+      setFeedback(null);
     }
   }, [interventionMode, run?.id]);
 
-  async function runAction(action: () => Promise<void>) {
+  async function runAction(label: string, action: () => Promise<void>) {
     setBusy(true);
+    setFeedback(`${label}中...`);
     try {
       await action();
+      setFeedback(`${label}完成。`);
+    } catch (error) {
+      setFeedback(error instanceof Error ? error.message : String(error));
     } finally {
       setBusy(false);
     }
@@ -68,6 +74,7 @@ export function DebugDrawer({
       {interventionMode ? (
         <section className="debug-section">
           <h3>人工介入</h3>
+          <p className="debug-section__hint">用于把人工判断沉淀为受控恢复动作。常见场景：等待主页面加载、关闭弹窗、重试原失败步骤。</p>
           <textarea
             aria-label="人工介入指令"
             value={instruction}
@@ -80,9 +87,9 @@ export function DebugDrawer({
               className="primary-button"
               type="button"
               disabled={busy || !run || !onCreateIntervention}
-              onClick={() => onCreateIntervention && void runAction(() => onCreateIntervention(instruction))}
+              onClick={() => onCreateIntervention && void runAction("生成介入方案", () => onCreateIntervention(instruction))}
             >
-              生成介入方案
+              {busy ? "处理中" : "生成介入方案"}
             </button>
             <button
               className="secondary-button"
@@ -90,7 +97,7 @@ export function DebugDrawer({
               disabled={busy || !latestIntervention || !onExecuteIntervention}
               onClick={() =>
                 latestIntervention && onExecuteIntervention
-                  ? void runAction(() => onExecuteIntervention(latestIntervention.id))
+                  ? void runAction("执行介入方案", () => onExecuteIntervention(latestIntervention.id))
                   : undefined
               }
             >
@@ -102,14 +109,36 @@ export function DebugDrawer({
               disabled={busy || !latestIntervention || !onConvertIntervention}
               onClick={() =>
                 latestIntervention && onConvertIntervention
-                  ? void runAction(() => onConvertIntervention(latestIntervention.id))
+                  ? void runAction("生成规则草案", () => onConvertIntervention(latestIntervention.id))
                   : undefined
               }
             >
               生成规则草案
             </button>
           </div>
-          {latestIntervention ? <pre>{JSON.stringify(latestIntervention.llm_plan_json || {}, null, 2)}</pre> : null}
+          {feedback ? <div className="debug-feedback">{feedback}</div> : null}
+          {latestIntervention ? (
+            <div className="intervention-plan-card">
+              <div className="intervention-plan-card__meta">
+                <strong>当前方案：{latestIntervention.status}</strong>
+                <span>#{latestIntervention.id}</span>
+              </div>
+              <p>{latestIntervention.llm_plan_json?.summary || "已生成介入方案。"}</p>
+              <ol>
+                {(latestIntervention.llm_plan_json?.steps || []).map((step, index) => (
+                  <li key={`${step.action}-${index}`}>
+                    <strong>{step.action}</strong>
+                    {step.value ? <span> {step.value} ms</span> : null}
+                    {step.target ? <span> - {step.target}</span> : null}
+                    {step.reason ? <small>{step.reason}</small> : null}
+                  </li>
+                ))}
+              </ol>
+              {latestIntervention.execution_result_json ? (
+                <pre>{JSON.stringify(latestIntervention.execution_result_json, null, 2)}</pre>
+              ) : null}
+            </div>
+          ) : null}
           {latestRuleDraft ? (
             <pre>{JSON.stringify({ id: latestRuleDraft.id, status: latestRuleDraft.status, name: latestRuleDraft.rule_name }, null, 2)}</pre>
           ) : null}

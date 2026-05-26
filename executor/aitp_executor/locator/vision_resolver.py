@@ -3,6 +3,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from executor.aitp_executor.runner.page_waiter import wait_for_page_ready
+
 
 @dataclass
 class VisionResult:
@@ -33,6 +35,7 @@ class VisionResolver:
 
     def _write_overlay_screenshot(self, page: Any, *, target: str, action: str) -> str | None:
         try:
+            wait_for_page_ready(page)
             safe_target = "".join(char if char.isalnum() else "_" for char in target)[:40] or "target"
             stamp = datetime.now().strftime("%Y%m%d%H%M%S%f")
             path = Path("artifacts") / "vision-overlays" / f"{stamp}-{action}-{safe_target}.png"
