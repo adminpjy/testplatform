@@ -8,6 +8,7 @@ from app.llm.provider import LLMProvider, LLMRequest, get_llm_provider
 from app.schemas.test_runs import ALLOWED_DSL_ACTIONS, AnalyzeResult, NaturalLanguageTestRequest, TestCaseDSL
 from app.services.dsl_post_processor import normalize_dsl
 from app.services.llm_call_logs import log_llm_call
+from app.services.operation_intent_classifier import annotate_steps_with_operation_intents
 from app.services.prompt_manager import get_prompt_manager
 
 
@@ -110,7 +111,8 @@ class NaturalLanguageParser:
                 dsl_data = self._default_todo_dialog_dsl(payload)
             else:
                 raise
-        return TestCaseDSL.model_validate(normalize_dsl(self._repair_dsl(dsl_data, payload)))
+        normalized = normalize_dsl(self._repair_dsl(dsl_data, payload))
+        return TestCaseDSL.model_validate(annotate_steps_with_operation_intents(normalized, instruction=payload.instruction))
 
     def sanitized_input_payload(self, payload: NaturalLanguageTestRequest) -> dict[str, Any]:
         return self._input_payload(payload)

@@ -34,6 +34,7 @@ from app.services.human_interventions import (
     list_human_interventions,
 )
 from app.services.dsl_post_processor import parse_menu_path
+from app.services.ability_resolver import annotate_dsl_with_abilities
 from app.services.llm_call_logs import log_llm_call
 from app.services.natural_language_parser import NaturalLanguageParser
 from app.services.test_run_execution import (
@@ -92,6 +93,14 @@ def plan_test_case(payload: NaturalLanguageTestRequest, db: Session = Depends(ge
         )
 
     dsl = parser.plan(payload)
+    dsl_data = annotate_dsl_with_abilities(
+        db,
+        dsl.model_dump(),
+        instruction=payload.instruction,
+        project_id=payload.project_id,
+        system_id=payload.system_id,
+    )
+    dsl = TestCaseDSL.model_validate(dsl_data)
     if payload.project_id is not None:
         if db.get(TestProject, payload.project_id) is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")

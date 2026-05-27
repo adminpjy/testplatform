@@ -163,6 +163,7 @@ class CaseRunner:
             "runner",
             {"step_number": step_number, "action": action, "target": target},
         )
+        self._emit_ability_resolution(writer, step_number, step)
         if action in {"business_goal", "navigate_path"}:
             self._emit_runtime(
                 writer,
@@ -588,6 +589,7 @@ class CaseRunner:
                 "step_number": step_number,
                 "step_id": step.get("id") or step.get("step_id") or step_number,
                 "vision_requested": bool((dsl.get("settings") or {}).get("visionFallbackEnabled")),
+                "ability_resolution": step.get("abilityResolution") or {},
             }
             if writer is not None:
                 execution_context["emit_runtime"] = (
@@ -622,6 +624,7 @@ class CaseRunner:
             "step_number": step_number,
             "step_id": step.get("id") or step.get("step_id") or step_number,
             "vision_requested": bool((dsl.get("settings") or {}).get("visionFallbackEnabled")),
+            "ability_resolution": step.get("abilityResolution") or {},
         }
         if writer is not None:
             execution_context["emit_runtime"] = (
@@ -644,6 +647,47 @@ class CaseRunner:
         if result.status != "passed":
             raise NavigationPathError(result)
         return result.as_outcome()
+
+    def _emit_ability_resolution(self, writer: ArtifactWriter, step_number: int, step: dict[str, Any]) -> None:
+        resolution = step.get("abilityResolution") or {}
+        operation_intent = step.get("operationIntent") or {}
+        matched_rules = resolution.get("matchedRules") or []
+        selected_rules = resolution.get("selectedRules") or []
+        matched_codes = [str(rule.get("rule_code")) for rule in matched_rules if rule.get("rule_code")]
+        selected_codes = [str(rule.get("rule_code")) for rule in selected_rules if rule.get("rule_code")]
+        debug_event = {
+            "step_number": step_number,
+            "stepId": step.get("id") or step.get("step_id") or step_number,
+            "phase": "ability_resolve",
+            "intent": operation_intent.get("intent"),
+            "intentType": operation_intent.get("intentType"),
+            "matchedRules": matched_codes,
+            "selectedRules": selected_codes,
+            "reason": resolution.get("reason") or operation_intent.get("reason") or "",
+            "source": resolution.get("source"),
+        }
+        writer.append_jsonl("locator-debug.jsonl", debug_event)
+        if not selected_rules:
+            return
+        for rule in selected_rules[:5]:
+            message = rule.get("runtimeMessage") or f"命中规则 {rule.get('rule_code')}：将按{rule.get('rule_name')}处理。"
+            self._emit_runtime(
+                writer,
+                "success",
+                "ability_resolve",
+                str(message),
+                "ability_resolver",
+                {
+                    "step_number": step_number,
+                    "intent": operation_intent.get("intent"),
+                    "intentType": operation_intent.get("intentType"),
+                    "rule_code": rule.get("rule_code"),
+                    "rule_type": rule.get("rule_type"),
+                    "rule_name": rule.get("rule_name"),
+                    "score": rule.get("score"),
+                    "source": resolution.get("source"),
+                },
+            )
 
     def _write_screenshot(self, page: Any, writer: ArtifactWriter, step_number: int) -> str | None:
         try:
