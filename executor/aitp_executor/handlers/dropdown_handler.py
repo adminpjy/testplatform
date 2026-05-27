@@ -23,6 +23,8 @@ class DropdownHandler(CommonOperationHandler):
         value = str(step.get("value") or step.get("option") or target)
         self.emit(ctx, "progress", "dropdown", f"正在选择下拉项：{target} = {value}。")
         result = self.locator.locate(page, action="select", target=target, step=step)
+        if result.locator is None:
+            raise RuntimeError(f"dropdown_not_found: {target}")
         control = require_locator(result)
         try:
             control.select_option(label=value)

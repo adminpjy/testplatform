@@ -8,6 +8,7 @@ from app.models import FailureSample, RuntimeMessage, TestArtifact, TestCase, Te
 from app.schemas.test_runs import TestCaseDSL, TestRunCreate
 from app.services.ability_resolver import annotate_dsl_with_abilities
 from app.services.dsl_post_processor import normalize_dsl
+from app.services.failure_analyzer import analyze_step_failure, failure_type
 from app.utils.url_policy import ensure_allowed_url
 from executor.aitp_executor.runner.case_runner import CaseRunner
 
@@ -234,6 +235,14 @@ def _persist_execution_result(db: Session, run: TestRun, execution_result: dict)
             {"step_number": step_result.get("step_number")},
         )
         if step_run.status == "failed":
+            _add_artifact(
+                db,
+                run.id,
+                step_run.id,
+                "failure_screenshot",
+                step_result.get("screenshot_path"),
+                {"step_number": step_result.get("step_number"), "failureType": step_result.get("failure_type")},
+            )
             _add_failure_sample(db, run, step_run, step_result, artifacts)
 
     artifact_types = {
@@ -257,11 +266,12 @@ def _add_failure_sample(
     step_result: dict,
     artifacts: dict,
 ) -> None:
+    analysis = analyze_step_failure(step_result)
     db.add(
         FailureSample(
             run_id=run.id,
             step_id=step_run.id,
-            failure_type=_failure_type(step_result),
+            failure_type=str(analysis.get("failureType") or failure_type(step_result)),
             failure_summary=step_result.get("error_summary") or "Step failed without error summary.",
             screenshot_path=step_result.get("screenshot_path"),
             dom_snapshot_path=step_result.get("dom_snapshot_path"),
@@ -271,32 +281,30 @@ def _add_failure_sample(
             execution_trace_path=artifacts.get("execution_trace"),
             report_path=artifacts.get("report"),
             ai_analysis_json={
-                "status": "pending",
+                "status": "analyzed",
                 "stepAction": step_result.get("action"),
                 "target": step_result.get("target"),
                 "reason": step_result.get("reason"),
-                "failureType": step_result.get("failure_type"),
+                "failureType": analysis.get("failureType"),
+                "category": analysis.get("category"),
+                "summary": analysis.get("summary"),
+                "attemptedStrategies": analysis.get("attemptedStrategies"),
+                "suggestedRecovery": analysis.get("suggestedRecovery"),
+                "canIntervene": analysis.get("canIntervene"),
+                "canGenerateRuleDraft": analysis.get("canGenerateRuleDraft"),
+                "visionFallback": analysis.get("visionFallback"),
                 "details": step_result.get("failure_details"),
             },
             suggested_rule_json={
                 "source": "failure_sample",
                 "candidateRuleType": "recovery_policy",
+                "failureType": analysis.get("failureType"),
+                "suggestedRecovery": analysis.get("suggestedRecovery"),
                 "needsHumanReview": True,
             },
             status="new",
         )
     )
-
-
-def _failure_type(step_result: dict) -> str:
-    if step_result.get("failure_type"):
-        return str(step_result["failure_type"])
-    if step_result.get("fallback_reason"):
-        return str(step_result["fallback_reason"])
-    if step_result.get("needs_vision_fallback"):
-        return "needs_vision_fallback"
-    action = step_result.get("action") or "unknown_action"
-    return f"{action}_failed"
 
 
 def _add_artifact(

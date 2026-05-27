@@ -23,6 +23,8 @@ class DatePickerHandler(CommonOperationHandler):
         value = str(step.get("value") or self._default_date(target))
         self.emit(ctx, "progress", "date_picker", f"正在填写日期字段：{target}。", metadata={"value": value})
         result = self.locator.locate(page, action="input", target=target, step=step)
+        if result.locator is None:
+            raise RuntimeError(f"date_picker_not_found: {target}")
         locator = require_locator(result)
         try:
             locator.fill(value)

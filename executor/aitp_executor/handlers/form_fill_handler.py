@@ -42,6 +42,8 @@ class FormFillHandler(CommonOperationHandler):
         value = str(step.get("value") or "")
         self.emit(ctx, "progress", "form_fill", f"正在填写字段：{target}。")
         result = self.locator.locate(page, action="input", target=target, step=step)
+        if result.locator is None:
+            raise RuntimeError(f"form_field_not_found: {target}")
         require_locator(result).fill(value)
         self.debug(ctx, {"strategy": "fill_field", "target": target, "locatorStrategy": result.strategy})
         return locator_outcome(result)

@@ -272,6 +272,7 @@ class CaseRunner:
         fallback_reason = None
         failure_type = None
         failure_details: dict[str, Any] | None = None
+        failure_analysis: dict[str, Any] | None = None
         candidates: list[dict[str, Any]] = []
         try:
             outcome = self._execute_action(page, step, dsl, writer=writer, step_number=step_number)
@@ -319,6 +320,17 @@ class CaseRunner:
                     "vision_resolver",
                     {"step_number": step_number, "target": target, "status": fallback_reason},
                 )
+            failure_analysis = self.goal_executor.recovery_policy.analyze_failure(
+                error_summary=error_summary,
+                action=action,
+                target=target,
+                failure_type=failure_type,
+                fallback_reason=fallback_reason,
+                details=failure_details,
+            )
+            failure_type = failure_analysis.get("failureType") or failure_type
+            fallback_reason = failure_type
+            self._emit_failure_analysis_runtime(writer, step_number, action, target, failure_analysis)
         finally:
             screenshot_path = self._write_screenshot(page, writer, step_number)
             dom_snapshot_path = self._write_dom_snapshot(page, writer, step_number)
@@ -340,6 +352,8 @@ class CaseRunner:
             "fallback_reason": fallback_reason,
             "failure_type": failure_type,
             "failure_details": failure_details,
+            "failure_analysis": failure_analysis,
+            "suggested_recovery": failure_analysis.get("suggestedRecovery") if failure_analysis else None,
             "screenshot_path": screenshot_path,
             "dom_snapshot_path": dom_snapshot_path,
             "accessibility_snapshot_path": accessibility_snapshot_path,
@@ -365,6 +379,7 @@ class CaseRunner:
                 "fallback_reason": fallback_reason,
                 "failure_type": failure_type,
                 "failure_details": failure_details,
+                "failure_analysis": failure_analysis,
                 "candidates": candidates,
             },
         )
@@ -377,6 +392,51 @@ class CaseRunner:
             {"step_number": step_number, "action": action, "target": target},
         )
         return result
+
+    def _emit_failure_analysis_runtime(
+        self,
+        writer: ArtifactWriter,
+        step_number: int,
+        action: str,
+        target: str,
+        failure_analysis: dict[str, Any],
+    ) -> None:
+        strategies = failure_analysis.get("suggestedRecovery") or []
+        self._emit_runtime(
+            writer,
+            "error",
+            "failure_analysis",
+            f"失败类型：{failure_analysis.get('failureType') or 'unknown_failure'}。{failure_analysis.get('summary') or ''}",
+            "failure_analyzer",
+            {
+                "step_number": step_number,
+                "action": action,
+                "target": target,
+                "failureType": failure_analysis.get("failureType"),
+                "category": failure_analysis.get("category"),
+                "attemptedStrategies": failure_analysis.get("attemptedStrategies") or [],
+                "suggestedRecovery": strategies,
+                "canIntervene": failure_analysis.get("canIntervene"),
+                "canGenerateRuleDraft": failure_analysis.get("canGenerateRuleDraft"),
+                "visionFallback": failure_analysis.get("visionFallback"),
+            },
+        )
+        if strategies:
+            labels = "；".join(str(item.get("label") or item.get("code")) for item in strategies[:4])
+            self._emit_runtime(
+                writer,
+                "warning",
+                "recovery_policy",
+                f"下一步建议：{labels}。",
+                "recovery_policy",
+                {
+                    "step_number": step_number,
+                    "failureType": failure_analysis.get("failureType"),
+                    "suggestedRecovery": strategies,
+                    "canIntervene": failure_analysis.get("canIntervene"),
+                    "canGenerateRuleDraft": failure_analysis.get("canGenerateRuleDraft"),
+                },
+            )
 
     def _wait_for_page_ready(
         self,

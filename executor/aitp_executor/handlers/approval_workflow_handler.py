@@ -21,9 +21,10 @@ class ApprovalWorkflowHandler(CommonOperationHandler):
         self.emit(ctx, "progress", "approval_workflow", "正在执行审批通过。")
         clicked = self._click_first(page, self.execute_labels, exclude=self.negative_labels)
         if not clicked:
-            raise RuntimeError("table_no_action_found: 未找到审批、审核、办理或通过入口。")
+            raise RuntimeError("approval_entry_not_found: 未找到审批、审核、办理或通过入口。")
         wait_for_page_ready(page)
-        self._complete_dialog(page, decision="通过")
+        if not self._complete_dialog(page, decision="通过"):
+            raise RuntimeError("approval_submit_failed: 未找到可用的审批提交按钮。")
         wait_for_page_ready(page)
         return handler_outcome("approval_pass", "审批通过", 0.86, "approval pass submitted")
 
@@ -33,9 +34,10 @@ class ApprovalWorkflowHandler(CommonOperationHandler):
         self.emit(ctx, "progress", "approval_workflow", "正在执行审批驳回。")
         clicked = self._click_first(page, self.reject_labels + self.execute_labels, exclude=self.view_flow_labels)
         if not clicked:
-            raise RuntimeError("table_no_action_found: 未找到驳回或审批入口。")
+            raise RuntimeError("approval_entry_not_found: 未找到驳回或审批入口。")
         wait_for_page_ready(page)
-        self._complete_dialog(page, decision="驳回")
+        if not self._complete_dialog(page, decision="驳回"):
+            raise RuntimeError("approval_submit_failed: 未找到可用的审批提交按钮。")
         wait_for_page_ready(page)
         return handler_outcome("approval_reject", "审批驳回", 0.84, "approval reject submitted")
 
@@ -44,7 +46,7 @@ class ApprovalWorkflowHandler(CommonOperationHandler):
         self.emit_rule_hits(ctx, self.resolve_rules(ctx, intent="view_flow", rule_types=self.rule_types))
         self.emit(ctx, "progress", "approval_workflow", "正在查看审批流程或审批记录。")
         if not self._click_first(page, self.view_flow_labels):
-            raise RuntimeError("table_no_action_found: 未找到查看审批流程入口。")
+            raise RuntimeError("approval_entry_not_found: 未找到查看审批流程入口。")
         wait_for_page_ready(page)
         return handler_outcome("approval_flow_view", "审批流程", 0.88, "approval flow opened")
 
@@ -70,7 +72,7 @@ class ApprovalWorkflowHandler(CommonOperationHandler):
                     continue
         return False
 
-    def _complete_dialog(self, page: Any, *, decision: str) -> None:
+    def _complete_dialog(self, page: Any, *, decision: str) -> bool:
         try:
             radio = page.get_by_role("radio", name=decision, exact=True)
             if radio.count() > 0:
@@ -90,6 +92,7 @@ class ApprovalWorkflowHandler(CommonOperationHandler):
                 button = page.get_by_role("button", name=name, exact=True)
                 if button.count() > 0 and button.first.is_visible(timeout=500):
                     button.first.click()
-                    return
+                    return True
             except PlaywrightError:
                 continue
+        return False
