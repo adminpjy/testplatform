@@ -39,15 +39,16 @@ export function ErrorSummaryCard({ run, steps, apiError, onIntervention, onDebug
   }
 
   const loginFailure = isLoginFailure(errorText);
+  const remainingRetries = loginFailure ? remainingRetriesFrom(errorText) : null;
   const summaryText = loginFailure
-    ? "检测到目标系统返回登录失败提示，后续业务步骤已停止。"
+    ? "系统检测到当前仍停留在认证中心登录页，并发现登录失败提示。为了避免账号被锁定，系统没有继续执行后续业务步骤。"
     : shortSummary(errorText);
   return (
     <section className="surface-panel error-summary-card">
       <div className="panel-heading">
         <h2>
           <AlertTriangle size={16} />
-          {loginFailure ? "登录失败，未进入目标系统" : "错误摘要"}
+          {loginFailure ? "登录失败，已停止后续测试步骤" : "错误摘要"}
         </h2>
         <button className="ghost-button" type="button" onClick={() => setExpanded((value) => !value)}>
           {expanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
@@ -68,6 +69,13 @@ export function ErrorSummaryCard({ run, steps, apiError, onIntervention, onDebug
       {loginFailure ? (
         <>
           <div className="error-summary-card__suggestion">
+            <strong>证据：</strong>
+            <ul>
+              {loginEvidence(errorText).map((item) => <li key={item}>{item}</li>)}
+              {remainingRetries !== null ? <li>剩余重试次数：{remainingRetries}</li> : null}
+            </ul>
+          </div>
+          <div className="error-summary-card__suggestion">
             <strong>可能原因：</strong>
             <ul>
               <li>用户名或密码错误；</li>
@@ -82,6 +90,16 @@ export function ErrorSummaryCard({ run, steps, apiError, onIntervention, onDebug
         <p className="error-summary-card__suggestion">建议先查看当前截图和步骤证据；如果页面存在业务弹窗或特殊控件，可发起人工介入并沉淀规则草案。</p>
       )}
       <div className="action-bar">
+        {loginFailure ? (
+          <>
+            <button className="secondary-button" type="button" onClick={onDebug} disabled={!run}>
+              修改账号信息
+            </button>
+            <button className="ghost-button" type="button" onClick={onDebug} disabled={!run}>
+              重新执行登录检查
+            </button>
+          </>
+        ) : null}
         <button className="secondary-button" type="button" onClick={onIntervention} disabled={!run}>
           <UserRoundCheck size={16} />
           人工介入
@@ -110,6 +128,8 @@ function isLoginFailure(value: string): boolean {
   const lower = value.toLowerCase();
   return [
     "login_failed",
+    "protected_step_blocked_by_login_failure",
+    "auth_state_not_logged_in",
     "authentication_failed",
     "login was failed",
     "wrong user name or password",
@@ -129,4 +149,24 @@ function isLoginFailure(value: string): boolean {
     "账号被禁用",
     "账户被禁用",
   ].some((token) => lower.includes(token.toLowerCase()));
+}
+
+function remainingRetriesFrom(value: string): number | null {
+  const match = value.match(/(?:you have|剩余|还有)\s*(\d+)\s*(?:retr(?:y|ies)|次)?/i);
+  if (!match) return null;
+  const parsed = Number.parseInt(match[1], 10);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function loginEvidence(value: string): string[] {
+  const lower = value.toLowerCase();
+  const evidence: string[] = [];
+  if (lower.includes("login was failed") || value.includes("登录失败")) evidence.push("Login was failed");
+  if (lower.includes("wrong user name or password") || lower.includes("wrong username or password") || value.includes("用户名或密码错误")) {
+    evidence.push("Wrong user name or password");
+  }
+  if (lower.includes("authentication center") || value.includes("认证中心")) evidence.push("Authentication Center / 用户认证中心可见");
+  evidence.push("登录表单仍可见");
+  evidence.push("未检测到业务系统主菜单");
+  return Array.from(new Set(evidence));
 }

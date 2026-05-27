@@ -267,6 +267,8 @@ def _add_failure_sample(
     artifacts: dict,
 ) -> None:
     analysis = analyze_step_failure(step_result)
+    failure_details = step_result.get("failure_details") if isinstance(step_result.get("failure_details"), dict) else {}
+    auth_state = failure_details.get("auth_state") if isinstance(failure_details.get("auth_state"), dict) else {}
     db.add(
         FailureSample(
             run_id=run.id,
@@ -286,6 +288,12 @@ def _add_failure_sample(
                 "target": step_result.get("target"),
                 "reason": step_result.get("reason"),
                 "failureType": analysis.get("failureType"),
+                "rootCause": failure_details.get("rootCause") or auth_state.get("failureType"),
+                "authState": auth_state.get("authState"),
+                "remainingRetries": failure_details.get("remainingRetries") or auth_state.get("remainingRetries"),
+                "evidence": failure_details.get("evidence") or auth_state.get("evidence"),
+                "blockedStep": failure_details.get("blockedStep"),
+                "blockedAction": failure_details.get("blockedAction"),
                 "category": analysis.get("category"),
                 "summary": analysis.get("summary"),
                 "attemptedStrategies": analysis.get("attemptedStrategies"),
@@ -297,7 +305,7 @@ def _add_failure_sample(
             },
             suggested_rule_json={
                 "source": "failure_sample",
-                "candidateRuleType": "recovery_policy",
+                "candidateRuleType": _candidate_rule_type(analysis.get("failureType")),
                 "failureType": analysis.get("failureType"),
                 "suggestedRecovery": analysis.get("suggestedRecovery"),
                 "needsHumanReview": True,
@@ -305,6 +313,13 @@ def _add_failure_sample(
             status="new",
         )
     )
+
+
+def _candidate_rule_type(failure_type_value: object) -> str:
+    failure_type_text = str(failure_type_value or "")
+    if failure_type_text in {"login_failed", "protected_step_blocked_by_login_failure", "auth_state_not_logged_in"}:
+        return "login"
+    return "recovery_policy"
 
 
 def _add_artifact(

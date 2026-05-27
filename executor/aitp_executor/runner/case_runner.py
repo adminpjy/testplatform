@@ -23,9 +23,9 @@ from executor.aitp_executor.handlers import (
     TableHandler,
     TableRowActionHandler,
 )
+from executor.aitp_executor.goal.protected_step_guard import GuardResult, ProtectedStepGuard, step_requires_auth
 from executor.aitp_executor.locator.auto_form_filler import AutoFormFiller
 from executor.aitp_executor.locator.element_locator import ElementLocator
-from executor.aitp_executor.observer.auth_state_detector import AuthStateDetector, AuthStateResult
 from executor.aitp_executor.reports.artifact_writer import ArtifactWriter
 from executor.aitp_executor.reports.report_writer import ReportWriter
 from executor.aitp_executor.runner.page_waiter import wait_for_page_ready
@@ -59,7 +59,7 @@ class CaseRunner:
         self.person_selector_handler = PersonSelectorHandler(dialog_handler=self.dialog_selector_handler)
         self.file_upload_handler = FileUploadHandler(locator=self.element_locator)
         self.assertion_handler = AssertionHandler()
-        self.auth_state_detector = AuthStateDetector()
+        self.protected_step_guard = ProtectedStepGuard(observer=self.element_locator.observer)
         self.event_sink = event_sink
 
     def run(self, *, run_code: str, dsl: dict[str, Any]) -> dict[str, Any]:
@@ -124,6 +124,29 @@ class CaseRunner:
                 if result["status"] != "passed":
                     status = "failed"
                     error_summary = result.get("error_summary")
+                    if result.get("failure_type") in {
+                        "login_failed",
+                        "protected_step_blocked_by_login_failure",
+                        "auth_state_not_logged_in",
+                        "login_requires_manual_action",
+                    }:
+                        for skipped_index, skipped_step in enumerate(steps[index:], start=index + 1):
+                            skipped = _skipped_step_result(
+                                skipped_index,
+                                skipped_step,
+                                reason=f"previous_step_failed:{result.get('failure_type')}",
+                            )
+                            results.append(skipped)
+                            writer.append_jsonl("step-result.jsonl", skipped)
+                            writer.append_jsonl(
+                                "execution-trace.jsonl",
+                                {
+                                    "type": "step.skipped",
+                                    "step_number": skipped_index,
+                                    "step": _redact_step(skipped_step),
+                                    "reason": skipped["reason"],
+                                },
+                            )
                     break
         except Exception as exc:
             status = "failed"
@@ -407,76 +430,95 @@ class CaseRunner:
         action: str,
         target: str,
     ) -> dict[str, Any] | None:
-        if not _step_requires_auth(step):
-            return None
-
         started_at = _utc_now()
-        auth_result = self.auth_state_detector.detect_auth_state(page)
+        guard_result = self.protected_step_guard.check_before_step(
+            step,
+            page,
+            execution_context=self._handler_execution_context(writer, step_number, step, {}),
+        )
+        auth_result = guard_result.authResult or {}
         writer.append_jsonl(
             "locator-debug.jsonl",
             {
                 "phase": "auth_state_detected",
                 "stepId": step.get("id") or step.get("step_id") or step_number,
-                "authState": auth_result.authState,
-                "confidence": auth_result.confidence,
-                "failureType": auth_result.failureType,
-                "evidence": auth_result.evidence,
-                "decision": _auth_decision(auth_result),
-                "reason": auth_result.reason,
+                "authState": guard_result.authState,
+                "confidence": auth_result.get("confidence"),
+                "failureType": auth_result.get("failureType"),
+                "evidence": guard_result.evidence,
+                "remainingRetries": guard_result.remainingRetries,
+                "decision": "continue_protected_step" if guard_result.allowed else "stop_protected_steps",
+                "reason": guard_result.reason,
             },
         )
 
-        if auth_result.authState == "login_success":
-            self._emit_runtime(
-                writer,
-                "success",
-                "auth_guard",
-                "已确认当前处于登录后的系统页面，可以继续执行业务步骤。",
-                "auth_state_detector",
-                {"step_number": step_number, **auth_result.as_dict()},
-            )
-            return None
-
-        if auth_result.authState not in {"login_failed", "login_page", "login_requires_manual_action"}:
+        if guard_result.allowed:
+            if guard_result.authState == "logged_in":
+                self._emit_runtime(
+                    writer,
+                    "success",
+                    "auth_guard",
+                    "已确认当前处于登录后的系统页面，可以继续执行业务步骤。",
+                    "auth_state_detector",
+                    {"step_number": step_number, **(guard_result.authResult or {})},
+                )
             return None
 
         writer.append_jsonl(
             "locator-debug.jsonl",
             {
-                "phase": "precondition_failed",
+                "phase": "protected_step_blocked",
                 "stepId": step.get("id") or step.get("step_id") or step_number,
+                "stepName": step.get("name") or target or action,
                 "action": action,
                 "target": target,
-                "requiredPrecondition": "auth_state_logged_in",
-                "actualAuthState": auth_result.authState,
-                "rootCause": auth_result.failureType or auth_result.authState,
-                "decision": "skip_and_fail_run",
-                "evidence": auth_result.evidence,
+                "blockedBy": guard_result.blockedBy,
+                "failureType": guard_result.failureType,
+                "rootCause": guard_result.rootCause,
+                "evidence": guard_result.evidence,
+                "remainingRetries": guard_result.remainingRetries,
+            },
+        )
+        writer.append_jsonl(
+            "execution-trace.jsonl",
+            {
+                "type": "protected_step.blocked",
+                "step_number": step_number,
+                "step_id": step.get("id") or step.get("step_id") or step_number,
+                "action": action,
+                "target": target,
+                "blockedBy": guard_result.blockedBy,
+                "failureType": guard_result.failureType,
+                "rootCause": guard_result.rootCause,
+                "remainingRetries": guard_result.remainingRetries,
             },
         )
 
-        error_summary = _auth_error_summary(auth_result)
-        failure_type = _auth_failure_type(auth_result)
+        error_summary = _guard_error_summary(guard_result, target)
         failure_details = {
-            "rootCause": failure_type,
-            "precondition": "auth_state_logged_in",
-            "auth_state": auth_result.as_dict(),
-            "message": "当前仍停留在登录页，且检测到登录未成功，因此不执行后续业务步骤。",
+            "rootCause": guard_result.rootCause,
+            "precondition": {"authState": "logged_in"},
+            "auth_state": guard_result.authResult,
+            "blockedStep": target,
+            "blockedAction": action,
+            "evidence": guard_result.evidence,
+            "remainingRetries": guard_result.remainingRetries,
+            "message": guard_result.reason,
         }
         failure_analysis = self.goal_executor.recovery_policy.analyze_failure(
             error_summary=error_summary,
             action=action,
             target=target,
-            failure_type=failure_type,
+            failure_type=guard_result.failureType,
             details=failure_details,
         )
         self._emit_runtime(
             writer,
             "error",
             "auth_guard",
-            _auth_runtime_message(auth_result),
-            "auth_state_detector",
-            {"step_number": step_number, "action": action, "target": target, **auth_result.as_dict()},
+            _guard_runtime_message(guard_result, target),
+            "protected_step_guard",
+            {"step_number": step_number, "action": action, "target": target, **(guard_result.authResult or {})},
         )
         self._emit_failure_analysis_runtime(writer, step_number, action, target, failure_analysis)
 
@@ -491,13 +533,13 @@ class CaseRunner:
             "action": action,
             "target": target,
             "status": "failed",
-            "locator_strategy": "auth_state_guard",
+            "locator_strategy": "protected_step_guard",
             "element_ref": None,
-            "confidence": min(auth_result.confidence, 0.95),
-            "reason": "auth_precondition_failed",
+            "confidence": min(float(auth_result.get("confidence") or 0.25), 0.95),
+            "reason": "protected_step_blocked",
             "needs_vision_fallback": False,
-            "fallback_reason": failure_analysis.get("failureType") or failure_type,
-            "failure_type": failure_analysis.get("failureType") or failure_type,
+            "fallback_reason": failure_analysis.get("failureType") or guard_result.failureType,
+            "failure_type": failure_analysis.get("failureType") or guard_result.failureType,
             "failure_details": failure_details,
             "failure_analysis": failure_analysis,
             "suggested_recovery": failure_analysis.get("suggestedRecovery"),
@@ -516,11 +558,11 @@ class CaseRunner:
                 "step_number": step_number,
                 "action": action,
                 "target": target,
-                "locator_strategy": "auth_state_guard",
+                "locator_strategy": "protected_step_guard",
                 "status": "failed",
                 "error_summary": error_summary,
-                "confidence": auth_result.confidence,
-                "reason": "auth_precondition_failed",
+                "confidence": auth_result.get("confidence"),
+                "reason": "protected_step_blocked",
                 "failure_type": result["failure_type"],
                 "failure_details": failure_details,
                 "failure_analysis": failure_analysis,
@@ -1130,113 +1172,31 @@ def _require_locator(result: Any) -> Any:
     return result.locator
 
 
-AUTH_REQUIRED_ACTIONS = {
-    "navigate_path",
-    "navigate_menu",
-    "query_table",
-    "query_table_count",
-    "open_table_row",
-    "open_row_link_or_detail",
-    "process_table_rows",
-    "for_each_table_row",
-    "click_table_row_action",
-    "create_record",
-    "update_record",
-    "delete_record",
-    "approval_pass",
-    "approval_reject",
-    "view_detail",
-    "auto_fill_form",
-    "fill_form",
-    "select",
-    "upload_file",
-    "wait_for_dialog",
-    "close_dialog_by_common_controls",
-}
-
-AUTH_REQUIRED_INTENTS = {
-    "enter_page",
-    "navigate_path",
-    "query_list",
-    "open_table_row",
-    "process_table_rows",
-    "click_table_row_action",
-    "create_record",
-    "update_record",
-    "delete_record",
-    "view_detail",
-    "view_flow",
-    "approval_pass",
-    "approval_reject",
-    "fill_form",
-    "fill_field",
-    "select_dropdown",
-    "select_date",
-    "select_date_range",
-    "select_org",
-    "select_person",
-    "select_tree_node",
-    "select_from_dialog",
-    "upload_file",
-    "assert_result",
-}
-
-
-def _step_requires_auth(step: dict[str, Any]) -> bool:
-    preconditions = [str(item) for item in step.get("preconditions") or []]
-    if "auth_state_logged_in" in preconditions:
-        return True
-    action = str(step.get("action") or "")
-    target = str(step.get("target") or "")
-    intent = str(step.get("intent") or (step.get("operationIntent") or {}).get("intent") or "")
-    if action == "business_goal" and ("登录" in target or intent in {"login", "login_system", "username_password_login"}):
-        return False
-    if action in AUTH_REQUIRED_ACTIONS:
-        return True
-    if action == "business_goal" and intent not in {"", "login", "login_system", "username_password_login"}:
-        return intent in AUTH_REQUIRED_INTENTS
-    return intent in AUTH_REQUIRED_INTENTS
-
-
-def _auth_decision(result: AuthStateResult) -> str:
-    if result.authState == "login_success":
-        return "continue_run"
-    if result.authState in {"login_failed", "login_page", "login_requires_manual_action"}:
-        return "skip_and_fail_run"
-    return "continue_with_unknown_auth_state"
-
-
-def _auth_failure_type(result: AuthStateResult) -> str:
-    if result.authState == "login_failed":
-        return "login_failed"
-    if result.authState == "login_page":
-        return "auth_not_logged_in"
-    if result.authState == "login_requires_manual_action":
-        return "login_requires_manual_action"
-    return str(result.failureType or "precondition_auth_not_satisfied")
-
-
-def _auth_error_summary(result: AuthStateResult) -> str:
-    if result.authState == "login_failed":
+def _guard_error_summary(result: GuardResult, target: str) -> str:
+    if result.failureType == "protected_step_blocked_by_login_failure":
+        retries = f" 剩余重试次数：{result.remainingRetries}。" if result.remainingRetries is not None else ""
         return (
-            "login_failed: 检测到目标系统返回登录失败提示，当前仍停留在登录页面。"
-            "后续业务步骤已停止。可能原因包括用户名或密码错误、账号被禁用、AD 账号未绑定或密码未同步。"
+            "protected_step_blocked_by_login_failure: 当前仍停留在认证中心登录页，并检测到登录失败提示。"
+            f"为避免账号锁定，系统已停止后续业务步骤：{target}。{retries}"
         )
-    if result.authState == "login_page":
-        return "auth_not_logged_in: 当前仍停留在登录页面，登录未完成，因此不执行后续业务步骤。"
-    if result.authState == "login_requires_manual_action":
-        return "login_requires_manual_action: 登录后需要人工处理，例如强制修改密码，因此不执行后续业务步骤。"
-    return f"precondition_auth_not_satisfied: {result.reason}"
+    if result.failureType == "auth_state_not_logged_in":
+        return f"auth_state_not_logged_in: 当前仍停留在登录页，未执行后续业务步骤：{target}。"
+    if result.failureType == "login_requires_manual_action":
+        return f"login_requires_manual_action: 登录后需要人工处理，未执行后续业务步骤：{target}。"
+    return f"{result.failureType or 'protected_step_blocked'}: {result.reason}"
 
 
-def _auth_runtime_message(result: AuthStateResult) -> str:
-    if result.authState == "login_failed":
-        return "当前仍停留在登录页面，且检测到登录失败提示，后续业务步骤不会继续执行。"
-    if result.authState == "login_page":
-        return "当前仍是登录页面，登录未完成，后续业务步骤不会继续执行。"
-    if result.authState == "login_requires_manual_action":
-        return "登录后需要人工处理，后续业务步骤已停止。"
-    return "认证前置条件未满足，后续业务步骤已停止。"
+def _guard_runtime_message(result: GuardResult, target: str) -> str:
+    if result.failureType == "protected_step_blocked_by_login_failure":
+        parts = ["当前未登录成功，已停止后续业务步骤。", f"已阻断步骤：{target}。"]
+        if result.remainingRetries is not None:
+            parts.insert(1, f"认证系统提示还剩 {result.remainingRetries} 次重试。为避免账号锁定，系统不会继续自动重试。")
+        return "".join(parts)
+    if result.failureType == "auth_state_not_logged_in":
+        return f"当前仍是登录页面，已阻断步骤：{target}。"
+    if result.failureType == "login_requires_manual_action":
+        return f"登录后需要人工处理，已阻断步骤：{target}。"
+    return f"认证前置条件未满足，已阻断步骤：{target}。"
 
 
 def _locator_outcome(result: Any) -> dict[str, Any]:
@@ -1260,6 +1220,37 @@ def _outcome(strategy: str, element_ref: str, confidence: float, reason: str) ->
         "needs_vision_fallback": False,
         "fallback_reason": None,
         "candidates": [],
+    }
+
+
+def _skipped_step_result(step_number: int, step: dict[str, Any], *, reason: str) -> dict[str, Any]:
+    timestamp = _utc_now()
+    action = str(step.get("action") or "")
+    target = str(step.get("target") or step.get("selector") or "")
+    return {
+        "step_number": step_number,
+        "step_id": str(step.get("id") or step_number),
+        "step_name": step.get("name") or target or action,
+        "action": action,
+        "target": target,
+        "status": "skipped",
+        "locator_strategy": None,
+        "element_ref": None,
+        "confidence": None,
+        "reason": reason,
+        "needs_vision_fallback": False,
+        "fallback_reason": None,
+        "failure_type": None,
+        "failure_details": None,
+        "failure_analysis": None,
+        "suggested_recovery": None,
+        "screenshot_path": None,
+        "dom_snapshot_path": None,
+        "accessibility_snapshot_path": None,
+        "error_summary": None,
+        "started_at": timestamp,
+        "ended_at": timestamp,
+        "duration_ms": 0,
     }
 
 
@@ -1298,11 +1289,8 @@ def _normalize_runtime_dsl(dsl: dict[str, Any]) -> dict[str, Any]:
             current["pathSegments"] = segments
             current["navigationType"] = "menu_path"
             current["normalizedBy"] = "executor_runtime"
-        if _step_requires_auth(current):
-            preconditions = [str(item) for item in current.get("preconditions") or [] if str(item).strip()]
-            if "auth_state_logged_in" not in preconditions:
-                preconditions.append("auth_state_logged_in")
-            current["preconditions"] = preconditions
+        if step_requires_auth(current):
+            current["preconditions"] = {"authState": "logged_in"}
         steps.append(current)
     normalized["steps"] = steps
     return normalized

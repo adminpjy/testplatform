@@ -168,10 +168,12 @@ AUTH_REQUIRED_INTENTS = {
 def _ensure_auth_precondition(step: dict[str, Any]) -> None:
     if not _requires_auth(step):
         return
-    preconditions = [str(item) for item in step.get("preconditions") or [] if str(item).strip()]
-    if "auth_state_logged_in" not in preconditions:
-        preconditions.append("auth_state_logged_in")
-    step["preconditions"] = preconditions
+    current = step.get("preconditions")
+    if isinstance(current, dict):
+        current["authState"] = "logged_in"
+        step["preconditions"] = current
+        return
+    step["preconditions"] = {"authState": "logged_in"}
 
 
 def _requires_auth(step: dict[str, Any]) -> bool:

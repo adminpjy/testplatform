@@ -46,6 +46,26 @@ def test_login_failure_overrides_navigation_failure() -> None:
     assert any(item["code"] == "check_test_account" for item in analysis["suggestedRecovery"])
 
 
+def test_protected_step_blocked_keeps_root_cause_login_failed() -> None:
+    analysis = FailureAnalyzer().analyze_step_failure(
+        {
+            "action": "navigate_path",
+            "target": "工作台/我的待办",
+            "error_summary": "protected_step_blocked_by_login_failure: 当前仍停留在认证中心登录页。",
+            "failure_type": "protected_step_blocked_by_login_failure",
+            "failure_details": {
+                "rootCause": "login_failed",
+                "auth_state": {"authState": "login_failed", "remainingRetries": 3},
+                "blockedStep": "工作台/我的待办",
+                "blockedAction": "navigate_path",
+            },
+        }
+    )
+    assert analysis["failureType"] == "protected_step_blocked_by_login_failure"
+    assert analysis["rootCause"] == "login_failed"
+    assert any(item["code"] == "rerun_login_check" for item in analysis["suggestedRecovery"])
+
+
 def test_recovery_suggestions_for_common_mis_failures() -> None:
     dropdown = FailureAnalyzer().analyze_step_failure(
         {"action": "select", "target": "状态", "error_summary": "dropdown_option_not_found: 停用"}
@@ -113,6 +133,56 @@ def test_failure_sample_persists_artifact_paths_and_recovery_analysis() -> None:
     assert sample.report_path
     assert sample.ai_analysis_json["suggestedRecovery"]
     assert sample.suggested_rule_json["failureType"] == "dropdown_option_not_found"
+
+
+def test_failure_sample_records_auth_root_cause() -> None:
+    session = _session()
+    project = ProjectModel(project_code="P2", name="Project 2", status="active")
+    session.add(project)
+    session.flush()
+    run = RunModel(run_code="RUN-2", project_id=project.id, status="failed")
+    session.add(run)
+    session.flush()
+    step = StepRunModel(run_id=run.id, step_id="S003", status="failed", action="navigate_path", target="工作台/我的待办")
+    session.add(step)
+    session.flush()
+
+    _add_failure_sample(
+        session,
+        run,
+        step,
+        {
+            "action": "navigate_path",
+            "target": "工作台/我的待办",
+            "status": "failed",
+            "failure_type": "protected_step_blocked_by_login_failure",
+            "error_summary": "protected_step_blocked_by_login_failure: Login was failed, and you have 3 retries.",
+            "failure_details": {
+                "rootCause": "login_failed",
+                "auth_state": {"authState": "login_failed", "remainingRetries": 3},
+                "evidence": ["Login was failed", "Wrong user name or password", "login form visible"],
+                "blockedStep": "工作台/我的待办",
+                "blockedAction": "navigate_path",
+            },
+            "screenshot_path": "runs/RUN-2/screenshots/step-003.png",
+            "dom_snapshot_path": "runs/RUN-2/dom/step-003.html",
+            "accessibility_snapshot_path": "runs/RUN-2/accessibility/step-003.json",
+        },
+        {
+            "locator_debug": "runs/RUN-2/locator-debug.jsonl",
+            "runtime_stream": "runs/RUN-2/runtime-stream.jsonl",
+            "execution_trace": "runs/RUN-2/execution-trace.jsonl",
+            "report": "runs/RUN-2/report.html",
+        },
+    )
+    session.commit()
+    sample = session.query(FailureSample).filter(FailureSample.run_id == run.id).one()
+    assert sample.failure_type == "protected_step_blocked_by_login_failure"
+    assert sample.ai_analysis_json["rootCause"] == "login_failed"
+    assert sample.ai_analysis_json["authState"] == "login_failed"
+    assert sample.ai_analysis_json["remainingRetries"] == 3
+    assert sample.ai_analysis_json["blockedStep"] == "工作台/我的待办"
+    assert sample.suggested_rule_json["candidateRuleType"] == "login"
 
 
 def _session() -> Session:

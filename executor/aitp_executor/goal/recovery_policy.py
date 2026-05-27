@@ -23,6 +23,17 @@ class RecoveryPolicy:
             _strategy("check_account_binding", "确认账号绑定和认证策略", automatic=False),
             _strategy("ask_admin", "联系系统管理员确认认证状态", automatic=False),
         ],
+        "protected_step_blocked_by_login_failure": [
+            _strategy("check_test_account", "检查测试账号和密码", automatic=False),
+            _strategy("check_account_status", "确认账号是否被禁用、锁定或未绑定", automatic=False),
+            _strategy("check_ad_password_sync", "确认 AD 密码是否已同步或过期", automatic=False),
+            _strategy("rerun_login_check", "在被测系统管理中重新执行登录检查", automatic=False),
+        ],
+        "auth_state_not_logged_in": [
+            _strategy("rerun_login_step", "重新执行登录步骤"),
+            _strategy("check_login_page", "确认是否仍停留在登录页"),
+            _strategy("ask_human", "请求人工确认登录状态", automatic=False),
+        ],
         "auth_not_logged_in": [
             _strategy("rerun_login_step", "重新执行登录步骤"),
             _strategy("check_login_result", "检查登录结果提示"),
@@ -231,6 +242,7 @@ class RecoveryPolicy:
         strategies = self.strategies_for(normalized)
         return {
             "failureType": normalized,
+            "rootCause": _root_cause(normalized, details),
             "category": _category(normalized),
             "summary": _summary(normalized, target=target, error_summary=error_summary),
             "suggestedRecovery": strategies,
@@ -253,8 +265,18 @@ class RecoveryPolicy:
         explicit = _clean_failure_type(failure_type)
         fallback = _clean_failure_type(fallback_reason)
         text = " ".join(str(item or "") for item in [error_summary, action, target, explicit, fallback, details])
+        if explicit in {"protected_step_blocked_by_login_failure", "auth_state_not_logged_in"}:
+            return explicit
         detected = _detect_from_text(text)
-        if detected in {"login_failed", "authentication_failed", "auth_not_logged_in", "login_requires_manual_action", "login_state_unknown"}:
+        if detected in {
+            "login_failed",
+            "authentication_failed",
+            "protected_step_blocked_by_login_failure",
+            "auth_state_not_logged_in",
+            "auth_not_logged_in",
+            "login_requires_manual_action",
+            "login_state_unknown",
+        }:
             return detected
         if explicit and explicit != "vision_fallback_not_configured":
             return _canonicalize(explicit, text)
@@ -313,6 +335,8 @@ def _detect_from_text(text: str) -> str | None:
             "retries",
             "please contact the administrator",
         ]),
+        ("protected_step_blocked_by_login_failure", ["protected_step_blocked_by_login_failure"]),
+        ("auth_state_not_logged_in", ["auth_state_not_logged_in"]),
         ("auth_not_logged_in", ["auth_not_logged_in", "precondition_auth_not_satisfied", "当前仍停留在登录页面", "login form is still visible"]),
         ("login_requires_manual_action", ["login_requires_manual_action", "强制修改密码", "必须修改初始密码", "must change password"]),
         ("login_state_unknown", ["login_state_unknown"]),
@@ -420,6 +444,8 @@ def _summary(failure_type: str, *, target: str | None, error_summary: str | None
     labels = {
         "login_failed": "登录失败，未进入目标系统。",
         "authentication_failed": "认证失败，未进入目标系统。",
+        "protected_step_blocked_by_login_failure": "登录失败导致后续业务步骤已阻断。",
+        "auth_state_not_logged_in": "登录状态未满足，当前仍停留在登录页。",
         "auth_not_logged_in": "登录状态未满足，当前仍停留在登录页。",
         "login_requires_manual_action": "登录后需要人工处理。",
         "login_state_unknown": "登录结果无法确认。",
@@ -444,6 +470,18 @@ def _attempted_strategies(details: dict[str, Any] | None) -> list[Any]:
     if isinstance(navigation, dict):
         return list(navigation.get("attemptedStrategies") or [])
     return list(details.get("attemptedStrategies") or details.get("candidates") or [])
+
+
+def _root_cause(failure_type: str, details: dict[str, Any] | None) -> str | None:
+    if isinstance(details, dict):
+        if details.get("rootCause"):
+            return str(details["rootCause"])
+        auth_state = details.get("auth_state")
+        if isinstance(auth_state, dict) and auth_state.get("failureType"):
+            return str(auth_state["failureType"])
+    if failure_type == "protected_step_blocked_by_login_failure":
+        return "login_failed"
+    return None
 
 
 def _vision_fallback_status(failure_type: str | None, fallback_reason: str | None, details: dict[str, Any] | None) -> str | None:

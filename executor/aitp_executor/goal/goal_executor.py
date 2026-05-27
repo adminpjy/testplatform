@@ -1,8 +1,8 @@
-import os
 from typing import Any
 
 from executor.aitp_executor.goal.goal_success_verifier import GoalSuccessVerifier
 from executor.aitp_executor.goal.login_form_resolver import LoginFormResolver
+from executor.aitp_executor.goal.login_goal_executor import LoginGoalExecutor
 from executor.aitp_executor.goal.login_result_verifier import LoginResultVerifier
 from executor.aitp_executor.goal.menu_path_navigator import MenuPathNavigator
 from executor.aitp_executor.goal.recovery_policy import RecoveryPolicy
@@ -39,6 +39,7 @@ class GoalExecutor:
         self.recovery_policy = recovery_policy or RecoveryPolicy()
         self.login_resolver = login_resolver or LoginFormResolver()
         self.login_verifier = login_verifier or LoginResultVerifier()
+        self.login_goal_executor = LoginGoalExecutor(login_resolver=self.login_resolver, login_verifier=self.login_verifier)
         self.menu_path_navigator = menu_path_navigator or MenuPathNavigator()
         self.table_handler = TableHandler(observer=self.locator.observer)
         self.navigation_handler = NavigationHandler(locator=self.locator, menu_path_navigator=self.menu_path_navigator)
@@ -121,44 +122,7 @@ class GoalExecutor:
         return self._click_goal(page, "click", target, step, intent.name)
 
     def _login(self, page: Any, step: dict[str, Any], *, execution_context: dict[str, Any] | None = None) -> dict[str, Any]:
-        credentials = dict(step.get("credentials") or {})
-        username = str(step.get("username") or credentials.get("username") or os.getenv("REAL_MIS_USERNAME") or "admin")
-        password = str(step.get("password") or credentials.get("password") or os.getenv("REAL_MIS_PASSWORD") or "123456")
-        ctx = execution_context or {}
-        wait_for_page_ready(page)
-        form = self.login_resolver.resolve(page)
-        if form.username_locator is None or form.password_locator is None:
-            raise RuntimeError(
-                "login_form_fields_not_found:"
-                + form.reason
-                + ". The page may use iframe, delayed SSO widgets, or non-standard inputs. "
-                + "Captured candidates: "
-                + str(form.candidates[:6])
-            )
-        _emit(ctx, "progress", "login", "正在输入测试账号。", "goal_executor", {"field": "username"})
-        form.username_locator.fill(username)
-        _emit(ctx, "progress", "login", "正在输入测试密码。", "goal_executor", {"field": "password", "redacted": True})
-        form.password_locator.fill(password)
-        _emit(ctx, "progress", "login", "正在提交登录请求。", "goal_executor", {})
-        if form.submit_locator is not None:
-            form.submit_locator.click()
-        else:
-            form.password_locator.press("Enter")
-        auth_result = self.login_verifier.verify_after_submit(page, ctx)
-        outcome = _outcome(
-            LocatorResult(
-                form.submit_locator or form.password_locator,
-                form.strategy,
-                "login_form",
-                form.confidence,
-                form.reason,
-                candidates=form.candidates,
-            ),
-            verified=True,
-            verify_reason=f"login_success:{auth_result.reason}",
-        )
-        outcome["auth_state"] = auth_result.as_dict()
-        return outcome
+        return self.login_goal_executor.execute_login_goal(page, step, execution_context)
 
     def _approval_pass(self, page: Any, step: dict[str, Any]) -> dict[str, Any]:
         wait_for_page_ready(page)
@@ -220,9 +184,3 @@ def _outcome(result: LocatorResult, *, verified: bool, verify_reason: str) -> di
         "candidates": result.candidates,
         "verified": verified,
     }
-
-
-def _emit(ctx: dict[str, Any], message_type: str, phase: str, content: str, method: str, metadata: dict[str, Any]) -> None:
-    emitter = ctx.get("emit_runtime")
-    if callable(emitter):
-        emitter(message_type, phase, content, method, metadata)

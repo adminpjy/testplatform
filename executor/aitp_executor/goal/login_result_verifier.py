@@ -20,6 +20,8 @@ class LoginResultVerifier:
         self.detector = detector or AuthStateDetector()
         self.wait_ms = _int_env("LOGIN_RESULT_WAIT_MS", 5_000)
         self.recheck_times = _int_env("LOGIN_RESULT_RECHECK_TIMES", 2)
+        self.auto_retry_on_failure = _bool_env("LOGIN_AUTO_RETRY_ON_FAILURE", False)
+        self.max_auto_retry = _int_env("LOGIN_MAX_AUTO_RETRY", 0)
 
     def verify_after_submit(
         self,
@@ -48,13 +50,13 @@ class LoginResultVerifier:
             last_result = result
             _append_auth_debug(ctx, result, step_id=ctx.get("step_id") or "login", decision=_decision_for(result))
 
-            if result.authState == "login_blocked" and _handle_low_risk_interruption(page, ctx):
+            if result.authState == "login_interrupted" and _handle_low_risk_interruption(page, ctx):
                 wait_for_page_ready(page, timeout_ms=max(self.wait_ms, 1_000), settle_ms=250)
                 result = self.detector.detect_auth_state(page, execution_context=ctx)
                 last_result = result
                 _append_auth_debug(ctx, result, step_id=ctx.get("step_id") or "login", decision=_decision_for(result))
 
-            if result.authState == "login_success":
+            if result.authState == "logged_in":
                 _emit(
                     ctx,
                     "success",
@@ -74,6 +76,15 @@ class LoginResultVerifier:
                     "login_result_verifier",
                     result.as_dict(),
                 )
+                if result.remainingRetries is not None:
+                    _emit(
+                        ctx,
+                        "warning",
+                        "login_result",
+                        f"认证系统提示还剩 {result.remainingRetries} 次重试。为避免账号锁定，系统不会继续自动重试。",
+                        "login_result_verifier",
+                        {**result.as_dict(), "autoRetryOnFailure": self.auto_retry_on_failure, "maxAutoRetry": self.max_auto_retry},
+                    )
                 _emit(
                     ctx,
                     "error",
@@ -125,7 +136,7 @@ def _message_for(result: AuthStateResult) -> str:
     if result.authState == "login_requires_manual_action":
         return "login_requires_manual_action: 登录后需要人工处理。"
     if result.authState == "login_page":
-        return "auth_not_logged_in: 当前仍停留在登录页面。"
+        return "auth_state_not_logged_in: 当前仍停留在登录页面。"
     return f"{result.failureType or result.authState}: {result.reason}"
 
 
@@ -173,7 +184,7 @@ def _append_auth_debug(ctx: dict[str, Any], result: AuthStateResult, *, step_id:
 
 
 def _decision_for(result: AuthStateResult) -> str:
-    if result.authState == "login_success":
+    if result.authState == "logged_in":
         return "continue_run"
     if result.authState in {"login_failed", "login_page", "login_requires_manual_action"}:
         return "stop_run"
@@ -199,3 +210,10 @@ def _int_env(name: str, default: int) -> int:
         return int(value)
     except ValueError:
         return default
+
+
+def _bool_env(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None or value == "":
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}

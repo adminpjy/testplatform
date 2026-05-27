@@ -20,6 +20,7 @@ class BusinessIntentNormalizer:
     def normalize(self, *, action: str, target: str) -> BusinessIntent:
         text = target.strip()
         compact = text.replace(" ", "")
+        lower_compact = compact.lower()
         path_segments = parse_navigation_path(action=action, target=text)
         if path_segments:
             return BusinessIntent(
@@ -71,7 +72,7 @@ class BusinessIntentNormalizer:
                 preferred_roles=["button", "link"],
                 action_kind="click",
             )
-        if _has_any(compact, ["登录系统", "登录"]):
+        if _has_any(compact, ["登录系统", "登录"]) or _has_any(lower_compact, ["login", "signin", "sign in"]):
             return BusinessIntent(
                 name="login_system",
                 normalized_target="登录",

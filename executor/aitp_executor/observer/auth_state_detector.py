@@ -1,3 +1,4 @@
+import re
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
@@ -10,6 +11,8 @@ class AuthStateResult:
     confidence: float
     failureType: str | None = None
     evidence: list[str] = field(default_factory=list)
+    remainingRetries: int | None = None
+    shouldStopProtectedSteps: bool = False
     shouldContinue: bool = True
     reason: str = ""
 
@@ -39,8 +42,12 @@ LOGIN_FAILURE_MARKERS = [
     "authentication failed",
     "account disabled",
     "account locked",
+    "you have",
     "retries",
     "retry",
+    "disabled or unbound regular ad account",
+    "ad account password was not updated",
+    "forgot password",
     "please contact the administrator",
 ]
 
@@ -89,19 +96,24 @@ class AuthStateDetector:
         url = _safe_page_attr(page, "url").lower()
         title = _safe_title(page).lower()
 
-        login_form = _login_form_state(page)
+        login_form = _login_form_state(page, lower)
         failure_evidence = _matching_markers(lower, LOGIN_FAILURE_MARKERS)
         manual_evidence = _matching_markers(lower, MANUAL_ACTION_MARKERS)
         interruption_evidence = _matching_markers(lower, LOW_RISK_INTERRUPTION_MARKERS)
         success_evidence = _success_evidence(page, lower, url, title, login_form)
+        remaining_retries = _extract_remaining_retries(text)
 
         if failure_evidence and login_form["password_visible"] and login_form["submit_visible"]:
             evidence = [*failure_evidence, *login_form["evidence"]]
+            if not login_form["business_menu_visible"]:
+                evidence.append("business menu not visible")
             return AuthStateResult(
                 authState="login_failed",
                 confidence=0.95,
                 failureType="login_failed",
                 evidence=evidence,
+                remainingRetries=remaining_retries,
+                shouldStopProtectedSteps=True,
                 shouldContinue=False,
                 reason="login failure message and login form are visible",
             )
@@ -112,6 +124,8 @@ class AuthStateDetector:
                 confidence=0.86,
                 failureType="login_failed",
                 evidence=failure_evidence,
+                remainingRetries=remaining_retries,
+                shouldStopProtectedSteps=True,
                 shouldContinue=False,
                 reason="login failure message detected",
             )
@@ -122,13 +136,15 @@ class AuthStateDetector:
                 confidence=0.9,
                 failureType="login_requires_manual_action",
                 evidence=manual_evidence,
+                remainingRetries=remaining_retries,
+                shouldStopProtectedSteps=True,
                 shouldContinue=False,
                 reason="manual login action is required",
             )
 
         if success_evidence and not login_form["form_visible"]:
             return AuthStateResult(
-                authState="login_success",
+                authState="logged_in",
                 confidence=0.86,
                 evidence=success_evidence,
                 shouldContinue=True,
@@ -137,10 +153,11 @@ class AuthStateDetector:
 
         if interruption_evidence and _has_low_risk_continue_button(page):
             return AuthStateResult(
-                authState="login_blocked",
+                authState="login_interrupted",
                 confidence=0.78,
                 failureType="login_interruption",
                 evidence=interruption_evidence,
+                remainingRetries=remaining_retries,
                 shouldContinue=True,
                 reason="low risk login interruption can be handled",
             )
@@ -149,15 +166,17 @@ class AuthStateDetector:
             return AuthStateResult(
                 authState="login_page",
                 confidence=0.82,
-                failureType="auth_not_logged_in",
+                failureType="auth_state_not_logged_in",
                 evidence=login_form["evidence"],
+                remainingRetries=remaining_retries,
+                shouldStopProtectedSteps=True,
                 shouldContinue=False,
                 reason="login form is still visible",
             )
 
         if success_evidence:
             return AuthStateResult(
-                authState="login_success",
+                authState="logged_in",
                 confidence=0.72,
                 evidence=success_evidence,
                 shouldContinue=True,
@@ -168,6 +187,7 @@ class AuthStateDetector:
             authState="unknown",
             confidence=0.35,
             evidence=[],
+            remainingRetries=remaining_retries,
             shouldContinue=True,
             reason="auth state could not be determined confidently",
         )
@@ -212,7 +232,7 @@ def _matching_markers(lower_text: str, markers: list[str]) -> list[str]:
     return [marker for marker in markers if marker.lower() in lower_text]
 
 
-def _login_form_state(page: Any) -> dict[str, Any]:
+def _login_form_state(page: Any, lower_text: str) -> dict[str, Any]:
     password_visible = _any_visible(page, ["input[type='password']", "input[placeholder*='Password' i]", "input[placeholder*='密码']"])
     username_visible = _any_visible(
         page,
@@ -226,6 +246,8 @@ def _login_form_state(page: Any) -> dict[str, Any]:
         ],
     )
     submit_visible = _login_submit_visible(page)
+    authentication_center_visible = "authentication center" in lower_text or "用户认证中心" in lower_text
+    business_menu_visible = _any_visible(page, ["aside", "nav", "[role='menu']", ".ant-menu", ".el-menu", ".sidebar", ".top-nav"])
     evidence: list[str] = []
     if username_visible:
         evidence.append("username input visible")
@@ -233,10 +255,14 @@ def _login_form_state(page: Any) -> dict[str, Any]:
         evidence.append("password input visible")
     if submit_visible:
         evidence.append("login button visible")
+    if authentication_center_visible:
+        evidence.append("Authentication Center visible")
     return {
         "username_visible": username_visible,
         "password_visible": password_visible,
         "submit_visible": submit_visible,
+        "authentication_center_visible": authentication_center_visible,
+        "business_menu_visible": business_menu_visible,
         "form_visible": password_visible and (username_visible or submit_visible),
         "evidence": evidence,
     }
@@ -293,3 +319,19 @@ def _any_visible(page: Any, selectors: list[str]) -> bool:
         except PlaywrightError:
             continue
     return False
+
+
+def _extract_remaining_retries(text: str) -> int | None:
+    patterns = [
+        r"you\s+have\s+(\d+)\s+retr(?:y|ies)",
+        r"还有\s*(\d+)\s*次",
+        r"剩余\s*(\d+)\s*次",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if match:
+            try:
+                return int(match.group(1))
+            except ValueError:
+                return None
+    return None

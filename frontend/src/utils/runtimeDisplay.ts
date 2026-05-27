@@ -84,6 +84,7 @@ const methodLabels: Record<string, string> = {
   system_login_check: "登录检查",
   login_result_verifier: "登录结果校验",
   auth_state_detector: "登录状态检测",
+  protected_step_guard: "受保护步骤守卫",
   global_interruption_handler: "中断处理",
   llm_provider: "大模型",
   natural_language_parser: "测试目标解析",
@@ -207,6 +208,7 @@ export function runtimeDetailView(message: RuntimeMessage): RuntimeDetailView | 
   const leaf = metadataValue(metadata, "leaf");
   const failureType = metadataValue(metadata, "failureType");
   const authState = metadataValue(metadata, "authState");
+  const remainingRetries = metadataValue(metadata, "remainingRetries");
   const visionFallback = metadataValue(metadata, "visionFallback");
 
   if (stepNumber) lines.push(`步骤编号：S${String(stepNumber).padStart(3, "0")}`);
@@ -243,6 +245,7 @@ export function runtimeDetailView(message: RuntimeMessage): RuntimeDetailView | 
   if (fallbackReason) lines.push(`兜底原因：${fallbackReason}`);
   if (failureType) lines.push(`失败类型：${failureType}`);
   if (authState) lines.push(`登录状态：${authState}`);
+  if (remainingRetries) lines.push(`剩余重试次数：${remainingRetries}`);
   if (visionFallback) lines.push(`视觉兜底：${visionFallback}`);
   if (requested !== null && message.phase === "vision") {
     lines.push(`视觉兜底配置：${requested === "true" ? "已开启" : "未开启"}`);
