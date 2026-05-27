@@ -9,9 +9,15 @@ from app.schemas.abilities import AbilityRuleCreate, AbilityRuleUpdate
 
 
 def ensure_base_ability_rules(db: Session) -> None:
-    existing_codes = set(db.scalars(select(AbilityRule.rule_code)).all())
+    existing_rules = {rule.rule_code: rule for rule in db.scalars(select(AbilityRule)).all()}
     for rule_data in BASE_ABILITY_RULES:
-        if rule_data["rule_code"] in existing_codes:
+        existing = existing_rules.get(rule_data["rule_code"])
+        if existing is not None:
+            if rule_data.get("source") == "builtin":
+                existing.source = "builtin"
+                existing.status = "active"
+                existing.production_enabled = True
+                db.add(existing)
             continue
         db.add(AbilityRule(**rule_data))
     db.commit()

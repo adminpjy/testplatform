@@ -22,6 +22,7 @@ def _rule(
     risk: str = "low",
     threshold: float = 0.45,
     negative_policy: str = "penalize",
+    source: str | None = None,
 ) -> dict[str, Any]:
     return {
         "rule_code": code,
@@ -43,7 +44,7 @@ def _rule(
         "fallback_strategies_json": {"strategies": fallback or ["request_human_intervention"]},
         "risk_level": risk,
         "confidence_threshold": threshold,
-        "source": BASE_ABILITY_PACK_SOURCE,
+        "source": source or BASE_ABILITY_PACK_SOURCE,
         "production_enabled": True,
     }
 
@@ -138,6 +139,7 @@ BASE_ABILITY_RULES: list[dict[str, Any]] = [
             "path_separators": ["/", ">", "-", "→", "\\"],
             "strategies": ["already_on_target_page", "left_menu_path", "top_nav_path", "dashboard_card", "menu_search"],
         },
+        source="builtin",
     ),
     _rule(
         code="NAV-ALREADY-ON-TARGET-v1",
@@ -149,6 +151,7 @@ BASE_ABILITY_RULES: list[dict[str, Any]] = [
         positive=["跳过点击", "直接验证"],
         targets=["页面标题", "主内容", "面包屑", "高亮菜单"],
         success=["检测到目标页面强证据"],
+        source="builtin",
     ),
     _rule(
         code="NAV-EXPAND-PARENT-v1",
@@ -160,6 +163,7 @@ BASE_ABILITY_RULES: list[dict[str, Any]] = [
         positive=["展开", "点击父菜单", "查找子菜单"],
         targets=["一级菜单", "二级菜单", "树形菜单"],
         success=["子菜单可见", "父菜单展开"],
+        source="builtin",
     ),
     _rule(
         code="NAV-DASHBOARD-CARD-v1",
@@ -171,6 +175,7 @@ BASE_ABILITY_RULES: list[dict[str, Any]] = [
         positive=["点击卡片", "打开快捷入口"],
         targets=["卡片", "快捷入口", "待办事项"],
         success=["目标页面标题出现", "目标列表可见"],
+        source="builtin",
     ),
     _rule(
         code="QUERY-FILTER-SUBMIT-v1",
