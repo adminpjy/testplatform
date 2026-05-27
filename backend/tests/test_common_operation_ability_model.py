@@ -52,6 +52,8 @@ def test_common_operation_intents_and_knowledge_types_are_registered() -> None:
 
 
 def test_common_failure_patterns_are_registered() -> None:
+    assert "login_captcha_required" in SUPPORTED_FAILURE_PATTERNS
+    assert "authentication_challenge_required" in SUPPORTED_FAILURE_PATTERNS
     assert "menu_child_not_found" in SUPPORTED_FAILURE_PATTERNS
     assert "table_no_action_found" in SUPPORTED_FAILURE_PATTERNS
     assert "form_required_field_missing" in SUPPORTED_FAILURE_PATTERNS
@@ -75,6 +77,9 @@ def test_common_operation_pack_contains_required_rule_codes() -> None:
         "LOGIN-ACCOUNT-EXPIRY-v1",
         "LOGIN-PASSWORD-EXPIRY-v1",
         "LOGIN-FORCE-CHANGE-PASSWORD-v1",
+        "LOGIN-CAPTCHA-DETECT-v1",
+        "LOGIN-RETRY-RISK-v1",
+        "AUTH-PROTECTED-STEP-GUARD-v1",
         "INTERRUPT-LOW-RISK-CONTINUE-v1",
         "INTERRUPT-BLOCKING-MODAL-v1",
         "INTERRUPT-NON-BLOCKING-NOTICE-v1",

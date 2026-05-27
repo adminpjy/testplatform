@@ -192,6 +192,8 @@ def read_ability_knowledge(
 
 
 def _failure_category(failure_type: str) -> str:
+    if failure_type.startswith(("login_", "auth_", "authentication_", "protected_step_blocked_by_auth")):
+        return "login"
     if failure_type.startswith(("menu_", "navigation_")):
         return "navigation"
     if failure_type.startswith("table_"):

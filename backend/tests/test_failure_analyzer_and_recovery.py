@@ -66,6 +66,29 @@ def test_protected_step_blocked_keeps_root_cause_login_failed() -> None:
     assert any(item["code"] == "rerun_login_check" for item in analysis["suggestedRecovery"])
 
 
+def test_auth_challenge_overrides_navigation_failure() -> None:
+    analysis = FailureAnalyzer().analyze_step_failure(
+        {
+            "action": "navigate_path",
+            "target": "工作台/我的待办",
+            "error_summary": "menu_parent_not_found: 无法完成菜单路径导航。",
+            "failure_type": "menu_parent_not_found",
+            "failure_details": {
+                "rootCause": "authentication_challenge_required",
+                "auth_state": {
+                    "authState": "login_captcha_required",
+                    "failureType": "authentication_challenge_required",
+                    "evidence": ["captcha input visible", "login form visible", "business menu not visible"],
+                    "requiresHumanAction": True,
+                },
+            },
+        }
+    )
+    assert analysis["failureType"] == "login_captcha_required"
+    assert analysis["category"] == "authentication"
+    assert any(item["code"] == "human_complete_captcha" for item in analysis["suggestedRecovery"])
+
+
 def test_recovery_suggestions_for_common_mis_failures() -> None:
     dropdown = FailureAnalyzer().analyze_step_failure(
         {"action": "select", "target": "状态", "error_summary": "dropdown_option_not_found: 停用"}
@@ -182,6 +205,64 @@ def test_failure_sample_records_auth_root_cause() -> None:
     assert sample.ai_analysis_json["authState"] == "login_failed"
     assert sample.ai_analysis_json["remainingRetries"] == 3
     assert sample.ai_analysis_json["blockedStep"] == "工作台/我的待办"
+    assert sample.suggested_rule_json["candidateRuleType"] == "login"
+
+
+def test_failure_sample_records_login_captcha_as_primary_type() -> None:
+    session = _session()
+    project = ProjectModel(project_code="P3", name="Project 3", status="active")
+    session.add(project)
+    session.flush()
+    run = RunModel(run_code="RUN-3", project_id=project.id, status="failed")
+    session.add(run)
+    session.flush()
+    step = StepRunModel(run_id=run.id, step_id="S003", status="failed", action="navigate_path", target="工作台/我的待办")
+    session.add(step)
+    session.flush()
+
+    _add_failure_sample(
+        session,
+        run,
+        step,
+        {
+            "action": "navigate_path",
+            "target": "工作台/我的待办",
+            "status": "failed",
+            "failure_type": "protected_step_blocked_by_auth_challenge",
+            "error_summary": "protected_step_blocked_by_auth_challenge: 登录流程出现验证码或二次认证。",
+            "failure_details": {
+                "rootCause": "authentication_challenge_required",
+                "auth_state": {
+                    "authState": "login_captcha_required",
+                    "failureType": "authentication_challenge_required",
+                    "remainingRetries": 3,
+                    "requiresHumanAction": True,
+                },
+                "evidence": ["captcha input visible", "login form visible", "business menu not visible"],
+                "blockedStep": "工作台/我的待办",
+                "blockedAction": "navigate_path",
+                "requiresHumanAction": True,
+                "autoRetryDisabled": True,
+            },
+            "screenshot_path": "runs/RUN-3/screenshots/step-003.png",
+            "dom_snapshot_path": "runs/RUN-3/dom/step-003.html",
+            "accessibility_snapshot_path": "runs/RUN-3/accessibility/step-003.json",
+        },
+        {
+            "locator_debug": "runs/RUN-3/locator-debug.jsonl",
+            "runtime_stream": "runs/RUN-3/runtime-stream.jsonl",
+            "execution_trace": "runs/RUN-3/execution-trace.jsonl",
+            "report": "runs/RUN-3/report.html",
+        },
+    )
+    session.commit()
+    sample = session.query(FailureSample).filter(FailureSample.run_id == run.id).one()
+    assert sample.failure_type == "login_captcha_required"
+    assert sample.failure_summary == "登录失败后触发验证码或二次认证，当前未进入业务系统，已停止后续步骤。"
+    assert sample.ai_analysis_json["rootCause"] == "authentication_challenge_required"
+    assert sample.ai_analysis_json["authState"] == "login_captcha_required"
+    assert sample.ai_analysis_json["requiresHumanAction"] is True
+    assert sample.ai_analysis_json["autoRetryDisabled"] is True
     assert sample.suggested_rule_json["candidateRuleType"] == "login"
 
 

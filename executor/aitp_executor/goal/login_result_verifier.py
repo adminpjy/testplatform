@@ -22,6 +22,8 @@ class LoginResultVerifier:
         self.recheck_times = _int_env("LOGIN_RESULT_RECHECK_TIMES", 2)
         self.auto_retry_on_failure = _bool_env("LOGIN_AUTO_RETRY_ON_FAILURE", False)
         self.max_auto_retry = _int_env("LOGIN_MAX_AUTO_RETRY", 0)
+        self.stop_on_captcha = _bool_env("LOGIN_STOP_ON_CAPTCHA", True)
+        self.stop_on_remaining_retries = _bool_env("LOGIN_STOP_ON_REMAINING_RETRIES", True)
 
     def verify_after_submit(
         self,
@@ -66,6 +68,42 @@ class LoginResultVerifier:
                     result.as_dict(),
                 )
                 return result
+
+            if result.authState == "login_captcha_required":
+                _emit(
+                    ctx,
+                    "error",
+                    "login_result",
+                    "检测到登录失败后出现验证码或二次认证。",
+                    "login_result_verifier",
+                    {
+                        **result.as_dict(),
+                        "autoRetryOnFailure": self.auto_retry_on_failure,
+                        "maxAutoRetry": self.max_auto_retry,
+                        "stopOnCaptcha": self.stop_on_captcha,
+                    },
+                )
+                _emit(
+                    ctx,
+                    "warning",
+                    "login_result",
+                    "当前仍停留在登录页面，尚未进入业务系统。为避免账号被锁定，系统不会继续自动重试。",
+                    "login_result_verifier",
+                    {
+                        **result.as_dict(),
+                        "autoRetryDisabled": True,
+                        "stopOnRemainingRetries": self.stop_on_remaining_retries,
+                    },
+                )
+                _emit(
+                    ctx,
+                    "warning",
+                    "human_intervention",
+                    "建议检查测试账号，或人工处理验证码后重新执行。",
+                    "login_result_verifier",
+                    result.as_dict(),
+                )
+                raise LoginStateError(result)
 
             if result.authState == "login_failed":
                 _emit(
@@ -133,6 +171,11 @@ def _message_for(result: AuthStateResult) -> str:
             "login_failed: 检测到目标系统返回登录失败提示。"
             "可能原因包括用户名或密码错误、账号被禁用、账号未绑定或密码未同步。"
         )
+    if result.authState == "login_captcha_required":
+        return (
+            "login_captcha_required: 检测到验证码或二次认证，当前未进入业务系统。"
+            "为避免账号锁定，系统不会继续自动重试。"
+        )
     if result.authState == "login_requires_manual_action":
         return "login_requires_manual_action: 登录后需要人工处理。"
     if result.authState == "login_page":
@@ -177,6 +220,8 @@ def _append_auth_debug(ctx: dict[str, Any], result: AuthStateResult, *, step_id:
                 "confidence": result.confidence,
                 "failureType": result.failureType,
                 "evidence": result.evidence,
+                "remainingRetries": result.remainingRetries,
+                "requiresHumanAction": result.requiresHumanAction,
                 "decision": decision,
                 "reason": result.reason,
             }
@@ -186,7 +231,7 @@ def _append_auth_debug(ctx: dict[str, Any], result: AuthStateResult, *, step_id:
 def _decision_for(result: AuthStateResult) -> str:
     if result.authState == "logged_in":
         return "continue_run"
-    if result.authState in {"login_failed", "login_page", "login_requires_manual_action"}:
+    if result.authState in {"login_failed", "login_captcha_required", "login_page", "login_requires_manual_action"}:
         return "stop_run"
     return "observe_again"
 

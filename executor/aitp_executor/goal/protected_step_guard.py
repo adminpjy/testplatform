@@ -16,6 +16,7 @@ class GuardResult:
     authState: str | None = None
     remainingRetries: int | None = None
     authResult: dict[str, Any] | None = None
+    requiresHumanAction: bool = False
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -65,6 +66,14 @@ class ProtectedStepGuard:
                 failure_type="protected_step_blocked_by_login_failure",
                 root_cause="login_failed",
                 reason="当前页面仍是登录页，且检测到登录失败提示，受保护业务步骤已阻断。",
+            )
+
+        if auth_result.authState == "login_captcha_required":
+            return _blocked(
+                auth_result,
+                failure_type="protected_step_blocked_by_auth_challenge",
+                root_cause="authentication_challenge_required",
+                reason="当前登录流程触发验证码或二次认证，尚未进入业务系统，因此不会继续执行后续步骤。",
             )
 
         if auth_result.authState == "login_page":
@@ -183,4 +192,5 @@ def _blocked(auth_result: AuthStateResult, *, failure_type: str, root_cause: str
         authState=auth_result.authState,
         remainingRetries=auth_result.remainingRetries,
         authResult=auth_result.as_dict(),
+        requiresHumanAction=auth_result.requiresHumanAction,
     )

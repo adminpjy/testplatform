@@ -269,12 +269,14 @@ def _add_failure_sample(
     analysis = analyze_step_failure(step_result)
     failure_details = step_result.get("failure_details") if isinstance(step_result.get("failure_details"), dict) else {}
     auth_state = failure_details.get("auth_state") if isinstance(failure_details.get("auth_state"), dict) else {}
+    analyzed_failure_type = str(analysis.get("failureType") or failure_type(step_result))
+    stored_failure_type = _stored_failure_type(analyzed_failure_type, failure_details, auth_state)
     db.add(
         FailureSample(
             run_id=run.id,
             step_id=step_run.id,
-            failure_type=str(analysis.get("failureType") or failure_type(step_result)),
-            failure_summary=step_result.get("error_summary") or "Step failed without error summary.",
+            failure_type=stored_failure_type,
+            failure_summary=_failure_sample_summary(stored_failure_type, step_result.get("error_summary")),
             screenshot_path=step_result.get("screenshot_path"),
             dom_snapshot_path=step_result.get("dom_snapshot_path"),
             accessibility_snapshot_path=step_result.get("accessibility_snapshot_path"),
@@ -287,13 +289,16 @@ def _add_failure_sample(
                 "stepAction": step_result.get("action"),
                 "target": step_result.get("target"),
                 "reason": step_result.get("reason"),
-                "failureType": analysis.get("failureType"),
+                "failureType": stored_failure_type,
+                "guardFailureType": analyzed_failure_type if analyzed_failure_type != stored_failure_type else None,
                 "rootCause": failure_details.get("rootCause") or auth_state.get("failureType"),
                 "authState": auth_state.get("authState"),
                 "remainingRetries": failure_details.get("remainingRetries") or auth_state.get("remainingRetries"),
                 "evidence": failure_details.get("evidence") or auth_state.get("evidence"),
                 "blockedStep": failure_details.get("blockedStep"),
                 "blockedAction": failure_details.get("blockedAction"),
+                "requiresHumanAction": failure_details.get("requiresHumanAction") or auth_state.get("requiresHumanAction"),
+                "autoRetryDisabled": failure_details.get("autoRetryDisabled"),
                 "category": analysis.get("category"),
                 "summary": analysis.get("summary"),
                 "attemptedStrategies": analysis.get("attemptedStrategies"),
@@ -305,8 +310,8 @@ def _add_failure_sample(
             },
             suggested_rule_json={
                 "source": "failure_sample",
-                "candidateRuleType": _candidate_rule_type(analysis.get("failureType")),
-                "failureType": analysis.get("failureType"),
+                "candidateRuleType": _candidate_rule_type(stored_failure_type),
+                "failureType": stored_failure_type,
                 "suggestedRecovery": analysis.get("suggestedRecovery"),
                 "needsHumanReview": True,
             },
@@ -315,9 +320,34 @@ def _add_failure_sample(
     )
 
 
+def _stored_failure_type(analysis_failure_type: str, failure_details: dict, auth_state: dict) -> str:
+    auth_state_value = str(auth_state.get("authState") or "")
+    root_cause = str(failure_details.get("rootCause") or auth_state.get("failureType") or "")
+    if (
+        auth_state_value == "login_captcha_required"
+        or root_cause == "authentication_challenge_required"
+        or analysis_failure_type in {"authentication_challenge_required", "protected_step_blocked_by_auth_challenge"}
+    ):
+        return "login_captcha_required"
+    return analysis_failure_type
+
+
+def _failure_sample_summary(failure_type_value: str, fallback: object) -> str:
+    if failure_type_value == "login_captcha_required":
+        return "登录失败后触发验证码或二次认证，当前未进入业务系统，已停止后续步骤。"
+    return str(fallback or "Step failed without error summary.")
+
+
 def _candidate_rule_type(failure_type_value: object) -> str:
     failure_type_text = str(failure_type_value or "")
-    if failure_type_text in {"login_failed", "protected_step_blocked_by_login_failure", "auth_state_not_logged_in"}:
+    if failure_type_text in {
+        "login_failed",
+        "login_captcha_required",
+        "authentication_challenge_required",
+        "protected_step_blocked_by_login_failure",
+        "protected_step_blocked_by_auth_challenge",
+        "auth_state_not_logged_in",
+    }:
         return "login"
     return "recovery_policy"
 

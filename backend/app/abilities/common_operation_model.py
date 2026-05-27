@@ -77,6 +77,8 @@ class AbilityKnowledgeType(str, Enum):
 
 class FailurePatternType(str, Enum):
     LOGIN_FAILED = "login_failed"
+    LOGIN_CAPTCHA_REQUIRED = "login_captcha_required"
+    AUTHENTICATION_CHALLENGE_REQUIRED = "authentication_challenge_required"
     ACCOUNT_EXPIRED = "account_expired"
     FORCED_PASSWORD_CHANGE = "forced_password_change"
     NON_BLOCKING_NOTICE_DETECTED = "non_blocking_notice_detected"

@@ -116,6 +116,19 @@ def _ensure_navigation_defaults(step: dict[str, Any], segments: list[str]) -> No
             f"面包屑包含{full_path}",
         ],
     )
+    step.setdefault(
+        "fallbackStrategies",
+        [
+            "expand_parent_menu",
+            "try_left_menu",
+            "try_top_nav",
+            "try_dashboard_card",
+            "try_menu_search",
+            "try_iframe",
+            "llm_disambiguation",
+            "vision_fallback_optional",
+        ],
+    )
 
 
 AUTH_REQUIRED_ACTIONS = {
@@ -187,19 +200,6 @@ def _requires_auth(step: dict[str, Any]) -> bool:
     if action == "business_goal":
         return intent in AUTH_REQUIRED_INTENTS or bool(intent)
     return intent in AUTH_REQUIRED_INTENTS
-    step.setdefault(
-        "fallbackStrategies",
-        [
-            "expand_parent_menu",
-            "try_left_menu",
-            "try_top_nav",
-            "try_dashboard_card",
-            "try_menu_search",
-            "try_iframe",
-            "llm_disambiguation",
-            "vision_fallback_optional",
-        ],
-    )
 
 
 def _remember_original(step: dict[str, Any], action: str, target: str, reason: str) -> None:

@@ -126,6 +126,8 @@ class CaseRunner:
                     error_summary = result.get("error_summary")
                     if result.get("failure_type") in {
                         "login_failed",
+                        "login_captcha_required",
+                        "protected_step_blocked_by_auth_challenge",
                         "protected_step_blocked_by_login_failure",
                         "auth_state_not_logged_in",
                         "login_requires_manual_action",
@@ -447,6 +449,7 @@ class CaseRunner:
                 "failureType": auth_result.get("failureType"),
                 "evidence": guard_result.evidence,
                 "remainingRetries": guard_result.remainingRetries,
+                "requiresHumanAction": guard_result.requiresHumanAction,
                 "decision": "continue_protected_step" if guard_result.allowed else "stop_protected_steps",
                 "reason": guard_result.reason,
             },
@@ -477,6 +480,7 @@ class CaseRunner:
                 "rootCause": guard_result.rootCause,
                 "evidence": guard_result.evidence,
                 "remainingRetries": guard_result.remainingRetries,
+                "requiresHumanAction": guard_result.requiresHumanAction,
             },
         )
         writer.append_jsonl(
@@ -491,6 +495,7 @@ class CaseRunner:
                 "failureType": guard_result.failureType,
                 "rootCause": guard_result.rootCause,
                 "remainingRetries": guard_result.remainingRetries,
+                "requiresHumanAction": guard_result.requiresHumanAction,
             },
         )
 
@@ -503,6 +508,8 @@ class CaseRunner:
             "blockedAction": action,
             "evidence": guard_result.evidence,
             "remainingRetries": guard_result.remainingRetries,
+            "requiresHumanAction": guard_result.requiresHumanAction,
+            "autoRetryDisabled": True,
             "message": guard_result.reason,
         }
         failure_analysis = self.goal_executor.recovery_policy.analyze_failure(
@@ -1173,6 +1180,11 @@ def _require_locator(result: Any) -> Any:
 
 
 def _guard_error_summary(result: GuardResult, target: str) -> str:
+    if result.failureType == "protected_step_blocked_by_auth_challenge":
+        return (
+            "protected_step_blocked_by_auth_challenge: 登录流程出现验证码或二次认证，当前尚未进入目标业务系统。"
+            f"为避免账号锁定，系统没有继续执行后续业务步骤：{target}。"
+        )
     if result.failureType == "protected_step_blocked_by_login_failure":
         retries = f" 剩余重试次数：{result.remainingRetries}。" if result.remainingRetries is not None else ""
         return (
@@ -1187,6 +1199,8 @@ def _guard_error_summary(result: GuardResult, target: str) -> str:
 
 
 def _guard_runtime_message(result: GuardResult, target: str) -> str:
+    if result.failureType == "protected_step_blocked_by_auth_challenge":
+        return f"检测到登录失败后出现验证码或二次认证。当前仍停留在登录页面，尚未进入业务系统。为避免账号被锁定，系统不会继续自动重试。已停止后续步骤：{target}。"
     if result.failureType == "protected_step_blocked_by_login_failure":
         parts = ["当前未登录成功，已停止后续业务步骤。", f"已阻断步骤：{target}。"]
         if result.remainingRetries is not None:

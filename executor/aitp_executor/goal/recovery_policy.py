@@ -12,6 +12,25 @@ def _strategy(code: str, label: str, *, automatic: bool = True) -> dict[str, Any
 
 class RecoveryPolicy:
     strategy_catalog: dict[str, list[dict[str, Any]]] = {
+        "login_captcha_required": [
+            _strategy("check_test_account", "检查测试账号和密码", automatic=False),
+            _strategy("reset_failed_login_count", "重置账号登录失败次数", automatic=False),
+            _strategy("disable_captcha_in_test_env", "在测试环境关闭验证码", automatic=False),
+            _strategy("allowlist_test_account", "将测试账号加入自动化测试白名单", automatic=False),
+            _strategy("human_complete_captcha", "人工完成验证码或二次认证后继续", automatic=False),
+        ],
+        "authentication_challenge_required": [
+            _strategy("human_complete_challenge", "人工完成验证码、OTP 或扫码认证", automatic=False),
+            _strategy("use_dedicated_test_auth_entry", "使用专用测试认证入口", automatic=False),
+            _strategy("allowlist_test_account", "将测试账号加入自动化测试白名单", automatic=False),
+        ],
+        "protected_step_blocked_by_auth_challenge": [
+            _strategy("human_complete_captcha", "人工完成验证码或二次认证后继续", automatic=False),
+            _strategy("check_test_account", "检查测试账号和密码", automatic=False),
+            _strategy("reset_failed_login_count", "重置账号登录失败次数", automatic=False),
+            _strategy("disable_captcha_in_test_env", "在测试环境关闭验证码", automatic=False),
+            _strategy("allowlist_test_account", "将测试账号加入自动化测试白名单", automatic=False),
+        ],
         "login_failed": [
             _strategy("check_test_account", "检查测试账号和密码", automatic=False),
             _strategy("check_account_status", "确认账号是否被禁用、锁定或未绑定", automatic=False),
@@ -265,10 +284,19 @@ class RecoveryPolicy:
         explicit = _clean_failure_type(failure_type)
         fallback = _clean_failure_type(fallback_reason)
         text = " ".join(str(item or "") for item in [error_summary, action, target, explicit, fallback, details])
-        if explicit in {"protected_step_blocked_by_login_failure", "auth_state_not_logged_in"}:
+        if explicit in {
+            "protected_step_blocked_by_auth_challenge",
+            "login_captcha_required",
+            "authentication_challenge_required",
+            "protected_step_blocked_by_login_failure",
+            "auth_state_not_logged_in",
+        }:
             return explicit
         detected = _detect_from_text(text)
         if detected in {
+            "login_captcha_required",
+            "authentication_challenge_required",
+            "protected_step_blocked_by_auth_challenge",
             "login_failed",
             "authentication_failed",
             "protected_step_blocked_by_login_failure",
@@ -308,6 +336,33 @@ def _clean_failure_type(value: str | None) -> str | None:
 def _detect_from_text(text: str) -> str | None:
     lower = text.lower()
     patterns = [
+        ("login_captcha_required", [
+            "login_captcha_required",
+            "验证码",
+            "输入验证码",
+            "图形验证码",
+            "校验码",
+            "动态码",
+            "短信验证码",
+            "手机验证码",
+            "认证码",
+            "二次认证",
+            "安全验证",
+            "滑块验证",
+            "请输入验证码",
+            "captcha",
+            "verification code",
+            "security code",
+            "otp",
+            "one-time password",
+            "two-factor",
+            "two factor",
+            "authentication code",
+            "code scanning authentication",
+            "scanning authentication",
+        ]),
+        ("authentication_challenge_required", ["authentication_challenge_required"]),
+        ("protected_step_blocked_by_auth_challenge", ["protected_step_blocked_by_auth_challenge"]),
         ("login_failed", [
             "login_failed",
             "登录失败",
@@ -415,7 +470,7 @@ def _infer_from_action(action: str, text: str) -> str:
 
 
 def _category(failure_type: str) -> str:
-    if failure_type.startswith(("login_", "auth_", "authentication_")):
+    if failure_type.startswith(("login_", "auth_", "authentication_", "protected_step_blocked_by_auth")):
         return "authentication"
     if failure_type.startswith(("menu_", "navigation_")):
         return "navigation"
@@ -442,6 +497,9 @@ def _category(failure_type: str) -> str:
 
 def _summary(failure_type: str, *, target: str | None, error_summary: str | None) -> str:
     labels = {
+        "login_captcha_required": "登录触发验证码或二次认证，未进入目标系统。",
+        "authentication_challenge_required": "认证流程需要人工验证。",
+        "protected_step_blocked_by_auth_challenge": "验证码或二次认证导致后续业务步骤已阻断。",
         "login_failed": "登录失败，未进入目标系统。",
         "authentication_failed": "认证失败，未进入目标系统。",
         "protected_step_blocked_by_login_failure": "登录失败导致后续业务步骤已阻断。",
@@ -481,6 +539,8 @@ def _root_cause(failure_type: str, details: dict[str, Any] | None) -> str | None
             return str(auth_state["failureType"])
     if failure_type == "protected_step_blocked_by_login_failure":
         return "login_failed"
+    if failure_type in {"protected_step_blocked_by_auth_challenge", "login_captcha_required"}:
+        return "authentication_challenge_required"
     return None
 
 

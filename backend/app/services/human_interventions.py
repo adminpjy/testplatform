@@ -238,6 +238,25 @@ def _build_intervention_plan(user_instruction: str, *, run: TestRun, step: TestS
     text = user_instruction.strip()
     steps: list[dict[str, Any]] = []
 
+    if _is_auth_challenge_context(text, step):
+        steps = [
+            {
+                "action": "wait",
+                "value": "1000",
+                "reason": "等待人工完成验证码、OTP 或扫码认证后的页面状态稳定。",
+            },
+            {
+                "action": "retry_step",
+                "target": str(step.step_id or step.id),
+                "reason": "用户完成人工认证后继续检测登录状态，再决定是否恢复后续步骤。",
+            },
+        ]
+        return InterventionPlan(
+            summary="当前登录需要验证码或二次认证，请人工完成验证码输入或扫码认证。完成后点击继续检测登录状态。",
+            steps=steps,
+            safety_notes=["不会尝试识别、破解或绕过验证码；仅记录人工完成认证后的继续检测动作。"],
+        )
+
     if "继续访问" in text:
         steps.append({"action": "click", "target": "继续访问", "reason": "用户明确要求先点击继续访问。"})
     elif "继续" in text:
@@ -271,6 +290,34 @@ def _build_intervention_plan(user_instruction: str, *, run: TestRun, step: TestS
 def _asks_to_retry(text: str) -> bool:
     retry_words = ["重试", "再执行", "重新执行", "继续执行", "重跑", "再试", "原步骤"]
     return any(word in text for word in retry_words)
+
+
+def _is_auth_challenge_context(text: str, step: TestStepRun) -> bool:
+    combined = " ".join(
+        [
+            text,
+            str(step.error_summary or ""),
+            str(step.action or ""),
+            str(step.target or ""),
+        ]
+    ).lower()
+    return any(
+        token in combined
+        for token in [
+            "login_captcha_required",
+            "authentication_challenge_required",
+            "protected_step_blocked_by_auth_challenge",
+            "验证码",
+            "校验码",
+            "二次认证",
+            "扫码",
+            "captcha",
+            "verification code",
+            "otp",
+            "one-time password",
+            "code scanning authentication",
+        ]
+    )
 
 
 def _execute_plan_step_summary(step) -> dict[str, Any]:
