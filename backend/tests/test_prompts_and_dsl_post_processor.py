@@ -98,3 +98,14 @@ def test_prompt_metadata_is_attached_to_plan_request() -> None:
     request = NaturalLanguageParser().build_plan_request(payload)
     assert request.prompt_key == "test_dsl_generation"
     assert request.prompt_version == "1.0.0"
+
+
+def test_connectivity_goal_is_ready_when_base_url_is_provided() -> None:
+    payload = NaturalLanguageTestRequest(
+        instruction="打开真实系统入口，确认页面可访问",
+        base_url="https://work.example.test/health",
+        stream=True,
+    )
+    result = NaturalLanguageParser(provider=MockLLMProvider()).analyze(payload)
+    assert result.readyToExecute is True
+    assert result.missingFields == []

@@ -176,6 +176,11 @@ class NaturalLanguageParser:
         result.assumptions = list(dict.fromkeys(result.assumptions))
         if payload is not None and NaturalLanguageParser._is_todo_dialog_exploration(payload):
             result = NaturalLanguageParser._downgrade_exploratory_questions(result, payload)
+        if payload is not None and (
+            NaturalLanguageParser._is_connectivity_goal(payload)
+            or NaturalLanguageParser._looks_like_low_risk_connectivity_check(result, payload)
+        ):
+            result = NaturalLanguageParser._accept_connectivity_goal(result, payload)
         if result.readyToExecute and result.missingFields:
             result.readyToExecute = False
         if not result.readyToExecute and not result.clarifyingQuestions:
@@ -259,6 +264,46 @@ class NaturalLanguageParser:
     @staticmethod
     def _has_base_url(payload: NaturalLanguageTestRequest) -> bool:
         return bool(payload.base_url or re.search(r"https?://[^\s，,。；;]+", payload.instruction or ""))
+
+    @staticmethod
+    def _is_connectivity_goal(payload: NaturalLanguageTestRequest) -> bool:
+        text = str(payload.instruction or "")
+        if not NaturalLanguageParser._has_base_url(payload) or any(token in text for token in ["登录", "账号", "密码"]):
+            return False
+        return any(token in text for token in ["可访问", "连通", "打开", "入口"]) and any(
+            token in text for token in ["确认", "验证", "检查"]
+        )
+
+    @staticmethod
+    def _looks_like_low_risk_connectivity_check(result: AnalyzeResult, payload: NaturalLanguageTestRequest) -> bool:
+        if not NaturalLanguageParser._has_base_url(payload):
+            return False
+        text = str(payload.instruction or "")
+        if any(token in text for token in ["登录", "账号", "密码", "查询", "搜索", "新增", "修改", "删除", "审批", "上传", "填写", "选择"]):
+            return False
+        return result.riskLevel == "low" and set(result.missingFields).issubset({"expectedResult"})
+
+    @staticmethod
+    def _accept_connectivity_goal(result: AnalyzeResult, payload: NaturalLanguageTestRequest) -> AnalyzeResult:
+        non_blocking_fields = {"expectedResult", "credentials"}
+        result.missingFields = [item for item in result.missingFields if item not in non_blocking_fields]
+        result.clarifyingQuestions = [
+            item
+            for item in result.clarifyingQuestions
+            if not any(token in str(item) for token in ["账号", "验证的页面文本", "业务结果"])
+        ]
+        result.assumptions = list(
+            dict.fromkeys([*result.assumptions, "该任务只验证入口地址可访问，不执行登录或写操作。"])
+        )
+        result.understoodGoal = result.understoodGoal or "验证被测系统入口可访问"
+        result.normalizedInstruction = result.normalizedInstruction or NaturalLanguageParser._normalize_instruction(
+            payload.instruction,
+            str(payload.base_url or NaturalLanguageParser._extract_url(payload.instruction) or ""),
+        )
+        if not result.missingFields:
+            result.readyToExecute = True
+            result.confidence = max(result.confidence, 0.82)
+        return result
 
     def _default_todo_dialog_dsl(
         self,

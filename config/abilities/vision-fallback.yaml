@@ -1,0 +1,15 @@
+rule_type: vision_fallback
+description: Optional visual fallback for locator and assertion recovery.
+managed_by: database_seed
+operation_intents:
+  - handle_dialog
+  - assert_result
+failure_patterns:
+  - vision_fallback_not_configured
+default_structure:
+  match_config: {}
+  action_config:
+    optional_for_dom_navigation: true
+  success_criteria: []
+  fallback_strategies: []
+  recovery_strategies: []

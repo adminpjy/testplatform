@@ -17,6 +17,11 @@ def ensure_base_ability_rules(db: Session) -> None:
                 existing.source = "builtin"
                 existing.status = "active"
                 existing.production_enabled = True
+                existing.failure_patterns_json = rule_data.get("failure_patterns_json")
+                existing.recovery_strategies_json = rule_data.get("recovery_strategies_json")
+                existing.auto_handle = bool(rule_data.get("auto_handle", False))
+                existing.requires_human_confirmation = bool(rule_data.get("requires_human_confirmation", False))
+                existing.version = str(rule_data.get("version") or "1.0.0")
                 db.add(existing)
             continue
         db.add(AbilityRule(**rule_data))

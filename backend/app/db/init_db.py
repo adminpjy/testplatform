@@ -27,6 +27,14 @@ def ensure_compatible_columns() -> None:
         },
         "ability_knowledge": {
             "system_id": "INTEGER",
+            "evidence_json": "JSON",
+        },
+        "ability_rules": {
+            "failure_patterns_json": "JSON",
+            "recovery_strategies_json": "JSON",
+            "auto_handle": "BOOLEAN DEFAULT FALSE NOT NULL",
+            "requires_human_confirmation": "BOOLEAN DEFAULT FALSE NOT NULL",
+            "version": "VARCHAR(32) DEFAULT '1.0.0' NOT NULL",
         },
     }
 

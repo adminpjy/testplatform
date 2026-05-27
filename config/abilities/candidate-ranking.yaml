@@ -1,0 +1,17 @@
+rule_type: candidate_ranking
+description: Rank competing page element candidates by business intent and page semantics.
+managed_by: database_seed
+operation_intents:
+  - fill_field
+  - click_table_row_action
+  - approval_pass
+  - view_flow
+failure_patterns:
+  - click_no_effect
+  - assertion_not_met
+default_structure:
+  match_config: {}
+  action_config: {}
+  success_criteria: []
+  fallback_strategies: []
+  recovery_strategies: []

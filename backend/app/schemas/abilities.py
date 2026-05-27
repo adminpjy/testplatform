@@ -15,8 +15,13 @@ class AbilityRuleBase(BaseModel):
     action_config_json: dict[str, Any] | None = None
     success_criteria_json: dict[str, Any] | None = None
     fallback_strategies_json: dict[str, Any] | None = None
+    failure_patterns_json: dict[str, Any] | None = None
+    recovery_strategies_json: dict[str, Any] | None = None
     risk_level: str = Field(default="medium", max_length=32)
     confidence_threshold: float = Field(default=0.8, ge=0.0, le=1.0)
+    auto_handle: bool = False
+    requires_human_confirmation: bool = False
+    version: str = Field(default="1.0.0", max_length=32)
     source: str | None = Field(default=None, max_length=128)
     production_enabled: bool = False
 
@@ -36,8 +41,13 @@ class AbilityRuleUpdate(BaseModel):
     action_config_json: dict[str, Any] | None = None
     success_criteria_json: dict[str, Any] | None = None
     fallback_strategies_json: dict[str, Any] | None = None
+    failure_patterns_json: dict[str, Any] | None = None
+    recovery_strategies_json: dict[str, Any] | None = None
     risk_level: str | None = Field(default=None, max_length=32)
     confidence_threshold: float | None = Field(default=None, ge=0.0, le=1.0)
+    auto_handle: bool | None = None
+    requires_human_confirmation: bool | None = None
+    version: str | None = Field(default=None, max_length=32)
     source: str | None = Field(default=None, max_length=128)
     production_enabled: bool | None = None
 
@@ -62,6 +72,7 @@ class AbilityKnowledgeRead(BaseModel):
     success_locator_json: dict[str, Any] | None = None
     action_path_json: dict[str, Any] | None = None
     rejected_candidates_json: dict[str, Any] | None = None
+    evidence_json: dict[str, Any] | None = None
     confidence: float | None = None
     success_count: int
     failure_count: int

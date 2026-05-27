@@ -1,0 +1,14 @@
+rule_type: table_detection
+description: Detect MIS list and grid structures, including empty table states.
+managed_by: database_seed
+operation_intents:
+  - query_list
+failure_patterns:
+  - table_not_found
+  - table_no_data_rows
+default_structure:
+  match_config: {}
+  action_config: {}
+  success_criteria: []
+  fallback_strategies: []
+  recovery_strategies: []

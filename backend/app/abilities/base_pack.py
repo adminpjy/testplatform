@@ -1,7 +1,7 @@
 from typing import Any
 
 
-BASE_ABILITY_PACK_SOURCE = "mis_base_ability_pack_v1"
+BASE_ABILITY_PACK_SOURCE = "builtin"
 
 
 def _rule(
@@ -23,7 +23,11 @@ def _rule(
     threshold: float = 0.45,
     negative_policy: str = "penalize",
     source: str | None = None,
+    failure: list[str] | None = None,
+    recovery: list[str] | None = None,
 ) -> dict[str, Any]:
+    resolved_fallback = fallback or ["request_human_intervention"]
+    resolved_action = action or {"business_target": intent}
     return {
         "rule_code": code,
         "rule_name": name,
@@ -39,11 +43,16 @@ def _rule(
             "page_signals": page_signals or [],
             "negative_policy": negative_policy,
         },
-        "action_config_json": action or {"business_target": intent},
+        "action_config_json": resolved_action,
         "success_criteria_json": {"criteria": success or []},
-        "fallback_strategies_json": {"strategies": fallback or ["request_human_intervention"]},
+        "fallback_strategies_json": {"strategies": resolved_fallback},
+        "failure_patterns_json": {"patterns": failure or []},
+        "recovery_strategies_json": {"strategies": recovery or resolved_fallback},
         "risk_level": risk,
         "confidence_threshold": threshold,
+        "auto_handle": risk == "low",
+        "requires_human_confirmation": risk == "high" or bool(resolved_action.get("requires_human")),
+        "version": "1.0.0",
         "source": source or BASE_ABILITY_PACK_SOURCE,
         "production_enabled": True,
     }
@@ -511,7 +520,10 @@ def _structured_rule(
     fallback: list[str] | None = None,
     risk: str = "low",
     threshold: float = 0.65,
+    failure: list[str] | None = None,
+    recovery: list[str] | None = None,
 ) -> dict[str, Any]:
+    resolved_fallback = fallback or ["request_human_intervention"]
     return {
         "rule_code": code,
         "rule_name": name,
@@ -522,9 +534,14 @@ def _structured_rule(
         "match_config_json": match,
         "action_config_json": action,
         "success_criteria_json": {"criteria": success},
-        "fallback_strategies_json": {"strategies": fallback or ["request_human_intervention"]},
+        "fallback_strategies_json": {"strategies": resolved_fallback},
+        "failure_patterns_json": {"patterns": failure or []},
+        "recovery_strategies_json": {"strategies": recovery or resolved_fallback},
         "risk_level": risk,
         "confidence_threshold": threshold,
+        "auto_handle": risk == "low",
+        "requires_human_confirmation": risk == "high" or bool(action.get("requires_human")),
+        "version": "1.0.0",
         "source": BASE_ABILITY_PACK_SOURCE,
         "production_enabled": True,
     }
@@ -784,6 +801,102 @@ BASE_ABILITY_RULES.extend(
             success=["attachment_list_updated"],
             fallback=["request_file_path", "human_intervention"],
             risk="medium",
+        ),
+        _structured_rule(
+            code="TABLE-DETECTION-GRID-v1",
+            name="通用数据表格识别",
+            rule_type="table_detection",
+            intent="query_list",
+            priority=70,
+            match={
+                "tableSignals": ["table", "grid", "list", "ant-table", "el-table", "tbody"],
+                "headerSignals": ["表头", "列名", "操作"],
+                "ignoreHidden": True,
+            },
+            action={"detectHeaders": True, "detectRows": True, "detectPagination": True, "captureEvidence": True},
+            success=["table_visible", "headers_detected"],
+            fallback=["wait_for_table", "try_virtual_grid", "request_human_intervention"],
+            failure=["table_not_found"],
+            recovery=["wait_for_page_ready", "retry_table_detection"],
+        ),
+        _structured_rule(
+            code="TABLE-DETECTION-EMPTY-v1",
+            name="空列表状态识别",
+            rule_type="table_detection",
+            intent="query_list",
+            priority=90,
+            match={
+                "emptySignals": ["暂无数据", "无数据", "没有数据", "No Data", "empty"],
+                "tableSignals": ["table", "grid", "list"],
+            },
+            action={"detectEmptyState": True, "doNotTreatAsLocatorFailure": True},
+            success=["empty_state_detected"],
+            fallback=["record_empty_result", "continue_when_allowed"],
+            failure=["table_no_data_rows"],
+        ),
+        _structured_rule(
+            code="TABLE-ROW-ACTION-COMMON-v1",
+            name="表格行内操作识别",
+            rule_type="table_row_action",
+            intent="click_table_row_action",
+            priority=70,
+            match={
+                "actionTexts": ["详情", "查看", "编辑", "修改", "删除", "审批", "审核", "办理", "处理"],
+                "searchWithinRow": True,
+                "avoidTexts": ["审批流程", "审批记录", "历史记录"],
+            },
+            action={"locateRowFirst": True, "clickActionInRow": True, "verifyEffect": True},
+            success=["row_action_clicked", "dialog_or_page_changed"],
+            fallback=["try_row_link", "try_more_action_menu", "llm_disambiguation"],
+            failure=["table_no_action_found", "click_no_effect"],
+            recovery=["reobserve_table", "retry_row_action"],
+        ),
+        _structured_rule(
+            code="TABLE-ROW-LOOP-v1",
+            name="表格行循环处理",
+            rule_type="table_row_action",
+            intent="process_table_rows",
+            priority=80,
+            match={
+                "loopSources": ["visible_rows", "pagination", "query_result"],
+                "stopWhen": ["all_rows_processed", "maxRowsReached", "noData"],
+            },
+            action={"refetchRowsEachIteration": True, "handleDialogAfterRowClick": True, "recordProcessedRows": True},
+            success=["all_rows_processed", "loop_summary_recorded"],
+            fallback=["skip_failed_row_when_allowed", "request_human_intervention"],
+            failure=["table_row_loop_failed", "table_target_row_not_found"],
+            recovery=["retry_current_row", "return_to_list_page"],
+        ),
+        _structured_rule(
+            code="CANDIDATE-RANK-BUSINESS-ACTION-v1",
+            name="业务动作候选排序",
+            rule_type="candidate_ranking",
+            intent="click_table_row_action",
+            priority=60,
+            match={
+                "preferExactBusinessAction": True,
+                "positiveTexts": ["审批", "审核", "办理", "处理", "通过", "同意", "详情", "编辑"],
+                "negativeTexts": ["流程图", "历史", "记录", "帮助", "说明"],
+            },
+            action={"rankCandidates": True, "penalizeNegativeTexts": True, "requireMinimumConfidence": True},
+            success=["candidate_ranked_above_threshold"],
+            fallback=["ambiguity_resolver", "llm_disambiguation", "human_intervention"],
+        ),
+        _structured_rule(
+            code="CANDIDATE-RANK-FORM-FIELD-v1",
+            name="表单字段候选排序",
+            rule_type="candidate_ranking",
+            intent="fill_field",
+            priority=75,
+            match={
+                "matchBy": ["label", "placeholder", "aria-label", "nearbyText", "formItemLabel"],
+                "preferEditable": True,
+                "ignoreHidden": True,
+                "ignoreReadonly": True,
+            },
+            action={"rankCandidates": True, "preferNearestLabel": True, "verifyEditable": True},
+            success=["field_candidate_ranked_above_threshold"],
+            fallback=["page_semantic", "llm_disambiguation", "request_clarification"],
         ),
     ]
 )

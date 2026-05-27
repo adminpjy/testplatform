@@ -101,6 +101,11 @@ $requiredPaths = @(
   "config/abilities/tree-selector.yaml",
   "config/abilities/dialog-selector.yaml",
   "config/abilities/file-upload.yaml",
+  "config/abilities/table-detection.yaml",
+  "config/abilities/table-row-action.yaml",
+  "config/abilities/recovery-policy.yaml",
+  "config/abilities/vision-fallback.yaml",
+  "config/abilities/candidate-ranking.yaml",
   "config/prompts/prompt-registry.yaml",
   "config/prompts/llm-analysis.yaml",
   "config/prompts/dsl-generation.yaml",
@@ -227,6 +232,8 @@ try {
     "global_interruption",
     "navigation",
     "query",
+    "table_detection",
+    "table_row_action",
     "create",
     "update",
     "delete",
@@ -246,7 +253,8 @@ try {
     "dialog_handler",
     "risk_policy",
     "vision_fallback",
-    "recovery_policy"
+    "recovery_policy",
+    "candidate_ranking"
   )) {
     $typeCount = @($rules | Where-Object { $_.rule_type -eq $ruleType }).Count
     Assert-True ($typeCount -ge 2) "Rule type '$ruleType' has fewer than two enabled rules."

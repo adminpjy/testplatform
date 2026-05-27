@@ -1,0 +1,17 @@
+rule_type: recovery_policy
+description: Recover from loading, stale page, click, dialog, and navigation failures.
+managed_by: database_seed
+operation_intents:
+  - handle_dialog
+  - assert_result
+failure_patterns:
+  - click_no_effect
+  - blocking_dialog_detected
+  - navigation_goal_not_reached
+  - assertion_not_met
+default_structure:
+  match_config: {}
+  action_config: {}
+  success_criteria: []
+  fallback_strategies: []
+  recovery_strategies: []

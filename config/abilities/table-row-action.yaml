@@ -1,0 +1,18 @@
+rule_type: table_row_action
+description: Locate and execute actions inside MIS table rows.
+managed_by: database_seed
+operation_intents:
+  - open_table_row
+  - process_table_rows
+  - click_table_row_action
+failure_patterns:
+  - table_target_row_not_found
+  - table_no_action_found
+  - table_row_loop_failed
+  - click_no_effect
+default_structure:
+  match_config: {}
+  action_config: {}
+  success_criteria: []
+  fallback_strategies: []
+  recovery_strategies: []
