@@ -123,6 +123,7 @@ BASE_ABILITY_RULES: list[dict[str, Any]] = [
         positive=["搜索", "打开", "进入"],
         targets=["菜单", "搜索框", "功能名称"],
         success=["目标菜单高亮", "目标页面标题出现"],
+        source="builtin",
     ),
     _rule(
         code="NAV-MENU-PATH-v1",
