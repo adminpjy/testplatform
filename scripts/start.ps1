@@ -24,10 +24,16 @@ function Find-AvailablePort {
   param([int]$PreferredPort)
 
   $port = $PreferredPort
-  while (Get-NetTCPConnection -LocalPort $port -ErrorAction SilentlyContinue) {
+  while (Test-PortListening -Port $port) {
     $port++
   }
   return $port
+}
+
+function Test-PortListening {
+  param([int]$Port)
+
+  return $null -ne (Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue)
 }
 
 function Start-Backend {
@@ -90,7 +96,7 @@ function Start-Frontend {
   if ([string]::IsNullOrWhiteSpace($frontendPort)) {
     $frontendPort = "5173"
   }
-  if (Get-NetTCPConnection -LocalPort ([int]$frontendPort) -ErrorAction SilentlyContinue) {
+  if (Test-PortListening -Port ([int]$frontendPort)) {
     if ($hasExplicitPort) {
       Write-Error "Frontend port $frontendPort is already in use."
     }
