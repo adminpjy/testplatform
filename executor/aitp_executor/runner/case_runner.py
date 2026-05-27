@@ -182,6 +182,7 @@ class CaseRunner:
                 "page_observer",
                 {"step_number": step_number, "action": action, "target": target},
             )
+            self._write_observation_debug(page, writer, step_number, action, target)
             self._emit_runtime(
                 writer,
                 "progress",
@@ -444,6 +445,39 @@ class CaseRunner:
         writer.append_jsonl("runtime-stream.jsonl", event)
         if self.event_sink:
             self.event_sink(event)
+
+    def _write_observation_debug(
+        self,
+        page: Any,
+        writer: ArtifactWriter,
+        step_number: int,
+        action: str,
+        target: str,
+    ) -> None:
+        try:
+            observation = self.element_locator.observer.observe(page)
+            data = observation.as_dict()
+            writer.append_jsonl(
+                "locator-debug.jsonl",
+                {
+                    "step_number": step_number,
+                    "phase": "page_observation",
+                    "action": action,
+                    "target": target,
+                    "observation": _compact_observation(data),
+                },
+            )
+        except Exception as exc:
+            writer.append_jsonl(
+                "locator-debug.jsonl",
+                {
+                    "step_number": step_number,
+                    "phase": "page_observation",
+                    "action": action,
+                    "target": target,
+                    "error": str(exc),
+                },
+            )
 
     def _execute_action(
         self,
@@ -999,6 +1033,74 @@ def _clean_runtime_segment(segment: str, index: int) -> str:
     if index == 0:
         cleaned = re.sub(r"^(进入|打开|点击|导航到|访问|前往|切换到|跳转到)", "", cleaned).strip()
     return cleaned
+
+
+def _compact_observation(data: dict[str, Any]) -> dict[str, Any]:
+    compact: dict[str, Any] = {
+        "url": data.get("url"),
+        "title": data.get("title"),
+        "pageType": data.get("pageType"),
+        "visibleTexts": (data.get("visibleTexts") or [])[:30],
+    }
+    for key in [
+        "menus",
+        "buttons",
+        "links",
+        "inputs",
+        "textareas",
+        "selects",
+        "comboboxes",
+        "radios",
+        "checkboxes",
+        "datePickers",
+        "treeSelectors",
+        "orgSelectors",
+        "personSelectors",
+        "fileUploads",
+        "tables",
+        "dialogs",
+        "drawers",
+        "tabs",
+        "breadcrumbs",
+        "toasts",
+        "loadingIndicators",
+        "iframes",
+    ]:
+        compact[key] = _compact_items(data.get(key) or [], limit=12)
+    return compact
+
+
+def _compact_items(items: list[dict[str, Any]], *, limit: int) -> list[dict[str, Any]]:
+    compacted = []
+    for item in items[:limit]:
+        compacted.append(
+            {
+                key: item.get(key)
+                for key in [
+                    "elementRef",
+                    "text",
+                    "label",
+                    "controlType",
+                    "dialogType",
+                    "title",
+                    "area",
+                    "level",
+                    "parentText",
+                    "required",
+                    "readonly",
+                    "visible",
+                    "enabled",
+                    "headers",
+                    "emptyState",
+                    "frameIndex",
+                    "src",
+                    "accessible",
+                    "selector",
+                ]
+                if key in item
+            }
+        )
+    return compacted
 
 
 def _error_summary(exc: Exception) -> str:
