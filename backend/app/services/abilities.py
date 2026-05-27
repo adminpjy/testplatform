@@ -14,14 +14,8 @@ def ensure_base_ability_rules(db: Session) -> None:
         existing = existing_rules.get(rule_data["rule_code"])
         if existing is not None:
             if rule_data.get("source") == "builtin":
-                existing.source = "builtin"
-                existing.status = "active"
-                existing.production_enabled = True
-                existing.failure_patterns_json = rule_data.get("failure_patterns_json")
-                existing.recovery_strategies_json = rule_data.get("recovery_strategies_json")
-                existing.auto_handle = bool(rule_data.get("auto_handle", False))
-                existing.requires_human_confirmation = bool(rule_data.get("requires_human_confirmation", False))
-                existing.version = str(rule_data.get("version") or "1.0.0")
+                for field_name, value in rule_data.items():
+                    setattr(existing, field_name, value)
                 db.add(existing)
             continue
         db.add(AbilityRule(**rule_data))

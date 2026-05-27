@@ -1,5 +1,7 @@
 from typing import Any
 
+from app.abilities.common_operation_pack import COMMON_OPERATION_RULES
+
 
 BASE_ABILITY_PACK_SOURCE = "builtin"
 
@@ -140,15 +142,26 @@ BASE_ABILITY_RULES: list[dict[str, Any]] = [
         rule_type="navigation",
         intent="识别并执行一级、二级、三级菜单路径",
         priority=55,
-        triggers=["工作台/我的待办", "系统管理/用户管理", "审批管理/待审批", "菜单路径"],
+        triggers=["工作台/我的待办", "系统管理/用户管理", "审批管理/待审批", "基础数据/组织机构", "菜单路径"],
         positive=["进入", "打开", "导航", "点击"],
         targets=["左侧菜单", "顶部导航", "菜单子项"],
         success=["目标页面标题出现", "目标菜单高亮", "面包屑包含完整路径"],
         action={
             "business_target": "按菜单路径进入目标页面",
             "path_separators": ["/", ">", "-", "→", "\\"],
-            "strategies": ["already_on_target_page", "left_menu_path", "top_nav_path", "dashboard_card", "menu_search"],
+            "strategies": [
+                "already_on_target_page",
+                "left_menu_path",
+                "top_nav_path",
+                "dashboard_card",
+                "menu_search",
+                "iframe_menu",
+                "llm_disambiguation",
+                "vision_fallback_optional",
+            ],
         },
+        failure=["menu_parent_not_found", "menu_child_not_found", "menu_expand_failed", "navigation_goal_not_reached"],
+        recovery=["reobserve_page", "expand_parent_menu", "try_menu_search", "try_iframe_menu"],
         source="builtin",
     ),
     _rule(
@@ -295,13 +308,16 @@ BASE_ABILITY_RULES: list[dict[str, Any]] = [
     _rule(
         code="TABLE-PAGINATION-v1",
         name="表格翻页查找",
-        rule_type="table_operation",
-        intent="通过翻页定位表格数据",
+        rule_type="table_detection",
+        intent="detect_table_pagination",
         priority=120,
         triggers=["下一页", "翻页", "分页", "找记录"],
         positive=["下一页", "上一页", "跳页", "刷新"],
         targets=["分页器", "表格"],
-        success=["目标记录出现", "页码变化"],
+        success=["分页器可见", "页码可识别", "总条数可识别"],
+        action={"business_target": "识别分页器", "detectPagination": True, "paginationSignals": ["下一页", "上一页", "总条数", "页码"]},
+        failure=["table_not_found"],
+        recovery=["reobserve_page", "try_virtual_grid"],
     ),
     _rule(
         code="DETAIL-OPEN-v1",
@@ -900,3 +916,5 @@ BASE_ABILITY_RULES.extend(
         ),
     ]
 )
+
+BASE_ABILITY_RULES.extend(COMMON_OPERATION_RULES)
