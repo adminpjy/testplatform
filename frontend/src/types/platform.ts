@@ -274,12 +274,40 @@ export interface AbilityRule {
   action_config_json: Record<string, unknown> | null;
   success_criteria_json: Record<string, unknown> | null;
   fallback_strategies_json: Record<string, unknown> | null;
+  failure_patterns_json: Record<string, unknown> | null;
+  recovery_strategies_json: Record<string, unknown> | null;
   risk_level: string;
   confidence_threshold: number;
+  auto_handle?: boolean;
+  requires_human_confirmation?: boolean;
+  version?: string;
   source: string | null;
   production_enabled: boolean;
   created_at: string;
   updated_at: string;
+}
+
+export interface AbilityOperationOverview {
+  key: string;
+  label: string;
+  ruleTypes: string[];
+  ruleCount: number;
+  activeCount: number;
+  recentHitCount: number;
+  recentFailureCount: number;
+}
+
+export interface AbilityStats {
+  operationOverview: AbilityOperationOverview[];
+  ruleTypeStats: Record<string, { total: number; active: number }>;
+  ruleHitCountsByType: Record<string, number>;
+  ruleHitCountsByCode: Record<string, number>;
+  failureTypeDistribution: Record<string, number>;
+  failureCountsByCategory: Record<string, number>;
+  humanInterventionCount: number;
+  ruleDraftCount: number;
+  visionFallbackCount: number;
+  llmDecisionCount: number;
 }
 
 export interface AbilityKnowledge {

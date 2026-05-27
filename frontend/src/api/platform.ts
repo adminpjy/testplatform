@@ -1,6 +1,7 @@
 import { apiUrl, getJson, postJson, putJson } from "./client";
 import type {
   AbilityRule,
+  AbilityStats,
   AbilityKnowledge,
   AnalyzeResult,
   FailureSample,
@@ -182,8 +183,20 @@ export function enableRuleDraft(draftId: number): Promise<AbilityRule> {
   return postJson<AbilityRule>(`/api/rule-drafts/${draftId}/enable`, {});
 }
 
-export function getAbilityRules(): Promise<AbilityRule[]> {
-  return getJson<AbilityRule[]>("/api/abilities/rules?production_enabled=true");
+export function getAbilityRules(filters: { rule_type?: string; production_enabled?: boolean } = {}): Promise<AbilityRule[]> {
+  const params = new URLSearchParams();
+  if (filters.rule_type) params.set("rule_type", filters.rule_type);
+  if (filters.production_enabled !== undefined) params.set("production_enabled", String(filters.production_enabled));
+  const suffix = params.toString() ? `?${params.toString()}` : "";
+  return getJson<AbilityRule[]>(`/api/abilities/rules${suffix}`);
+}
+
+export function updateAbilityRule(ruleId: number, payload: Partial<AbilityRule>): Promise<AbilityRule> {
+  return putJson<AbilityRule>(`/api/abilities/rules/${ruleId}`, payload);
+}
+
+export function getAbilityStats(): Promise<AbilityStats> {
+  return getJson<AbilityStats>("/api/abilities/stats");
 }
 
 export function getAbilityKnowledge(): Promise<AbilityKnowledge[]> {
