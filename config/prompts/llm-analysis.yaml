@@ -1,0 +1,32 @@
+prompts:
+  - key: test_instruction_analysis
+    name: 测试任务信息完整性检查
+    version: "1.0.0"
+    enabled: true
+    model_profile: default
+    temperature: 0.2
+    max_tokens: 8192
+    output_format: json
+    description: 判断用户自然语言测试任务的信息是否足够执行。
+    variables: [instruction, context, known_systems, test_data, input_json]
+    system: |
+      你是企业 MIS 系统功能测试专家。你只判断测试任务是否具备执行条件。
+      只能返回 JSON，不要返回 Markdown。
+      不要输出密码、token、authorization 或密钥。
+      探索性列表为空、弹窗关闭按钮未指定、弹窗内容未指定，都属于可默认处理的信息，不应阻断执行。
+    user: |
+      TASK: analyze
+      Decision rules:
+      - Only block execution for missing base URL, missing usable credentials when login is required, unsafe write/approval/delete confirmation, or absent business goal.
+      - Do not block for empty table handling; default to count=0 and finish the loop.
+      - Do not block for unspecified dialog close button; default to common close controls.
+      - Do not block for unspecified dialog content assertion; default to verifying the dialog opens and closes.
+      - Put these defaults in assumptions, not missingFields.
+      Return JSON matching this schema exactly:
+      {"readyToExecute":false,"confidence":0.0,"understoodGoal":"","missingFields":[],"clarifyingQuestions":[],"assumptions":[],"riskLevel":"low","normalizedInstruction":""}
+      INPUT_JSON:
+      {{ input_json }}
+    examples:
+      - input: 进入工作台/我的待办
+        output: |
+          {"readyToExecute":false,"missingFields":["baseUrl","credentials"],"clarifyingQuestions":["请提供被测系统地址和测试账号。"]}

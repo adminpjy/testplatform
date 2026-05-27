@@ -2,6 +2,7 @@ import json
 import os
 import ssl
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 from urllib import request as urlrequest
 from urllib.parse import urlparse
@@ -29,21 +30,7 @@ class LLMElementResolver:
             return ResolverFallbackResult(status="llm_no_candidates", reason="No selector candidates were available.")
 
         try:
-            content = _call_llm(
-                {
-                    "task": "choose_element_selector",
-                    "instruction": "Choose exactly one selector from candidates, or null if none is safe.",
-                    "target": target,
-                    "action": action,
-                    "pageContext": {
-                        "url": page_context.get("url"),
-                        "title": page_context.get("title"),
-                        "visibleText": str(page_context.get("visible_text") or "")[:1800],
-                        "candidates": candidates[:8],
-                    },
-                    "responseSchema": {"selector": None, "confidence": 0.0, "reason": ""},
-                }
-            )
+            content = _call_llm(_element_payload(page_context, target, action, candidates))
             parsed = _extract_json_object(content)
             selector = parsed.get("selector")
             if selector and str(selector) in allowed_selectors:
@@ -63,16 +50,30 @@ def _configured_from_env() -> bool:
     return provider in {"openai", "openai-compatible", "openai_compatible"} and bool(os.getenv("TEST_LLM_BASE_URL")) and bool(os.getenv("TEST_LLM_API_KEY"))
 
 
+def _element_payload(page_context: dict[str, Any], target: str, action: str, candidates: list[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "task": "choose_element_selector",
+        "instruction": "Choose exactly one selector from candidates, or null if none is safe.",
+        "target": target,
+        "action": action,
+        "pageContext": {
+            "url": page_context.get("url"),
+            "title": page_context.get("title"),
+            "visibleText": str(page_context.get("visible_text") or "")[:1800],
+            "candidates": candidates[:8],
+        },
+        "responseSchema": {"selector": None, "confidence": 0.0, "reason": ""},
+    }
+
+
 def _call_llm(payload: dict[str, Any]) -> str:
     api_key = os.getenv("TEST_LLM_API_KEY", "")
+    system_prompt, user_prompt = _render_element_prompt(payload)
     body = {
         "model": os.getenv("TEST_LLM_MODEL", "DeepSeek-V4"),
         "messages": [
-            {
-                "role": "system",
-                "content": "You resolve browser element candidates for functional testing. Return strict JSON only.",
-            },
-            {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
         ],
         "temperature": 0,
         "stream": False,
@@ -91,6 +92,30 @@ def _call_llm(payload: dict[str, Any]) -> str:
     with urlrequest.urlopen(req, timeout=_int_env("TEST_LLM_TIMEOUT_SECONDS", 120), context=context) as response:
         response_body = json.loads(response.read().decode("utf-8"))
     return str(response_body["choices"][0]["message"]["content"])
+
+
+def _render_element_prompt(payload: dict[str, Any]) -> tuple[str, str]:
+    try:
+        from app.services.prompt_manager import get_prompt_manager, render_json
+
+        rendered = get_prompt_manager().render_prompt("llm_element_resolve", {"payload_json": render_json(payload)})
+        return rendered.system, rendered.user
+    except Exception:
+        return _render_element_prompt_from_yaml(payload)
+
+
+def _render_element_prompt_from_yaml(payload: dict[str, Any]) -> tuple[str, str]:
+    try:
+        import yaml
+
+        path = Path("config/prompts/element-location.yaml")
+        doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        prompt = next(item for item in doc.get("prompts") or [] if item.get("key") == "llm_element_resolve")
+        payload_json = json.dumps(payload, ensure_ascii=False)
+        return str(prompt.get("system") or ""), str(prompt.get("user") or "").replace("{{ payload_json }}", payload_json)
+    except Exception:
+        payload_json = json.dumps(payload, ensure_ascii=False)
+        return "Return strict JSON only.", payload_json
 
 
 def _completion_url(base_url: str) -> str:

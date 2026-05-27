@@ -300,6 +300,30 @@ export interface AbilityKnowledge {
   updated_at: string;
 }
 
+export interface PromptInfo {
+  key: string;
+  name: string;
+  version: string;
+  enabled: boolean;
+  model_profile: string;
+  temperature: number | null;
+  max_tokens: number | null;
+  output_format: string;
+  description: string | null;
+  variables: string[];
+  file: string;
+  system: string;
+  user: string;
+  examples?: unknown[];
+}
+
+export interface PromptPreview {
+  prompt_key: string;
+  prompt_version: string;
+  system: string;
+  user: string;
+}
+
 export interface SystemInfo {
   service: string;
   version: string;

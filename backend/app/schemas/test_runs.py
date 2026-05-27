@@ -28,6 +28,7 @@ ALLOWED_DSL_ACTIONS = {
     "summary_assert",
     "business_goal",
     "auto_fill_form",
+    "navigate_path",
 }
 
 

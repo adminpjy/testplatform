@@ -100,8 +100,13 @@ export function AnalysisTracePanel({
                 {dsl.steps.map((step, index) => (
                   <li key={`${step.action}-${step.target || index}`}>
                     <span>S{String(index + 1).padStart(3, "0")}</span>
-                    <strong>{String(step.action)}</strong>
-                    <em>{String(step.target || step.description || "")}</em>
+                    <strong>{step.action === "navigate_path" ? "菜单路径导航" : String(step.action)}</strong>
+                    <em>{step.action === "navigate_path" ? navigatePathSummary(step) : String(step.target || step.description || "")}</em>
+                    {step.action === "navigate_path" ? (
+                      <small>
+                        成功判断：{Array.isArray(step.successCriteria) ? step.successCriteria.map(String).join("；") : "页面出现目标菜单并完成导航"}
+                      </small>
+                    ) : null}
                   </li>
                 ))}
               </ol>
@@ -124,6 +129,11 @@ export function AnalysisTracePanel({
       </div>
     </section>
   );
+}
+
+function navigatePathSummary(step: Record<string, unknown>): string {
+  const segments = Array.isArray(step.pathSegments) ? step.pathSegments.map(String) : [];
+  return segments.length > 0 ? segments.join(" → ") : String(step.target || "");
 }
 
 function readableTitle(message: RuntimeMessage): string {

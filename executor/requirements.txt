@@ -2,3 +2,4 @@ playwright
 pydantic
 python-dotenv
 pytest
+PyYAML

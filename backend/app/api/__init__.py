@@ -5,6 +5,7 @@ from app.api.failure_samples import router as failure_samples_router
 from app.api.files import router as files_router
 from app.api.human_interventions import router as human_interventions_router
 from app.api.projects import router as projects_router
+from app.api.prompts import router as prompts_router
 from app.api.reports import router as reports_router
 from app.api.rule_drafts import router as rule_drafts_router
 from app.api.systems import router as systems_router
@@ -15,6 +16,7 @@ api_router = APIRouter()
 api_router.include_router(system_router)
 api_router.include_router(systems_router, prefix="/api/systems", tags=["systems"])
 api_router.include_router(projects_router, prefix="/api/projects", tags=["projects"])
+api_router.include_router(prompts_router, prefix="/api/prompts", tags=["prompts"])
 api_router.include_router(abilities_router, prefix="/api/abilities", tags=["abilities"])
 api_router.include_router(test_runs_router, prefix="/api/test-runs", tags=["test-runs"])
 api_router.include_router(failure_samples_router, prefix="/api/failure-samples", tags=["failure-samples"])

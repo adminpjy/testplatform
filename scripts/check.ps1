@@ -101,6 +101,18 @@ $requiredPaths = @(
   "config/abilities/tree-selector.yaml",
   "config/abilities/dialog-selector.yaml",
   "config/abilities/file-upload.yaml",
+  "config/prompts/prompt-registry.yaml",
+  "config/prompts/llm-analysis.yaml",
+  "config/prompts/dsl-generation.yaml",
+  "config/prompts/dsl-post-processing.yaml",
+  "config/prompts/navigation-path.yaml",
+  "config/prompts/element-location.yaml",
+  "config/prompts/action-resolution.yaml",
+  "config/prompts/vision-fallback.yaml",
+  "config/prompts/failure-analysis.yaml",
+  "config/prompts/human-intervention.yaml",
+  "config/prompts/rule-suggestion.yaml",
+  "config/prompts/form-autofill.yaml",
   "scripts/start.ps1",
   "scripts/stop.ps1",
   "scripts/check.ps1",
@@ -239,6 +251,24 @@ try {
     $typeCount = @($rules | Where-Object { $_.rule_type -eq $ruleType }).Count
     Assert-True ($typeCount -ge 2) "Rule type '$ruleType' has fewer than two enabled rules."
   }
+
+  $prompts = Invoke-RestMethod -Uri "$baseUrl/api/prompts" -TimeoutSec 10
+  Assert-True (@($prompts).Count -ge 11) "Prompt registry did not load expected prompts."
+  $dslPrompt = @($prompts | Where-Object { $_.key -eq "test_dsl_generation" })[0]
+  Assert-True ($null -ne $dslPrompt) "DSL generation prompt is missing."
+  Assert-True ($dslPrompt.version -eq "1.0.0") "DSL generation prompt version is unexpected."
+  $reloadResult = Invoke-JsonPost -Uri "$baseUrl/api/prompts/reload" -Body "{}" -TimeoutSec 10
+  Assert-True ($reloadResult.loaded -ge 11) "Prompt reload did not load expected prompts."
+  $promptPreviewPayload = @{
+    variables = @{
+      instruction = "进入工作台/我的待办"
+      allowed_actions = "open_url,navigate_path"
+      input_json = "{}"
+    }
+  } | ConvertTo-Json -Depth 8
+  $promptPreview = Invoke-JsonPost -Uri "$baseUrl/api/prompts/test_dsl_generation/preview" -Body $promptPreviewPayload -TimeoutSec 10
+  Assert-True ($promptPreview.prompt_key -eq "test_dsl_generation") "Prompt preview returned unexpected key."
+  Assert-True ($promptPreview.user.Contains("navigate_path")) "Prompt preview did not include menu path navigation guidance."
 
   $systemPayload = @{
     system_code = "CHECK-$backendPort"

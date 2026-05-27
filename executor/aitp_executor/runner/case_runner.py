@@ -9,6 +9,7 @@ from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from executor.aitp_executor.browser.provider_factory import create_sandbox_provider
 from executor.aitp_executor.browser.sandbox_provider import SandboxProvider
 from executor.aitp_executor.goal.goal_executor import GoalExecutor
+from executor.aitp_executor.goal.menu_path_navigator import NavigationPathError
 from executor.aitp_executor.locator.auto_form_filler import AutoFormFiller
 from executor.aitp_executor.locator.element_locator import ElementLocator
 from executor.aitp_executor.reports.artifact_writer import ArtifactWriter
@@ -29,6 +30,7 @@ class CaseRunner:
         self.event_sink = event_sink
 
     def run(self, *, run_code: str, dsl: dict[str, Any]) -> dict[str, Any]:
+        dsl = _normalize_runtime_dsl(dsl)
         writer = ArtifactWriter(run_code)
         report_writer = ReportWriter(writer)
         started_at = _utc_now()
@@ -151,7 +153,7 @@ class CaseRunner:
         started_at = _utc_now()
         action = str(step.get("action") or "")
         target = str(step.get("target") or step.get("selector") or "")
-        locatable_action = action in {"input", "click", "confirm_dialog", "navigate_menu", "select", "upload_file", "business_goal"}
+        locatable_action = action in {"input", "click", "confirm_dialog", "navigate_menu", "select", "upload_file", "business_goal", "navigate_path"}
         vision_requested = bool((dsl.get("settings") or {}).get("visionFallbackEnabled"))
         self._emit_runtime(
             writer,
@@ -161,7 +163,7 @@ class CaseRunner:
             "runner",
             {"step_number": step_number, "action": action, "target": target},
         )
-        if action == "business_goal":
+        if action in {"business_goal", "navigate_path"}:
             self._emit_runtime(
                 writer,
                 "progress",
@@ -203,7 +205,7 @@ class CaseRunner:
                 "element_locator",
                 {"step_number": step_number, "action": action, "target": target},
             )
-        if action in {"click", "confirm_dialog", "navigate_menu", "business_goal"}:
+        if action in {"click", "confirm_dialog", "navigate_menu", "business_goal", "navigate_path"}:
             self._emit_runtime(
                 writer,
                 "progress",
@@ -212,7 +214,7 @@ class CaseRunner:
                 "playwright",
                 {"step_number": step_number, "target": target},
             )
-        if action in {"wait_for_text", "assert_text_exists", "assert_text_not_exists", "assert_url_contains", "business_goal"}:
+        if action in {"wait_for_text", "assert_text_exists", "assert_text_not_exists", "assert_url_contains", "business_goal", "navigate_path"}:
             self._emit_runtime(
                 writer,
                 "progress",
@@ -471,6 +473,9 @@ class CaseRunner:
             return _locator_outcome(result)
 
         if action == "navigate_menu":
+            segments = _runtime_path_segments(step.get("pathSegments") or target)
+            if segments:
+                return self._execute_navigation_path(page, step, dsl, writer=writer, step_number=step_number)
             result = self.element_locator.locate(page, action="navigate_menu", target=str(target), step=step)
             _require_locator(result).click()
             return _locator_outcome(result)
@@ -568,7 +573,12 @@ class CaseRunner:
             row.get_by_role("button", name=action_name, exact=True).click()
             return _outcome("table_row_action_exact", f"{row_text}:{action_name}", 0.95, "table row action")
 
+        if action == "navigate_path":
+            return self._execute_navigation_path(page, step, dsl, writer=writer, step_number=step_number)
+
         if action == "business_goal":
+            if step.get("pathSegments"):
+                return self._execute_navigation_path(page, step, dsl, writer=writer, step_number=step_number)
             goal_step = dict(step)
             credentials = dict(dsl.get("credentials") or {})
             credentials.update(dict(step.get("credentials") or {}))
@@ -594,6 +604,46 @@ class CaseRunner:
             return self.goal_executor.execute(page, target=str(target), step=goal_step, execution_context=execution_context)
 
         raise ValueError(f"Unsupported DSL action: {action}")
+
+    def _execute_navigation_path(
+        self,
+        page: Any,
+        step: dict[str, Any],
+        dsl: dict[str, Any],
+        *,
+        writer: ArtifactWriter | None,
+        step_number: int | None,
+    ) -> dict[str, Any]:
+        target = str(step.get("target") or "")
+        segments = _runtime_path_segments(step.get("pathSegments") or target)
+        if len(segments) < 2:
+            raise RuntimeError("navigation_path_unresolved: pathSegments must contain at least two items.")
+        execution_context = {
+            "step_number": step_number,
+            "step_id": step.get("id") or step.get("step_id") or step_number,
+            "vision_requested": bool((dsl.get("settings") or {}).get("visionFallbackEnabled")),
+        }
+        if writer is not None:
+            execution_context["emit_runtime"] = (
+                lambda message_type, phase, content, method, metadata: self._emit_runtime(
+                    writer,
+                    message_type,
+                    phase,
+                    content,
+                    method,
+                    {"step_number": step_number, **(metadata or {})},
+                )
+            )
+            execution_context["append_debug"] = lambda event: writer.append_jsonl("locator-debug.jsonl", event)
+        result = self.goal_executor.menu_path_navigator.navigate_path(
+            page,
+            target or "/".join(segments),
+            segments,
+            execution_context=execution_context,
+        )
+        if result.status != "passed":
+            raise NavigationPathError(result)
+        return result.as_outcome()
 
     def _write_screenshot(self, page: Any, writer: ArtifactWriter, step_number: int) -> str | None:
         try:
@@ -860,6 +910,51 @@ def _redact_step(step: dict[str, Any]) -> dict[str, Any]:
             credentials["secret_ref"] = credentials.get("secret_ref", "redacted_password")
         redacted["credentials"] = credentials
     return redacted
+
+
+def _normalize_runtime_dsl(dsl: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(dsl)
+    steps = []
+    for step in normalized.get("steps") or []:
+        if not isinstance(step, dict):
+            continue
+        current = dict(step)
+        action = str(current.get("action") or "")
+        target = str(current.get("target") or "")
+        segments = _runtime_path_segments(current.get("pathSegments") or target)
+        if action == "navigate_path" and len(segments) >= 2:
+            current["pathSegments"] = segments
+            current["navigationType"] = current.get("navigationType") or "menu_path"
+        elif action in {"business_goal", "navigate_menu", "click"} and len(segments) >= 2:
+            current["originalAction"] = action
+            current["originalTarget"] = target
+            current["action"] = "navigate_path"
+            current["pathSegments"] = segments
+            current["navigationType"] = "menu_path"
+            current["normalizedBy"] = "executor_runtime"
+        steps.append(current)
+    normalized["steps"] = steps
+    return normalized
+
+
+def _runtime_path_segments(value: Any) -> list[str]:
+    if isinstance(value, list):
+        return [_clean_runtime_segment(str(item), index) for index, item in enumerate(value) if _clean_runtime_segment(str(item), index)]
+    text = str(value or "").strip()
+    if not text or "://" in text or not re.search(r"[/>\-→\\]", text):
+        return []
+    return [
+        cleaned
+        for index, segment in enumerate(re.split(r"\s*(?:/|>|-|→|\\)\s*", text))
+        if (cleaned := _clean_runtime_segment(segment, index))
+    ]
+
+
+def _clean_runtime_segment(segment: str, index: int) -> str:
+    cleaned = segment.strip().strip("“”\"'，,。；;：:")
+    if index == 0:
+        cleaned = re.sub(r"^(进入|打开|点击|导航到|访问|前往|切换到|跳转到)", "", cleaned).strip()
+    return cleaned
 
 
 def _error_summary(exc: Exception) -> str:

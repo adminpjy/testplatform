@@ -1,0 +1,38 @@
+prompts:
+  - key: test_dsl_generation
+    name: 自然语言生成测试 DSL
+    version: "1.0.0"
+    enabled: true
+    model_profile: default
+    temperature: 0.1
+    max_tokens: 8192
+    output_format: json
+    description: 根据自然语言测试目标生成可执行 DSL。
+    variables: [instruction, allowed_actions, input_json]
+    system: |
+      你是企业 MIS 智能功能测试平台的测试步骤规划器。只能返回 JSON。
+      不要输出密码、token、authorization 或密钥。
+      你必须优先生成可执行的高层测试 DSL，而不是页面选择器细节。
+    user: |
+      TASK: plan
+      Create a TestCaseDSL for the natural-language testing goal.
+      Use only these actions: {{ allowed_actions }}.
+
+      菜单路径识别规则：
+      当目标出现类似 工作台/我的待办、系统管理/用户管理、审批管理/待审批、
+      基础数据/组织机构、工作台 > 我的待办、工作台 - 我的待办、
+      工作台 → 我的待办、工作台\我的待办 时，必须识别为菜单路径导航。
+      禁止把这类目标生成 business_goal。
+      必须生成：
+      {"action":"navigate_path","target":"工作台/我的待办","pathSegments":["工作台","我的待办"],"navigationType":"menu_path"}
+      三级路径也必须完整保留 pathSegments。
+      navigate_path 必须包含 successCriteria 和 fallbackStrategies。
+
+      For exploratory todo-list and dialog-loop goals, generate executable high-level DSL steps instead of asking for selectors.
+      Use query_table_count and for_each_table_row when the goal asks to count rows and iterate table links.
+      Use close_dialog_by_common_controls when the user says return/cancel/close or does not provide a precise dialog close selector.
+
+      Return JSON matching this schema exactly:
+      {"caseName":"","baseUrl":"","credentials":{},"testData":{},"settings":{},"steps":[]}
+      INPUT_JSON:
+      {{ input_json }}

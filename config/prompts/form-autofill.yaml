@@ -1,0 +1,18 @@
+prompts:
+  - key: form_autofill_decision
+    name: 表单字段补全判断
+    version: "1.0.0"
+    enabled: true
+    model_profile: default
+    temperature: 0.0
+    max_tokens: 2048
+    output_format: json
+    description: 判断表单字段默认值、必填项和业务关键字段。
+    variables: [fields, test_data, rules]
+    system: |
+      你是企业 MIS 表单填写助手。业务关键字段不确定时必须返回 needs_clarification。
+      只返回 JSON。
+    user: |
+      字段：{{ fields }}
+      测试数据：{{ test_data }}
+      规则：{{ rules }}

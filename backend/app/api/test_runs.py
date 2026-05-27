@@ -33,6 +33,8 @@ from app.services.human_interventions import (
     list_failure_samples,
     list_human_interventions,
 )
+from app.services.dsl_post_processor import parse_menu_path
+from app.services.llm_call_logs import log_llm_call
 from app.services.natural_language_parser import NaturalLanguageParser
 from app.services.test_run_execution import (
     create_and_execute_run,
@@ -321,6 +323,14 @@ def _analysis_events(payload: NaturalLanguageTestRequest) -> Iterator[str]:
     )
     try:
         sanitized_payload = parser.sanitized_input_payload(payload)
+        for path in _menu_paths_from_payload(payload):
+            yield emit(
+                "progress",
+                "dsl_post_process",
+                f"检测到测试目标中包含菜单路径：{' / '.join(path)}。",
+                "dsl_post_processor",
+                {"pathSegments": path, "prompt_key": "dsl_post_process"},
+            )
         analyze_request = parser.build_analyze_request(payload)
         yield emit(
             "progress",
@@ -333,6 +343,8 @@ def _analysis_events(payload: NaturalLanguageTestRequest) -> Iterator[str]:
                 "model": settings.test_llm_model,
                 "endpoint": _safe_llm_endpoint(),
                 "stream": payload.stream if payload.stream is not None else settings.test_llm_stream,
+                "prompt_key": analyze_request.prompt_key,
+                "prompt_version": analyze_request.prompt_version,
                 "systemPrompt": analyze_request.system_prompt,
                 "userPrompt": analyze_request.user_prompt,
                 "inputPayload": sanitized_payload,
@@ -341,6 +353,7 @@ def _analysis_events(payload: NaturalLanguageTestRequest) -> Iterator[str]:
 
         analyze_raw = ""
         chunk_index = 0
+        analyze_started = time.monotonic()
         for chunk in parser.provider.stream_complete(analyze_request):
             analyze_raw += chunk
             chunk_index += 1
@@ -351,6 +364,12 @@ def _analysis_events(payload: NaturalLanguageTestRequest) -> Iterator[str]:
                 "llm_provider",
                 {"stage": "analyze", "chunkIndex": chunk_index},
             )
+        log_llm_call(
+            prompt_key=analyze_request.prompt_key,
+            prompt_version=analyze_request.prompt_version,
+            success=True,
+            elapsed_ms=_elapsed_ms(analyze_started),
+        )
         yield emit(
             "success",
             "llm_response",
@@ -360,6 +379,8 @@ def _analysis_events(payload: NaturalLanguageTestRequest) -> Iterator[str]:
                 "stage": "analyze",
                 "provider": settings.llm_provider,
                 "model": settings.test_llm_model,
+                "prompt_key": analyze_request.prompt_key,
+                "prompt_version": analyze_request.prompt_version,
                 "chunkCount": chunk_index,
                 "rawLength": len(analyze_raw),
             },
@@ -394,6 +415,8 @@ def _analysis_events(payload: NaturalLanguageTestRequest) -> Iterator[str]:
                     "model": settings.test_llm_model,
                     "endpoint": _safe_llm_endpoint(),
                     "stream": payload.stream if payload.stream is not None else settings.test_llm_stream,
+                    "prompt_key": plan_request.prompt_key,
+                    "prompt_version": plan_request.prompt_version,
                     "systemPrompt": plan_request.system_prompt,
                     "userPrompt": plan_request.user_prompt,
                     "allowedActions": sorted(ALLOWED_DSL_ACTIONS),
@@ -401,6 +424,7 @@ def _analysis_events(payload: NaturalLanguageTestRequest) -> Iterator[str]:
             )
             plan_raw = ""
             chunk_index = 0
+            plan_started = time.monotonic()
             for chunk in parser.provider.stream_complete(plan_request):
                 plan_raw += chunk
                 chunk_index += 1
@@ -411,6 +435,12 @@ def _analysis_events(payload: NaturalLanguageTestRequest) -> Iterator[str]:
                     "llm_provider",
                     {"stage": "plan", "chunkIndex": chunk_index},
                 )
+            log_llm_call(
+                prompt_key=plan_request.prompt_key,
+                prompt_version=plan_request.prompt_version,
+                success=True,
+                elapsed_ms=_elapsed_ms(plan_started),
+            )
             yield emit(
                 "success",
                 "llm_response",
@@ -420,6 +450,8 @@ def _analysis_events(payload: NaturalLanguageTestRequest) -> Iterator[str]:
                     "stage": "plan",
                     "provider": settings.llm_provider,
                     "model": settings.test_llm_model,
+                    "prompt_key": plan_request.prompt_key,
+                    "prompt_version": plan_request.prompt_version,
                     "chunkCount": chunk_index,
                     "rawLength": len(plan_raw),
                 },
@@ -432,6 +464,14 @@ def _analysis_events(payload: NaturalLanguageTestRequest) -> Iterator[str]:
                 {"stage": "plan", "rawLength": len(plan_raw)},
             )
             dsl = parser.parse_plan(plan_raw, payload)
+            for normalized in _navigation_normalizations(dsl.model_dump()):
+                yield emit(
+                    "success",
+                    "dsl_post_process",
+                    f"已自动规范化步骤：{normalized['originalAction']} → navigate_path，因为目标包含菜单路径。",
+                    "dsl_post_processor",
+                    normalized,
+                )
             yield emit(
                 "success",
                 "dsl_generated",
@@ -448,6 +488,16 @@ def _analysis_events(payload: NaturalLanguageTestRequest) -> Iterator[str]:
             {"analysis": analysis.model_dump(), "dsl": dsl.model_dump() if dsl else None},
         )
     except Exception as exc:
+        request = locals().get("plan_request") or locals().get("analyze_request")
+        started = locals().get("plan_started") or locals().get("analyze_started")
+        if request is not None and started is not None:
+            log_llm_call(
+                prompt_key=getattr(request, "prompt_key", None),
+                prompt_version=getattr(request, "prompt_version", None),
+                success=False,
+                elapsed_ms=_elapsed_ms(started),
+                error_summary=str(exc),
+            )
         yield emit(
             "error",
             "failed",
@@ -478,3 +528,40 @@ def _safe_llm_endpoint() -> str | None:
     if not parsed.scheme or not parsed.netloc:
         return None
     return f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+
+
+def _elapsed_ms(started: float) -> int:
+    return int((time.monotonic() - started) * 1000)
+
+
+def _menu_paths_from_payload(payload: NaturalLanguageTestRequest) -> list[list[str]]:
+    paths: list[list[str]] = []
+    for token in re_split_targets(payload.instruction):
+        path = parse_menu_path(token)
+        if path:
+            paths.append(path)
+    return paths
+
+
+def re_split_targets(text: str) -> list[str]:
+    import re
+
+    candidates = re.findall(r"[\u4e00-\u9fffA-Za-z0-9_]+(?:\s*(?:/|>|-|→|\\)\s*[\u4e00-\u9fffA-Za-z0-9_]+)+", text or "")
+    return candidates
+
+
+def _navigation_normalizations(dsl: dict) -> list[dict]:
+    results = []
+    for step in dsl.get("steps") or []:
+        if isinstance(step, dict) and step.get("action") == "navigate_path":
+            results.append(
+                {
+                    "target": step.get("target"),
+                    "pathSegments": step.get("pathSegments") or [],
+                    "originalAction": step.get("originalAction") or "navigate_path",
+                    "normalizedBy": step.get("normalizedBy"),
+                    "prompt_key": "dsl_post_process",
+                    "prompt_version": "1.0.0",
+                }
+            )
+    return results

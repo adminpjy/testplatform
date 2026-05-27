@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.models import FailureSample, RuntimeMessage, TestArtifact, TestCase, TestProject, TestRun, TestStepRun, TestSystem
 from app.schemas.test_runs import TestCaseDSL, TestRunCreate
+from app.services.dsl_post_processor import normalize_dsl
 from app.utils.url_policy import ensure_allowed_url
 from executor.aitp_executor.runner.case_runner import CaseRunner
 
@@ -136,9 +137,9 @@ def _resolve_dsl(
     system: TestSystem | None,
 ) -> dict:
     if payload.dsl_json is not None:
-        dsl = payload.dsl_json.model_dump()
+        dsl = normalize_dsl(payload.dsl_json.model_dump())
     elif case and case.dsl_json:
-        dsl = TestCaseDSL.model_validate(case.dsl_json).model_dump()
+        dsl = normalize_dsl(TestCaseDSL.model_validate(normalize_dsl(case.dsl_json)).model_dump())
     else:
         raise ValueError("A dsl_json payload or a test case with DSL is required.")
 

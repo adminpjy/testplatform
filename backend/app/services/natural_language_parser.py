@@ -1,21 +1,14 @@
 from typing import Any
 import re
+import time
 
 from app.core.config import settings
 from app.llm.json_utils import parse_json_model, parse_json_object, to_compact_json
 from app.llm.provider import LLMProvider, LLMRequest, get_llm_provider
 from app.schemas.test_runs import ALLOWED_DSL_ACTIONS, AnalyzeResult, NaturalLanguageTestRequest, TestCaseDSL
-
-
-SYSTEM_PROMPT = (
-    "You analyze natural-language functional testing goals for existing enterprise MIS systems. "
-    "Return strict JSON only. Do not reveal, transform, or invent API keys or tokens. "
-    "Do not include plaintext passwords in the output; use a secret_ref instead. "
-    "Do not ask clarifying questions for non-blocking exploratory test behavior. "
-    "If a list may be empty, assume the run records count=0 and ends the loop. "
-    "If dialog close controls are not specified, assume common controls such as return, cancel, close, X, and Escape. "
-    "If dialog content checks are not specified, assume only open/close behavior is verified."
-)
+from app.services.dsl_post_processor import normalize_dsl
+from app.services.llm_call_logs import log_llm_call
+from app.services.prompt_manager import get_prompt_manager
 
 
 class NaturalLanguageParser:
@@ -23,25 +16,87 @@ class NaturalLanguageParser:
         self.provider = provider or get_llm_provider()
 
     def analyze(self, payload: NaturalLanguageTestRequest) -> AnalyzeResult:
-        raw = self.provider.complete(self.build_analyze_request(payload))
-        return self.parse_analysis(raw, payload)
+        request = self.build_analyze_request(payload)
+        started = time.monotonic()
+        try:
+            raw = self.provider.complete(request)
+            log_llm_call(
+                prompt_key=request.prompt_key,
+                prompt_version=request.prompt_version,
+                success=True,
+                elapsed_ms=_elapsed_ms(started),
+            )
+            return self.parse_analysis(raw, payload)
+        except Exception as exc:
+            log_llm_call(
+                prompt_key=request.prompt_key,
+                prompt_version=request.prompt_version,
+                success=False,
+                elapsed_ms=_elapsed_ms(started),
+                error_summary=str(exc),
+            )
+            raise
 
     def plan(self, payload: NaturalLanguageTestRequest) -> TestCaseDSL:
-        raw = self.provider.complete(self.build_plan_request(payload))
-        return self.parse_plan(raw, payload)
+        request = self.build_plan_request(payload)
+        started = time.monotonic()
+        try:
+            raw = self.provider.complete(request)
+            log_llm_call(
+                prompt_key=request.prompt_key,
+                prompt_version=request.prompt_version,
+                success=True,
+                elapsed_ms=_elapsed_ms(started),
+            )
+            return self.parse_plan(raw, payload)
+        except Exception as exc:
+            log_llm_call(
+                prompt_key=request.prompt_key,
+                prompt_version=request.prompt_version,
+                success=False,
+                elapsed_ms=_elapsed_ms(started),
+                error_summary=str(exc),
+            )
+            raise
 
     def build_analyze_request(self, payload: NaturalLanguageTestRequest) -> LLMRequest:
+        rendered = get_prompt_manager().render_prompt(
+            "test_instruction_analysis",
+            {
+                "instruction": self._redact_sensitive_text(payload.instruction),
+                "context": {},
+                "known_systems": [],
+                "test_data": self._sanitize_mapping(payload.testData or {}),
+                "input_json": to_compact_json(self._input_payload(payload)),
+            },
+        )
         return LLMRequest(
-            system_prompt=SYSTEM_PROMPT,
-            user_prompt=self._build_analyze_prompt(payload),
+            system_prompt=rendered.system,
+            user_prompt=rendered.user,
             stream=self._stream_enabled(payload),
+            temperature=rendered.metadata.get("temperature"),
+            max_tokens=rendered.metadata.get("max_tokens"),
+            prompt_key=rendered.prompt_key,
+            prompt_version=rendered.prompt_version,
         )
 
     def build_plan_request(self, payload: NaturalLanguageTestRequest) -> LLMRequest:
+        rendered = get_prompt_manager().render_prompt(
+            "test_dsl_generation",
+            {
+                "instruction": self._redact_sensitive_text(payload.instruction),
+                "allowed_actions": ", ".join(sorted(ALLOWED_DSL_ACTIONS)),
+                "input_json": to_compact_json(self._input_payload(payload)),
+            },
+        )
         return LLMRequest(
-            system_prompt=SYSTEM_PROMPT,
-            user_prompt=self._build_plan_prompt(payload),
+            system_prompt=rendered.system,
+            user_prompt=rendered.user,
             stream=self._stream_enabled(payload),
+            temperature=rendered.metadata.get("temperature"),
+            max_tokens=rendered.metadata.get("max_tokens"),
+            prompt_key=rendered.prompt_key,
+            prompt_version=rendered.prompt_version,
         )
 
     def parse_analysis(self, raw: str, payload: NaturalLanguageTestRequest | None = None) -> AnalyzeResult:
@@ -55,56 +110,10 @@ class NaturalLanguageParser:
                 dsl_data = self._default_todo_dialog_dsl(payload)
             else:
                 raise
-        return TestCaseDSL.model_validate(self._repair_dsl(dsl_data, payload))
+        return TestCaseDSL.model_validate(normalize_dsl(self._repair_dsl(dsl_data, payload)))
 
     def sanitized_input_payload(self, payload: NaturalLanguageTestRequest) -> dict[str, Any]:
         return self._input_payload(payload)
-
-    def _build_analyze_prompt(self, payload: NaturalLanguageTestRequest) -> str:
-        return (
-            "TASK: analyze\n"
-            "Decision rules:\n"
-            "- Only block execution for missing base URL, missing usable credentials when login is required, unsafe write/approval/delete confirmation, or absent business goal.\n"
-            "- Do not block for empty table handling; default to count=0 and finish the loop.\n"
-            "- Do not block for unspecified dialog close button; default to common close controls.\n"
-            "- Do not block for unspecified dialog content assertion; default to verifying the dialog opens and closes.\n"
-            "- Put these defaults in assumptions, not missingFields.\n"
-            "Return JSON matching this schema exactly:\n"
-            "{"
-            '"readyToExecute":false,'
-            '"confidence":0.0,'
-            '"understoodGoal":"",'
-            '"missingFields":[],'
-            '"clarifyingQuestions":[],'
-            '"assumptions":[],'
-            '"riskLevel":"low",'
-            '"normalizedInstruction":""'
-            "}\n"
-            "INPUT_JSON:\n"
-            f"{to_compact_json(self._input_payload(payload))}"
-        )
-
-    def _build_plan_prompt(self, payload: NaturalLanguageTestRequest) -> str:
-        return (
-            "TASK: plan\n"
-            "Create a TestCaseDSL for the natural-language testing goal. "
-            "For exploratory todo-list and dialog-loop goals, generate executable high-level DSL steps instead of asking for selectors. "
-            "Use query_table_count and for_each_table_row when the goal asks to count rows and iterate table links. "
-            "Use close_dialog_by_common_controls when the user says return/cancel/close or does not provide a precise dialog close selector. "
-            "Use only these actions: "
-            f"{', '.join(sorted(ALLOWED_DSL_ACTIONS))}. "
-            "Return JSON matching this schema exactly: "
-            "{"
-            '"caseName":"",'
-            '"baseUrl":"",'
-            '"credentials":{},'
-            '"testData":{},'
-            '"settings":{},'
-            '"steps":[]'
-            "}\n"
-            "INPUT_JSON:\n"
-            f"{to_compact_json(self._input_payload(payload))}"
-        )
 
     def _input_payload(self, payload: NaturalLanguageTestRequest) -> dict[str, Any]:
         data = payload.model_dump()
@@ -195,7 +204,7 @@ class NaturalLanguageParser:
                 step["action"] = "business_goal"
             repaired_steps.append(step)
         repaired["steps"] = repaired_steps
-        return repaired
+        return normalize_dsl(repaired)
 
     @staticmethod
     def _is_todo_dialog_exploration(payload: NaturalLanguageTestRequest) -> bool:
@@ -275,7 +284,13 @@ class NaturalLanguageParser:
         steps.extend(
             [
                 login_step,
-                {"action": "business_goal", "target": "工作台/我的待办", "description": "进入工作台下的我的待办列表。"},
+                {
+                    "action": "navigate_path",
+                    "target": "工作台/我的待办",
+                    "pathSegments": ["工作台", "我的待办"],
+                    "navigationType": "menu_path",
+                    "description": "进入工作台下的我的待办列表。",
+                },
                 {
                     "action": "query_table_count",
                     "target": "我的待办列表",
@@ -317,3 +332,7 @@ class NaturalLanguageParser:
     def _extract_url(text: str) -> str | None:
         match = re.search(r"https?://[^\s，,。；;]+", text)
         return match.group(0) if match else None
+
+
+def _elapsed_ms(started: float) -> int:
+    return int((time.monotonic() - started) * 1000)

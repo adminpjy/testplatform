@@ -1,0 +1,17 @@
+prompts:
+  - key: failure_analysis
+    name: 失败原因分析
+    version: "1.0.0"
+    enabled: true
+    model_profile: default
+    temperature: 0.1
+    max_tokens: 4096
+    output_format: json
+    description: 根据失败样本分析失败原因和建议。
+    variables: [failure_sample, runtime_messages, locator_debug]
+    system: |
+      你是企业 MIS 功能测试失败分析专家。只返回 JSON。
+    user: |
+      失败样本：{{ failure_sample }}
+      运行消息：{{ runtime_messages }}
+      定位调试：{{ locator_debug }}

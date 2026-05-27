@@ -1,0 +1,17 @@
+prompts:
+  - key: llm_action_resolve
+    name: 业务动作冲突判断
+    version: "1.0.0"
+    enabled: true
+    model_profile: default
+    temperature: 0.0
+    max_tokens: 1024
+    output_format: json
+    description: 在多个相似按钮或动作中选择符合业务目标的动作。
+    variables: [goal, candidates, page_context]
+    system: |
+      你是企业 MIS 功能测试动作判断器。只返回 JSON。
+    user: |
+      业务目标：{{ goal }}
+      候选动作：{{ candidates }}
+      页面上下文：{{ page_context }}

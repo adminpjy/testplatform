@@ -92,7 +92,33 @@ def _mock_plan(payload: dict[str, Any]) -> dict[str, Any]:
     else:
         credentials = credentials if isinstance(credentials, dict) else {}
 
-    if any(word in instruction for word in ["我的待办", "待办事项", "工作台/我的待办"]):
+    menu_path = _extract_menu_path(instruction)
+    if menu_path:
+        steps.append(
+            {
+                "action": "navigate_path",
+                "target": "/".join(menu_path),
+                "pathSegments": menu_path,
+                "navigationType": "menu_path",
+                "successCriteria": [
+                    f"页面出现{menu_path[-1]}",
+                    f"菜单项{menu_path[-1]}高亮",
+                    "出现目标列表或目标功能区",
+                    f"面包屑包含{'/'.join(menu_path)}",
+                ],
+                "fallbackStrategies": [
+                    "expand_parent_menu",
+                    "try_left_menu",
+                    "try_top_nav",
+                    "try_dashboard_card",
+                    "try_menu_search",
+                    "try_iframe",
+                    "llm_disambiguation",
+                    "vision_fallback_optional",
+                ],
+            }
+        )
+    elif any(word in instruction for word in ["我的待办", "待办事项"]):
         steps.append({"action": "navigate_menu", "target": "我的待办"})
     if any(word in instruction for word in ["审批通过", "审核通过", "同意申请", "批准"]):
         steps.append({"action": "business_goal", "target": "审批通过", "ruleHint": "APPROVAL-PASS-v1"})
@@ -128,6 +154,16 @@ def _as_data_stream(text: str) -> str:
 def _extract_url(text: str) -> str | None:
     match = re.search(r"https?://[^\s，,。；;]+", text)
     return match.group(0) if match else None
+
+
+def _extract_menu_path(text: str) -> list[str]:
+    match = re.search(r"[\u4e00-\u9fffA-Za-z0-9_]+(?:\s*(?:/|>|-|→|\\)\s*[\u4e00-\u9fffA-Za-z0-9_]+)+", text)
+    if not match:
+        return []
+    candidate = match.group(0)
+    if "://" in candidate:
+        return []
+    return [segment.strip() for segment in re.split(r"\s*(?:/|>|-|→|\\)\s*", candidate) if segment.strip()]
 
 
 def _mentions_login(text: str) -> bool:

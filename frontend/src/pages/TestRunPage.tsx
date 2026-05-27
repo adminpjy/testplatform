@@ -763,7 +763,12 @@ function fallbackSteps(context: { baseUrl: string; username: string; password: s
     { action: "click", target: "登录" }
   ];
   if (context.instruction.includes("我的待办")) {
-    steps.push({ action: "business_goal", target: "工作台/我的待办" });
+    steps.push({
+      action: "navigate_path",
+      target: "工作台/我的待办",
+      pathSegments: ["工作台", "我的待办"],
+      navigationType: "menu_path"
+    });
     steps.push({ action: "assert_url_contains", target: "/todo" });
   } else {
     steps.push({ action: "assert_text_exists", target: "工作台" });

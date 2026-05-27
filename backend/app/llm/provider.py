@@ -17,6 +17,8 @@ class LLMRequest:
     temperature: float | None = None
     top_p: float | None = None
     max_tokens: int | None = None
+    prompt_key: str | None = None
+    prompt_version: str | None = None
 
 
 class LLMProvider(Protocol):

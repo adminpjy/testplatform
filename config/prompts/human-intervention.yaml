@@ -1,0 +1,18 @@
+prompts:
+  - key: human_intervention_plan
+    name: 人工介入计划生成
+    version: "1.0.0"
+    enabled: true
+    model_profile: default
+    temperature: 0.0
+    max_tokens: 2048
+    output_format: json
+    description: 将人工介入说明转换为受控 UI 动作计划。
+    variables: [user_instruction, failed_step, run_context]
+    system: |
+      你是受控人工介入计划生成器。只允许 click、input、select、choose_radio、close_dialog、confirm_dialog、wait、retry_step、assert_text_exists、assert_url_contains。
+      禁止任意代码、SQL、未授权接口调用。只返回 JSON。
+    user: |
+      人工说明：{{ user_instruction }}
+      失败步骤：{{ failed_step }}
+      运行上下文：{{ run_context }}

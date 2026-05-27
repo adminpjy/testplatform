@@ -8,6 +8,8 @@ import type {
   HumanIntervention,
   HumanInterventionCreate,
   NaturalLanguageTestRequest,
+  PromptInfo,
+  PromptPreview,
   RuleDraft,
   SystemInfo,
   SystemCheckResult,
@@ -28,6 +30,22 @@ export function getHealth(): Promise<HealthInfo> {
 
 export function getSystemInfo(): Promise<SystemInfo> {
   return getJson<SystemInfo>("/api/system/info");
+}
+
+export function getPrompts(): Promise<PromptInfo[]> {
+  return getJson<PromptInfo[]>("/api/prompts");
+}
+
+export function getPrompt(promptKey: string): Promise<PromptInfo> {
+  return getJson<PromptInfo>(`/api/prompts/${encodeURIComponent(promptKey)}`);
+}
+
+export function reloadPrompts(): Promise<{ loaded: number; last_error: string | null }> {
+  return postJson<{ loaded: number; last_error: string | null }>("/api/prompts/reload", {});
+}
+
+export function previewPrompt(promptKey: string, variables: Record<string, unknown>): Promise<PromptPreview> {
+  return postJson<PromptPreview>(`/api/prompts/${encodeURIComponent(promptKey)}/preview`, { variables });
 }
 
 export function getProjects(): Promise<TestProject[]> {

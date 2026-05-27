@@ -1,0 +1,56 @@
+registry:
+  test_instruction_analysis:
+    file: llm-analysis.yaml
+    key: test_instruction_analysis
+    enabled: true
+    version: "1.0.0"
+  test_dsl_generation:
+    file: dsl-generation.yaml
+    key: test_dsl_generation
+    enabled: true
+    version: "1.0.0"
+  dsl_post_process:
+    file: dsl-post-processing.yaml
+    key: dsl_post_process
+    enabled: true
+    version: "1.0.0"
+  navigation_path_plan:
+    file: navigation-path.yaml
+    key: navigation_path_plan
+    enabled: true
+    version: "1.0.0"
+  llm_element_resolve:
+    file: element-location.yaml
+    key: llm_element_resolve
+    enabled: true
+    version: "1.0.0"
+  llm_action_resolve:
+    file: action-resolution.yaml
+    key: llm_action_resolve
+    enabled: true
+    version: "1.0.0"
+  vision_locate_element:
+    file: vision-fallback.yaml
+    key: vision_locate_element
+    enabled: true
+    version: "1.0.0"
+  failure_analysis:
+    file: failure-analysis.yaml
+    key: failure_analysis
+    enabled: true
+    version: "1.0.0"
+  human_intervention_plan:
+    file: human-intervention.yaml
+    key: human_intervention_plan
+    enabled: true
+    version: "1.0.0"
+  intervention_to_rule:
+    file: rule-suggestion.yaml
+    key: intervention_to_rule
+    enabled: true
+    version: "1.0.0"
+  form_autofill_decision:
+    file: form-autofill.yaml
+    key: form_autofill_decision
+    enabled: true
+    version: "1.0.0"

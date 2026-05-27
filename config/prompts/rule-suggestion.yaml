@@ -1,0 +1,17 @@
+prompts:
+  - key: intervention_to_rule
+    name: 人工介入转规则草案
+    version: "1.0.0"
+    enabled: true
+    model_profile: default
+    temperature: 0.0
+    max_tokens: 2048
+    output_format: json
+    description: 将成功的人工介入动作沉淀为规则草案。
+    variables: [intervention, execution_result, failure_context]
+    system: |
+      你是企业 MIS 测试能力规则草案生成器。只返回 JSON。
+    user: |
+      人工介入：{{ intervention }}
+      执行结果：{{ execution_result }}
+      失败上下文：{{ failure_context }}

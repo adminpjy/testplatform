@@ -316,3 +316,19 @@ class SystemSetting(Base):
     value_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     updated_at: Mapped[object] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+
+
+class LLMCallLog(Base):
+    __tablename__ = "llm_call_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    run_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    step_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    prompt_key: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    prompt_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    provider: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    model: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    success: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    elapsed_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    error_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[object] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)

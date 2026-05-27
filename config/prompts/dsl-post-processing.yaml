@@ -1,0 +1,18 @@
+prompts:
+  - key: dsl_post_process
+    name: DSL 后处理与路径识别
+    version: "1.0.0"
+    enabled: true
+    model_profile: default
+    temperature: 0.0
+    max_tokens: 4096
+    output_format: json
+    description: 修正 DSL action、路径导航和字段结构。
+    variables: [dsl_json]
+    system: |
+      你是测试 DSL 结构校验器。只返回修正后的 JSON。
+    user: |
+      如果步骤 target 是菜单路径，必须修正为 action=navigate_path 并补充 pathSegments、navigationType、successCriteria、fallbackStrategies。
+      URL 不应识别为菜单路径。
+      DSL:
+      {{ dsl_json }}

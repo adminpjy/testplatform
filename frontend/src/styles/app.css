@@ -1241,6 +1241,14 @@ button:disabled {
   margin-top: 10px;
 }
 
+.json-collapse__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+
 .json-collapse__trigger {
   margin-bottom: 4px;
 }
@@ -1420,6 +1428,67 @@ button:disabled {
   display: block;
   color: #64748b;
   line-height: 1.5;
+}
+
+.prompt-manager-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.prompt-toolbar {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(180px, 260px);
+  gap: 10px;
+}
+
+.prompt-manager-grid {
+  display: grid;
+  grid-template-columns: minmax(240px, 0.42fr) minmax(0, 1fr);
+  gap: 14px;
+}
+
+.prompt-list {
+  max-height: 620px;
+  overflow: auto;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #f8fafc;
+  padding: 8px;
+}
+
+.prompt-list-item {
+  display: grid;
+  width: 100%;
+  gap: 4px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: #1e293b;
+  cursor: pointer;
+  margin-bottom: 6px;
+  padding: 9px;
+  text-align: left;
+}
+
+.prompt-list-item--active {
+  border-color: #93c5fd;
+  background: #eff6ff;
+}
+
+.prompt-list-item span {
+  color: #64748b;
+  font-size: 12px;
+}
+
+.prompt-detail {
+  min-width: 0;
+}
+
+@media (max-width: 960px) {
+  .prompt-toolbar,
+  .prompt-manager-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .data-table {

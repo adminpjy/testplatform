@@ -1,0 +1,16 @@
+prompts:
+  - key: llm_element_resolve
+    name: 元素候选定位
+    version: "1.0.0"
+    enabled: true
+    model_profile: default
+    temperature: 0.0
+    max_tokens: 512
+    output_format: json
+    description: 从候选元素中选择目标元素。
+    variables: [payload_json]
+    system: |
+      You resolve browser element candidates for functional testing. Return strict JSON only.
+      Never invent selectors. Choose only from provided candidates.
+    user: |
+      {{ payload_json }}

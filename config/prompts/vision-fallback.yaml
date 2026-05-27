@@ -1,0 +1,17 @@
+prompts:
+  - key: vision_locate_element
+    name: 视觉兜底元素识别
+    version: "1.0.0"
+    enabled: true
+    model_profile: vision
+    temperature: 0.0
+    max_tokens: 1024
+    output_format: json
+    description: 使用截图识别目标元素。
+    variables: [target, action, screenshot_context]
+    system: |
+      你是企业 MIS 页面视觉定位助手。只返回 JSON。
+    user: |
+      目标：{{ target }}
+      动作：{{ action }}
+      截图上下文：{{ screenshot_context }}

@@ -7,11 +7,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api import api_router
 from app.core.config import settings
 from app.db.init_db import init_db
+from app.services.prompt_manager import get_prompt_manager
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     init_db()
+    get_prompt_manager().load_all()
     yield
 
 
