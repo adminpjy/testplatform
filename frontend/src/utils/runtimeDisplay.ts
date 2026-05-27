@@ -19,6 +19,7 @@ const phaseTitles: Record<string, string> = {
   input: "正在填写输入框",
   click: "正在点击页面元素",
   navigate_menu: "正在导航菜单",
+  navigation_path: "正在执行菜单路径导航",
   verify: "正在验证执行结果",
   observe: "正在读取页面结构",
   page_ready: "正在等待页面加载完成",
@@ -83,7 +84,8 @@ const methodLabels: Record<string, string> = {
   natural_language_parser: "测试目标解析",
   json_utils: "JSON 校验",
   sandbox_provider: "执行环境",
-  page_waiter: "页面加载等待"
+  page_waiter: "页面加载等待",
+  menu_path_navigator: "菜单路径导航"
 };
 
 export function readableRuntimeTitle(message: RuntimeMessage): string {
@@ -115,6 +117,9 @@ export function readableRuntimeMessage(message: RuntimeMessage): string {
     return message.type === "success"
       ? "页面主要内容已经可见，继续执行下一步。"
       : "正在等待页面主体内容、表单、菜单或列表加载完成。";
+  }
+  if (message.phase === "navigation_path") {
+    return message.content || "正在按菜单层级查找并进入目标页面。";
   }
   if (message.phase === "llm_resolver") {
     return "页面存在多个相似操作，正在结合上下文进行判断。";
@@ -152,7 +157,7 @@ export function runtimeFilterOf(message: RuntimeMessage): RuntimeFilter {
   const text = `${message.phase || ""} ${message.method || ""} ${message.content || ""}`.toLowerCase();
   if (text.includes("vision")) return "vision";
   if (text.includes("llm")) return "llm";
-  if (text.includes("semantic") || text.includes("observe") || text.includes("locate") || text.includes("candidate")) {
+  if (text.includes("semantic") || text.includes("observe") || text.includes("locate") || text.includes("candidate") || text.includes("navigation_path") || text.includes("menu_path")) {
     return "page";
   }
   if (text.includes("page_ready") || text.includes("page_waiter")) return "page";
@@ -189,10 +194,18 @@ export function runtimeDetailView(message: RuntimeMessage): RuntimeDetailView | 
   const textLength = metadataValue(metadata, "text_length");
   const controlCount = metadataValue(metadata, "control_count");
   const loadingVisible = metadataValue(metadata, "loading_visible");
+  const pathSegments = Array.isArray(metadata.pathSegments) ? metadata.pathSegments.map(String) : [];
+  const parent = metadataValue(metadata, "parent");
+  const leaf = metadataValue(metadata, "leaf");
+  const failureType = metadataValue(metadata, "failureType");
+  const visionFallback = metadataValue(metadata, "visionFallback");
 
   if (stepNumber) lines.push(`步骤编号：S${String(stepNumber).padStart(3, "0")}`);
   if (action) lines.push(`执行动作：${actionTitles[String(action)] || String(action)}`);
   if (target) lines.push(`操作目标：${target}`);
+  if (pathSegments.length > 0) lines.push(`菜单路径：${pathSegments.join(" → ")}`);
+  if (parent) lines.push(`一级菜单：${parent}`);
+  if (leaf) lines.push(`目标菜单：${leaf}`);
   if (url) lines.push(`访问地址：${url}`);
   if (provider || model) lines.push(`大模型：${[provider, model].filter(Boolean).join(" / ")}`);
   if (endpoint) lines.push(`模型接口：${endpoint}`);
@@ -219,6 +232,8 @@ export function runtimeDetailView(message: RuntimeMessage): RuntimeDetailView | 
   if (strategy) lines.push(`定位来源：${locatorStrategyLabel(String(strategy))}`);
   if (confidence) lines.push(`定位置信度：${formatConfidence(confidence)}`);
   if (fallbackReason) lines.push(`兜底原因：${fallbackReason}`);
+  if (failureType) lines.push(`失败类型：${failureType}`);
+  if (visionFallback) lines.push(`视觉兜底：${visionFallback}`);
   if (requested !== null && message.phase === "vision") {
     lines.push(`视觉兜底配置：${requested === "true" ? "已开启" : "未开启"}`);
   }

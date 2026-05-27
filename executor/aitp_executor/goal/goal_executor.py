@@ -3,6 +3,7 @@ from typing import Any
 
 from executor.aitp_executor.goal.goal_success_verifier import GoalSuccessVerifier
 from executor.aitp_executor.goal.login_form_resolver import LoginFormResolver
+from executor.aitp_executor.goal.menu_path_navigator import MenuPathNavigator, NavigationPathError
 from executor.aitp_executor.goal.recovery_policy import RecoveryPolicy
 from executor.aitp_executor.locator.business_intent_normalizer import BusinessIntentNormalizer
 from executor.aitp_executor.locator.element_locator import ElementLocator, LocatorResult
@@ -17,16 +18,35 @@ class GoalExecutor:
         verifier: GoalSuccessVerifier | None = None,
         recovery_policy: RecoveryPolicy | None = None,
         login_resolver: LoginFormResolver | None = None,
+        menu_path_navigator: MenuPathNavigator | None = None,
     ) -> None:
         self.locator = locator or ElementLocator()
         self.normalizer = BusinessIntentNormalizer()
         self.verifier = verifier or GoalSuccessVerifier()
         self.recovery_policy = recovery_policy or RecoveryPolicy()
         self.login_resolver = login_resolver or LoginFormResolver()
+        self.menu_path_navigator = menu_path_navigator or MenuPathNavigator()
 
-    def execute(self, page: Any, *, target: str, step: dict[str, Any]) -> dict[str, Any]:
+    def execute(
+        self,
+        page: Any,
+        *,
+        target: str,
+        step: dict[str, Any],
+        execution_context: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         intent = self.normalizer.normalize(action="business_goal", target=target)
 
+        if intent.goal_type == "navigation_path":
+            result = self.menu_path_navigator.navigate_path(
+                page,
+                target,
+                intent.path_segments,
+                execution_context=execution_context,
+            )
+            if result.status != "passed":
+                raise NavigationPathError(result)
+            return result.as_outcome()
         if intent.name == "login_system":
             return self._login(page, step)
         if intent.name == "enter_todo_list":

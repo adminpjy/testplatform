@@ -235,9 +235,11 @@ class CaseRunner:
         reason = "executed"
         needs_vision_fallback = False
         fallback_reason = None
+        failure_type = None
+        failure_details: dict[str, Any] | None = None
         candidates: list[dict[str, Any]] = []
         try:
-            outcome = self._execute_action(page, step, dsl)
+            outcome = self._execute_action(page, step, dsl, writer=writer, step_number=step_number)
             page_ready = self._wait_for_page_ready(writer, page, step_number=step_number, reason="after_action")
             outcome["page_ready"] = page_ready
             if locatable_action:
@@ -248,10 +250,21 @@ class CaseRunner:
             reason = outcome.get("reason", "executed")
             needs_vision_fallback = outcome.get("needs_vision_fallback", False)
             fallback_reason = outcome.get("fallback_reason")
+            failure_type = outcome.get("failure_type")
             candidates = outcome.get("candidates", [])
         except Exception as exc:
             status = "failed"
             error_summary = _error_summary(exc)
+            failure_type = getattr(exc, "failure_type", None)
+            failure_details = getattr(exc, "details", None)
+            if isinstance(failure_details, dict):
+                locator_strategy = failure_details.get("locator_strategy") or locator_strategy
+                element_ref = failure_details.get("element_ref") or element_ref
+                confidence = failure_details.get("confidence", confidence)
+                reason = failure_details.get("reason") or reason
+                candidates = failure_details.get("candidates", candidates)
+            if failure_type:
+                fallback_reason = str(failure_type)
             if "vision_fallback_not_configured" in error_summary:
                 needs_vision_fallback = True
                 fallback_reason = "vision_fallback_not_configured"
@@ -290,6 +303,8 @@ class CaseRunner:
             "reason": reason if status == "passed" else "execution_failed",
             "needs_vision_fallback": needs_vision_fallback,
             "fallback_reason": fallback_reason,
+            "failure_type": failure_type,
+            "failure_details": failure_details,
             "screenshot_path": screenshot_path,
             "dom_snapshot_path": dom_snapshot_path,
             "accessibility_snapshot_path": accessibility_snapshot_path,
@@ -313,6 +328,8 @@ class CaseRunner:
                 "reason": reason,
                 "needs_vision_fallback": needs_vision_fallback,
                 "fallback_reason": fallback_reason,
+                "failure_type": failure_type,
+                "failure_details": failure_details,
                 "candidates": candidates,
             },
         )
@@ -425,7 +442,15 @@ class CaseRunner:
         if self.event_sink:
             self.event_sink(event)
 
-    def _execute_action(self, page: Any, step: dict[str, Any], dsl: dict[str, Any]) -> dict[str, Any]:
+    def _execute_action(
+        self,
+        page: Any,
+        step: dict[str, Any],
+        dsl: dict[str, Any],
+        *,
+        writer: ArtifactWriter | None = None,
+        step_number: int | None = None,
+    ) -> dict[str, Any]:
         action = step.get("action")
         target = step.get("target") or step.get("selector") or ""
 
@@ -549,7 +574,24 @@ class CaseRunner:
             credentials.update(dict(step.get("credentials") or {}))
             if credentials:
                 goal_step["credentials"] = credentials
-            return self.goal_executor.execute(page, target=str(target), step=goal_step)
+            execution_context = {
+                "step_number": step_number,
+                "step_id": step.get("id") or step.get("step_id") or step_number,
+                "vision_requested": bool((dsl.get("settings") or {}).get("visionFallbackEnabled")),
+            }
+            if writer is not None:
+                execution_context["emit_runtime"] = (
+                    lambda message_type, phase, content, method, metadata: self._emit_runtime(
+                        writer,
+                        message_type,
+                        phase,
+                        content,
+                        method,
+                        {"step_number": step_number, **(metadata or {})},
+                    )
+                )
+                execution_context["append_debug"] = lambda event: writer.append_jsonl("locator-debug.jsonl", event)
+            return self.goal_executor.execute(page, target=str(target), step=goal_step, execution_context=execution_context)
 
         raise ValueError(f"Unsupported DSL action: {action}")
 

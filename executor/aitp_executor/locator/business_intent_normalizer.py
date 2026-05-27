@@ -1,4 +1,5 @@
-from dataclasses import dataclass
+import re
+from dataclasses import dataclass, field
 
 
 @dataclass(frozen=True)
@@ -9,12 +10,30 @@ class BusinessIntent:
     negative_texts: list[str]
     preferred_roles: list[str]
     action_kind: str
+    goal_type: str = "business_action"
+    path_segments: list[str] = field(default_factory=list)
+    leaf: str | None = None
+    parents: list[str] = field(default_factory=list)
 
 
 class BusinessIntentNormalizer:
     def normalize(self, *, action: str, target: str) -> BusinessIntent:
         text = target.strip()
         compact = text.replace(" ", "")
+        path_segments = parse_navigation_path(action=action, target=text)
+        if path_segments:
+            return BusinessIntent(
+                name="navigation_path",
+                normalized_target=path_segments[-1],
+                preferred_texts=[path_segments[-1], *path_segments[:-1]],
+                negative_texts=[],
+                preferred_roles=["button", "link", "menuitem", "tab"],
+                action_kind="click",
+                goal_type="navigation_path",
+                path_segments=path_segments,
+                leaf=path_segments[-1],
+                parents=path_segments[:-1],
+            )
 
         if _has_any(compact, ["审批通过", "审核通过", "同意申请", "批准"]):
             return BusinessIntent(
@@ -121,3 +140,16 @@ class BusinessIntentNormalizer:
 
 def _has_any(text: str, options: list[str]) -> bool:
     return any(option in text for option in options)
+
+
+def parse_navigation_path(*, action: str, target: str) -> list[str]:
+    if action not in {"business_goal", "navigate_menu"}:
+        return []
+    text = target.strip()
+    if not text or "://" in text:
+        return []
+    if not re.search(r"[/>\-→\\]", text):
+        return []
+    normalized = re.sub(r"\s*(?:/|>|-|→|\\)\s*", "/", text)
+    segments = [segment.strip() for segment in normalized.split("/") if segment.strip()]
+    return segments if len(segments) >= 2 else []

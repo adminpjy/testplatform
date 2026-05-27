@@ -12,4 +12,17 @@ class PageSemanticExtractor:
                 for key in ["text", "label", "ariaLabel", "placeholder", "id", "name", "role", "tag"]
             )
             candidates.append({**element, "searchable": searchable.lower()})
+        for menu in observation.menus:
+            searchable = " ".join(
+                str(menu.get(key) or "")
+                for key in ["text", "parentText", "area", "elementRef"]
+            )
+            candidates.append(
+                {
+                    **menu,
+                    "tag": "menu",
+                    "role": "menuitem" if menu.get("area") != "tab" else "tab",
+                    "searchable": searchable.lower(),
+                }
+            )
         return candidates

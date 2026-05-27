@@ -265,6 +265,8 @@ def _add_failure_sample(
                 "stepAction": step_result.get("action"),
                 "target": step_result.get("target"),
                 "reason": step_result.get("reason"),
+                "failureType": step_result.get("failure_type"),
+                "details": step_result.get("failure_details"),
             },
             suggested_rule_json={
                 "source": "failure_sample",
@@ -277,6 +279,8 @@ def _add_failure_sample(
 
 
 def _failure_type(step_result: dict) -> str:
+    if step_result.get("failure_type"):
+        return str(step_result["failure_type"])
     if step_result.get("fallback_reason"):
         return str(step_result["fallback_reason"])
     if step_result.get("needs_vision_fallback"):
