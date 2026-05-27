@@ -71,6 +71,10 @@ def _mock_plan(payload: dict[str, Any]) -> dict[str, Any]:
     instruction = str(payload.get("instruction") or "")
     base_url = str(payload.get("base_url") or _extract_url(instruction) or "")
     credentials = payload.get("credentials") or {}
+    test_data = dict(payload.get("testData") or {})
+    test_data.update(_extract_test_data(instruction))
+    missing_fields: list[str] = []
+    clarifying_questions: list[str] = []
     steps: list[dict[str, Any]] = []
 
     if base_url:
@@ -120,29 +124,75 @@ def _mock_plan(payload: dict[str, Any]) -> dict[str, Any]:
         )
     elif any(word in instruction for word in ["我的待办", "待办事项"]):
         steps.append({"action": "navigate_menu", "target": "我的待办"})
-    if any(word in instruction for word in ["审批通过", "审核通过", "同意申请", "批准"]):
-        steps.append({"action": "business_goal", "target": "审批通过", "ruleHint": "APPROVAL-PASS-v1"})
-        steps.append({"action": "assert_text_exists", "target": "审批成功"})
+
+    if _is_delete_without_target(instruction, test_data):
+        missing_fields.append("删除目标记录")
+        clarifying_questions.append("请补充删除操作的目标记录条件，例如用户名、编号或唯一标识。")
+    elif any(word in instruction for word in ["审批通过", "审核通过", "同意申请", "批准"]):
+        steps.append({"action": "business_goal", "intent": "approval_pass", "target": "审批通过", "ruleHint": "APPROVAL-PASS-v1"})
+        steps.append({"action": "assert_result", "target": "审批成功"})
     elif "审批流程" in instruction or "流程图" in instruction:
-        steps.append({"action": "business_goal", "target": "查看审批流程", "ruleHint": "APPROVAL-FLOW-VIEW-v1"})
-        steps.append({"action": "assert_text_exists", "target": "审批流程"})
+        steps.append({"action": "business_goal", "intent": "approval_flow_view", "target": "查看审批流程", "ruleHint": "APPROVAL-FLOW-VIEW-v1"})
+        steps.append({"action": "assert_result", "target": "审批流程"})
+    elif _mentions_create(instruction):
+        steps.append(
+            {
+                "action": "business_goal",
+                "intent": "create_record",
+                "target": _create_target(instruction),
+                "formData": test_data,
+            }
+        )
+        if test_data:
+            steps.append({"action": "fill_form", "target": "新增表单", "formData": test_data})
+        steps.append({"action": "assert_result", "target": "新增成功"})
+    elif _mentions_update(instruction):
+        steps.append({"action": "query_table", "target": "目标列表", "queryConditions": _query_conditions(test_data)})
+        steps.append({"action": "click_table_row_action", "target": "编辑", "button": "编辑", "queryConditions": _query_conditions(test_data)})
+        steps.append({"action": "fill_form", "target": "编辑表单", "formData": test_data})
+        steps.append({"action": "assert_result", "target": "修改成功"})
+    elif _mentions_process_all(instruction):
+        steps.append({"action": "query_table_count", "target": "我的待办列表", "emptyStrategy": "pass"})
+        steps.append(
+            {
+                "action": "process_table_rows",
+                "target": "我的待办列表",
+                "loopPolicy": {
+                    "maxRows": 200,
+                    "emptyStrategy": "pass",
+                    "rowAction": "open_link_or_detail",
+                    "closeStrategy": "common_dialog_controls",
+                },
+            }
+        )
+        steps.append({"action": "summary_assert", "target": "所有可见待办行均已尝试处理。"})
+    elif _mentions_open_one_todo(instruction):
+        steps.append({"action": "query_table", "target": "我的待办列表"})
+        steps.append({"action": "open_table_row", "target": "我的待办列表", "rowAction": "open_link_or_detail"})
     elif any(word in instruction for word in ["查询", "搜索", "筛选"]):
-        steps.append({"action": "query_table", "target": "查询结果表格"})
-        steps.append({"action": "assert_text_exists", "target": _expected_text(instruction)})
+        steps.append({"action": "query_table", "target": "查询结果表格", "queryConditions": _query_conditions(test_data)})
+        steps.append({"action": "assert_result", "target": _expected_text(instruction)})
     else:
         steps.append({"action": "assert_text_exists", "target": _expected_text(instruction)})
+
+    for field in _critical_missing_fields(instruction, test_data, steps):
+        if field not in missing_fields:
+            missing_fields.append(field)
+            clarifying_questions.append(_question_for_missing_field(field))
 
     return {
         "caseName": _case_name(instruction),
         "baseUrl": base_url,
         "credentials": credentials,
-        "testData": payload.get("testData") or {},
+        "testData": test_data,
         "settings": {
             "timeoutMs": 30000,
             "stream": bool(payload.get("stream", True)),
             "riskLevel": _risk_level(instruction),
         },
         "steps": steps,
+        "missingFields": missing_fields,
+        "clarifyingQuestions": clarifying_questions,
     }
 
 
@@ -248,3 +298,86 @@ def _expected_text(instruction: str) -> str:
     if "成功" in instruction:
         return "成功"
     return "目标内容"
+
+
+def _mentions_open_one_todo(text: str) -> bool:
+    compact = text.replace(" ", "")
+    return "待办" in compact and any(token in compact for token in ["打开一条", "处理一条", "找一条", "一条待办"])
+
+
+def _mentions_process_all(text: str) -> bool:
+    compact = text.replace(" ", "")
+    return "待办" in compact and any(token in compact for token in ["处理所有", "遍历所有", "每一条", "所有行", "逐行", "循环"])
+
+
+def _mentions_create(text: str) -> bool:
+    return any(token in text for token in ["新增", "添加", "创建"])
+
+
+def _mentions_update(text: str) -> bool:
+    return any(token in text for token in ["修改", "编辑", "变更"])
+
+
+def _is_delete_without_target(text: str, test_data: dict[str, Any]) -> bool:
+    if not any(token in text for token in ["删除", "移除"]):
+        return False
+    if any(test_data.get(key) for key in ["用户名", "姓名", "编号", "申请编号", "手机号"]):
+        return False
+    return not re.search(r"(用户名|用户|姓名|编号|申请编号|手机号|账号)\s*(?:为|是|=|:|：)\s*[\u4e00-\u9fffA-Za-z0-9_.@-]+", text)
+
+
+def _extract_test_data(text: str) -> dict[str, Any]:
+    fields = [
+        "组织机构",
+        "所属机构",
+        "部门",
+        "负责人",
+        "审批人",
+        "用户名",
+        "姓名",
+        "手机号",
+        "邮箱",
+        "开始日期",
+        "结束日期",
+        "标题",
+        "编号",
+    ]
+    data: dict[str, Any] = {}
+    for field in fields:
+        match = re.search(rf"{field}\s*(?:选择|为|是|=|:|：)?\s*([\u4e00-\u9fffA-Za-z0-9_.@/-]+)", text)
+        if match:
+            value = match.group(1).strip("，,。；; ")
+            if value and value not in {"选择", "为", "是"}:
+                data[field] = value
+    return data
+
+
+def _critical_missing_fields(instruction: str, test_data: dict[str, Any], steps: list[dict[str, Any]]) -> list[str]:
+    missing: list[str] = []
+    if any(token in instruction for token in ["组织机构", "所属机构", "部门"]) and not any(test_data.get(key) for key in ["组织机构", "所属机构", "部门"]):
+        missing.append("组织机构")
+    if "审批人" in instruction and not test_data.get("审批人"):
+        missing.append("审批人")
+    if any(token in instruction for token in ["上传", "附件", "文件"]) and not any(step.get("file_path") or step.get("filePath") for step in steps):
+        missing.append("上传文件")
+    return missing
+
+
+def _question_for_missing_field(field: str) -> str:
+    return {
+        "组织机构": "请补充需要选择的组织机构、部门或单位。",
+        "审批人": "请补充审批人。",
+        "上传文件": "请提供需要上传的文件路径或附件引用。",
+        "删除目标记录": "请补充删除操作的目标记录条件，例如用户名、编号或唯一标识。",
+    }.get(field, f"请补充{field}。")
+
+
+def _create_target(text: str) -> str:
+    if "用户" in text:
+        return "新增用户"
+    return "新增记录"
+
+
+def _query_conditions(test_data: dict[str, Any]) -> dict[str, Any]:
+    preferred = ["用户名", "姓名", "编号", "申请编号", "手机号"]
+    return {key: test_data[key] for key in preferred if test_data.get(key)}

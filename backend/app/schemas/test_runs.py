@@ -21,13 +21,17 @@ ALLOWED_DSL_ACTIONS = {
     "query_table_count",
     "click_table_row_action",
     "for_each_table_row",
+    "process_table_rows",
+    "open_table_row",
     "open_row_link_or_detail",
     "wait_for_dialog",
     "close_dialog_by_common_controls",
     "continue_until_all_rows_processed",
     "summary_assert",
+    "assert_result",
     "business_goal",
     "auto_fill_form",
+    "fill_form",
     "navigate_path",
 }
 
@@ -61,6 +65,8 @@ class TestCaseDSL(BaseModel):
     testData: dict[str, Any] = Field(default_factory=dict)
     settings: dict[str, Any] = Field(default_factory=dict)
     steps: list[dict[str, Any]] = Field(default_factory=list)
+    missingFields: list[str] = Field(default_factory=list)
+    clarifyingQuestions: list[str] = Field(default_factory=list)
 
     @field_validator("steps")
     @classmethod

@@ -197,6 +197,8 @@ class NaturalLanguageParser:
             "testData": dsl_data.get("testData") or payload.testData or {},
             "settings": dsl_data.get("settings") or payload.settings or {},
             "steps": dsl_data.get("steps") or [],
+            "missingFields": dsl_data.get("missingFields") or [],
+            "clarifyingQuestions": dsl_data.get("clarifyingQuestions") or [],
         }
         if self._is_todo_dialog_exploration(payload):
             repaired.update(self._default_todo_dialog_dsl(payload, base=repaired))
@@ -345,11 +347,14 @@ class NaturalLanguageParser:
                     "description": "获取待办列表数量；如果数量为0，记录并结束循环。",
                 },
                 {
-                    "action": "for_each_table_row",
+                    "action": "process_table_rows",
                     "target": "我的待办列表",
-                    "rowAction": "open_link_or_detail",
-                    "closeStrategy": "common_dialog_controls",
-                    "emptyStrategy": "pass",
+                    "loopPolicy": {
+                        "maxRows": 200,
+                        "emptyStrategy": "pass",
+                        "rowAction": "open_link_or_detail",
+                        "closeStrategy": "common_dialog_controls",
+                    },
                     "description": "逐行点击待办链接，验证弹窗可打开，并用返回/取消/关闭/X/Esc 关闭。",
                 },
                 {

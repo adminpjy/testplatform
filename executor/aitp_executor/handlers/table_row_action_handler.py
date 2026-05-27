@@ -23,8 +23,9 @@ class TableRowActionHandler(CommonOperationHandler):
     def process_rows(self, page: Any, *, step: dict[str, Any], dsl: dict[str, Any] | None = None, execution_context: dict[str, Any] | None = None) -> dict[str, Any]:
         ctx = self.context(step, dsl, execution_context)
         self.emit_rule_hits(ctx, self.resolve_rules(ctx, intent="process_table_rows", rule_types=self.rule_types))
-        max_rows = int(step.get("maxRows") or step.get("max_rows") or 200)
-        empty_strategy = str(step.get("emptyStrategy") or step.get("empty_strategy") or "pass")
+        loop_policy = dict(step.get("loopPolicy") or step.get("loop_policy") or {})
+        max_rows = int(step.get("maxRows") or step.get("max_rows") or loop_policy.get("maxRows") or loop_policy.get("max_rows") or 200)
+        empty_strategy = str(step.get("emptyStrategy") or step.get("empty_strategy") or loop_policy.get("emptyStrategy") or loop_policy.get("empty_strategy") or "pass")
         data_indices = self.table_handler.data_row_indices(page)
         if not data_indices:
             if empty_strategy == "pass":

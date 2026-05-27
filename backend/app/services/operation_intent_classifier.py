@@ -99,17 +99,19 @@ def annotate_steps_with_operation_intents(dsl: dict[str, Any], *, instruction: s
 def _intent_from_action(action: str, target: str) -> OperationIntentResult | None:
     if action in {"query_table", "query_table_count"}:
         return _result("query_list", "query", 0.9, "action 指向列表查询或表格计数。", [action])
-    if action in {"for_each_table_row"}:
+    if action in {"for_each_table_row", "process_table_rows"}:
         return _result("process_table_rows", "table", 0.92, "action 指向表格行循环处理。", [action])
+    if action == "open_table_row":
+        return _result("open_table_row", "table", 0.9, "action 指向打开一条表格记录。", [action])
     if action in {"click_table_row_action", "open_row_link_or_detail"}:
         return _result("click_table_row_action", "table", 0.9, "action 指向表格行操作。", [action])
-    if action == "auto_fill_form":
+    if action in {"auto_fill_form", "fill_form"}:
         return _result("fill_form", "form", 0.9, "action 指向自动填写表单。", [action])
     if action == "select":
         return _result("select_dropdown", "form", 0.82, "action 指向选择控件。", [action])
     if action == "upload_file":
         return _result("upload_file", "form", 0.9, "action 指向文件上传。", [action])
-    if action in {"assert_text_exists", "assert_text_not_exists", "assert_url_contains", "summary_assert"}:
+    if action in {"assert_text_exists", "assert_text_not_exists", "assert_url_contains", "summary_assert", "assert_result"}:
         return _result("assert_result", "assertion", 0.86, "action 指向结果断言。", [action])
     if action == "navigate_menu":
         return _result("enter_page", "navigation", 0.82, "action 指向菜单导航。", [action])

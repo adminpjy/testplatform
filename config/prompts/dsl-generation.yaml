@@ -28,11 +28,58 @@ prompts:
       三级路径也必须完整保留 pathSegments。
       navigate_path 必须包含 successCriteria 和 fallbackStrategies。
 
+      MIS 常用操作生成规则：
+      1. 打开一条待办：
+         用户说“打开一条待办 / 处理一条待办 / 找一条待办审批”时，优先生成：
+         {"action":"open_table_row","target":"我的待办列表","rowAction":"open_link_or_detail"}
+         不要默认生成 process_table_rows 或 for_each_table_row。
+
+      2. 处理所有待办：
+         只有用户明确说“处理所有 / 遍历所有 / 每一条 / 所有行 / 逐行 / 循环”时，才生成：
+         {"action":"process_table_rows","target":"我的待办列表","loopPolicy":{"maxRows":200,"emptyStrategy":"pass","rowAction":"open_link_or_detail","closeStrategy":"common_dialog_controls"}}
+
+      3. 查询列表：
+         生成 query_table，并把查询条件放入 queryConditions。
+         示例：
+         {"action":"query_table","target":"用户列表","queryConditions":{"用户名":"test001"}}
+
+      4. 新增：
+         生成 business_goal，intent=create_record，并补充 formData 或顶层 testData。
+         示例：
+         {"action":"business_goal","intent":"create_record","target":"新增用户","formData":{"用户名":"test001"}}
+
+      5. 修改：
+         必须先 query_table 定位目标记录，再 click_table_row_action 编辑，再 fill_form，最后 assert_result。
+         不要直接点击第一条数据。
+
+      6. 删除：
+         必须包含目标记录条件。没有目标记录条件时，不要生成删除执行步骤，应在 missingFields 中要求补充目标记录。
+         禁止默认删除第一条。
+
+      7. 审批通过：
+         生成：
+         {"action":"business_goal","intent":"approval_pass","target":"审批通过"}
+         不要生成简单 click 审批通过。
+
+      8. 查看审批流程：
+         生成：
+         {"action":"business_goal","intent":"approval_flow_view","target":"查看审批流程"}
+         禁止误生成 approval_pass。
+
+      9. 表单字段：
+         如果自然语言包含字段值，必须写入顶层 testData，也可以同步写入步骤 formData。
+         例如“组织机构选择信息中心，负责人张三，开始日期明天”：
+         "testData":{"组织机构":"信息中心","负责人":"张三","开始日期":"明天"}
+
+      10. 需要补充的信息：
+          组织机构、审批人、上传文件、删除目标记录属于关键字段。
+          如果用户提到这些字段但没有提供值，返回 missingFields 和 clarifyingQuestions。
+
       For exploratory todo-list and dialog-loop goals, generate executable high-level DSL steps instead of asking for selectors.
-      Use query_table_count and for_each_table_row when the goal asks to count rows and iterate table links.
+      Use query_table_count and process_table_rows only when the goal asks to count rows and iterate table links.
       Use close_dialog_by_common_controls when the user says return/cancel/close or does not provide a precise dialog close selector.
 
       Return JSON matching this schema exactly:
-      {"caseName":"","baseUrl":"","credentials":{},"testData":{},"settings":{},"steps":[]}
+      {"caseName":"","baseUrl":"","credentials":{},"testData":{},"settings":{},"steps":[],"missingFields":[],"clarifyingQuestions":[]}
       INPUT_JSON:
       {{ input_json }}

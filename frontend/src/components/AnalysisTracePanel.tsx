@@ -100,16 +100,27 @@ export function AnalysisTracePanel({
                 {dsl.steps.map((step, index) => (
                   <li key={`${step.action}-${step.target || index}`}>
                     <span>S{String(index + 1).padStart(3, "0")}</span>
-                    <strong>{step.action === "navigate_path" ? "菜单路径导航" : String(step.action)}</strong>
-                    <em>{step.action === "navigate_path" ? navigatePathSummary(step) : String(step.target || step.description || "")}</em>
+                    <strong>{readableDslStepType(step)}</strong>
+                    <em>{dslStepSummary(step)}</em>
                     {step.action === "navigate_path" ? (
                       <small>
                         成功判断：{Array.isArray(step.successCriteria) ? step.successCriteria.map(String).join("；") : "页面出现目标菜单并完成导航"}
                       </small>
                     ) : null}
+                    {step.action === "business_goal" && step.intent ? <small>业务意图：{readableIntent(String(step.intent))}</small> : null}
                   </li>
                 ))}
               </ol>
+              {dsl.missingFields && dsl.missingFields.length > 0 ? (
+                <div className="dsl-empty-reason">
+                  <strong>仍需补充</strong>
+                  <ul>
+                    {dsl.missingFields.map((field) => (
+                      <li key={field}>{field}</li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
               <JsonCollapseBlock title="查看完整 DSL JSON" value={dsl} />
             </>
           ) : (
@@ -134,6 +145,50 @@ export function AnalysisTracePanel({
 function navigatePathSummary(step: Record<string, unknown>): string {
   const segments = Array.isArray(step.pathSegments) ? step.pathSegments.map(String) : [];
   return segments.length > 0 ? segments.join(" → ") : String(step.target || "");
+}
+
+function readableDslStepType(step: Record<string, unknown>): string {
+  const action = String(step.action || "");
+  const intent = String(step.intent || "");
+  if (action === "navigate_path") return "菜单路径导航";
+  if (action === "query_table" || intent === "query_list") return "查询列表";
+  if (action === "open_table_row") return "打开表格行";
+  if (action === "process_table_rows" || action === "for_each_table_row") return "处理表格行";
+  if (action === "fill_form" || action === "auto_fill_form" || intent === "fill_form") return "填写表单";
+  if (action === "select" || intent === "select_dropdown") return "选择下拉框";
+  if (intent === "select_date" || intent === "select_date_range") return "选择日期";
+  if (intent === "select_org") return "选择组织机构";
+  if (intent === "select_person") return "选择人员";
+  if (intent === "approval_pass") return "审批通过";
+  if (intent === "approval_flow_view" || intent === "view_flow") return "查看审批流程";
+  if (intent === "create_record") return "新增记录";
+  if (intent === "update_record") return "修改记录";
+  if (intent === "delete_record") return "删除记录";
+  if (action === "assert_result" || action === "summary_assert" || intent === "assert_result") return "断言验证";
+  return action || "测试步骤";
+}
+
+function readableIntent(intent: string): string {
+  const labels: Record<string, string> = {
+    approval_pass: "审批通过",
+    approval_flow_view: "查看审批流程",
+    view_flow: "查看审批流程",
+    create_record: "新增记录",
+    update_record: "修改记录",
+    delete_record: "删除记录",
+    query_list: "查询列表",
+    fill_form: "填写表单"
+  };
+  return labels[intent] || intent;
+}
+
+function dslStepSummary(step: Record<string, unknown>): string {
+  if (step.action === "navigate_path") return navigatePathSummary(step);
+  const queryConditions = step.queryConditions;
+  if (queryConditions && typeof queryConditions === "object") return `条件：${Object.entries(queryConditions).map(([key, value]) => `${key}=${String(value)}`).join("，")}`;
+  const formData = step.formData;
+  if (formData && typeof formData === "object") return `字段：${Object.keys(formData).join("，")}`;
+  return String(step.target || step.description || "");
 }
 
 function readableTitle(message: RuntimeMessage): string {

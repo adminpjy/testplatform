@@ -42,6 +42,8 @@ export interface TestCaseDSL {
   testData: Record<string, unknown>;
   settings: Record<string, unknown>;
   steps: TestCaseStep[];
+  missingFields?: string[];
+  clarifyingQuestions?: string[];
 }
 
 export interface TestCaseStep {

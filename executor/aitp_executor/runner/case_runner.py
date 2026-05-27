@@ -572,10 +572,10 @@ class CaseRunner:
         if action == "query_table_count":
             return self.query_handler.count_rows(page, step=step, dsl=dsl, execution_context=execution_context)
 
-        if action == "for_each_table_row":
+        if action in {"for_each_table_row", "process_table_rows"}:
             return self.table_row_action_handler.process_rows(page, step=step, dsl=dsl, execution_context=execution_context)
 
-        if action == "open_row_link_or_detail":
+        if action in {"open_row_link_or_detail", "open_table_row"}:
             return self.table_row_action_handler.open_first_row(page, step=step, dsl=dsl, execution_context=execution_context)
 
         if action == "wait_for_dialog":
@@ -587,10 +587,10 @@ class CaseRunner:
         if action == "continue_until_all_rows_processed":
             return _outcome("loop_checkpoint", "all_rows_processed", 0.8, "loop handled by for_each_table_row")
 
-        if action == "summary_assert":
+        if action in {"summary_assert", "assert_result"}:
             return self.assertion_handler.assert_step(page, step=step, dsl=dsl, execution_context=execution_context)
 
-        if action == "auto_fill_form":
+        if action in {"auto_fill_form", "fill_form"}:
             return self.form_fill_handler.fill_form(page, step=step, dsl=dsl, execution_context=execution_context)
 
         if action == "click_table_row_action":
