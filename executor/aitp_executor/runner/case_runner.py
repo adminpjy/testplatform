@@ -9,7 +9,20 @@ from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from executor.aitp_executor.browser.provider_factory import create_sandbox_provider
 from executor.aitp_executor.browser.sandbox_provider import SandboxProvider
 from executor.aitp_executor.goal.goal_executor import GoalExecutor
-from executor.aitp_executor.goal.menu_path_navigator import NavigationPathError
+from executor.aitp_executor.handlers import (
+    AssertionHandler,
+    DatePickerHandler,
+    DialogSelectorHandler,
+    DropdownHandler,
+    FileUploadHandler,
+    FormFillHandler,
+    NavigationHandler,
+    OrgSelectorHandler,
+    PersonSelectorHandler,
+    QueryHandler,
+    TableHandler,
+    TableRowActionHandler,
+)
 from executor.aitp_executor.locator.auto_form_filler import AutoFormFiller
 from executor.aitp_executor.locator.element_locator import ElementLocator
 from executor.aitp_executor.reports.artifact_writer import ArtifactWriter
@@ -27,6 +40,24 @@ class CaseRunner:
         self.element_locator = ElementLocator()
         self.auto_form_filler = AutoFormFiller()
         self.goal_executor = GoalExecutor(locator=self.element_locator)
+        self.table_handler = TableHandler(observer=self.element_locator.observer)
+        self.dialog_selector_handler = DialogSelectorHandler()
+        self.navigation_handler = NavigationHandler(
+            locator=self.element_locator,
+            menu_path_navigator=self.goal_executor.menu_path_navigator,
+        )
+        self.query_handler = QueryHandler(locator=self.element_locator, table_handler=self.table_handler)
+        self.table_row_action_handler = TableRowActionHandler(
+            table_handler=self.table_handler,
+            dialog_handler=self.dialog_selector_handler,
+        )
+        self.form_fill_handler = FormFillHandler(locator=self.element_locator, form_filler=self.auto_form_filler)
+        self.dropdown_handler = DropdownHandler(locator=self.element_locator)
+        self.date_picker_handler = DatePickerHandler(locator=self.element_locator)
+        self.org_selector_handler = OrgSelectorHandler(locator=self.element_locator, dialog_handler=self.dialog_selector_handler)
+        self.person_selector_handler = PersonSelectorHandler(dialog_handler=self.dialog_selector_handler)
+        self.file_upload_handler = FileUploadHandler(locator=self.element_locator)
+        self.assertion_handler = AssertionHandler()
         self.event_sink = event_sink
 
     def run(self, *, run_code: str, dsl: dict[str, Any]) -> dict[str, Any]:
@@ -490,6 +521,8 @@ class CaseRunner:
     ) -> dict[str, Any]:
         action = step.get("action")
         target = step.get("target") or step.get("selector") or ""
+        execution_context = self._handler_execution_context(writer, step_number, step, dsl)
+        operation_intent = str((step.get("operationIntent") or {}).get("intent") or "")
 
         if action == "open_url":
             url = step.get("url") or target
@@ -498,9 +531,13 @@ class CaseRunner:
             return _outcome("url", str(url), 1.0, "url opened")
 
         if action == "input":
-            result = self.element_locator.locate(page, action="input", target=str(target), step=step)
-            _require_locator(result).fill(str(step.get("value") or ""))
-            return _locator_outcome(result)
+            if operation_intent in {"select_date", "select_date_range"}:
+                return self.date_picker_handler.select_date(page, step=step, dsl=dsl, execution_context=execution_context)
+            if operation_intent == "select_org":
+                return self.org_selector_handler.select(page, step=step, dsl=dsl, execution_context=execution_context)
+            if operation_intent == "select_person":
+                return self.person_selector_handler.select(page, step=step, dsl=dsl, execution_context=execution_context)
+            return self.form_fill_handler.fill_field(page, step=step, dsl=dsl, execution_context=execution_context)
 
         if action in {"click", "confirm_dialog"}:
             result = self.element_locator.locate(page, action="click", target=str(target), step=step)
@@ -508,135 +545,68 @@ class CaseRunner:
             return _locator_outcome(result)
 
         if action == "navigate_menu":
-            segments = _runtime_path_segments(step.get("pathSegments") or target)
-            if segments:
-                return self._execute_navigation_path(page, step, dsl, writer=writer, step_number=step_number)
-            result = self.element_locator.locate(page, action="navigate_menu", target=str(target), step=step)
-            _require_locator(result).click()
-            return _locator_outcome(result)
+            return self.navigation_handler.execute(page, step=step, dsl=dsl, execution_context=execution_context)
 
         if action in {"wait_for_text", "assert_text_exists"}:
-            page.get_by_text(str(target), exact=False).wait_for(state="visible")
-            return _outcome("text_visible", str(target), 1.0, "text visible")
+            return self.assertion_handler.assert_step(page, step=step, dsl=dsl, execution_context=execution_context)
 
         if action == "assert_text_not_exists":
-            count = page.get_by_text(str(target), exact=False).count()
-            if count > 0:
-                raise AssertionError(f"Text should not exist: {target}")
-            return _outcome("text_absent", str(target), 1.0, "text absent")
+            return self.assertion_handler.assert_step(page, step=step, dsl=dsl, execution_context=execution_context)
 
         if action == "assert_url_contains":
-            current_url = page.url
-            if str(target) not in current_url:
-                raise AssertionError(f"URL does not contain '{target}': {current_url}")
-            return _outcome("url_contains", str(target), 1.0, "url contains target")
+            return self.assertion_handler.assert_step(page, step=step, dsl=dsl, execution_context=execution_context)
 
         if action == "select":
-            result = self.element_locator.locate(page, action="select", target=str(target), step=step)
-            _require_locator(result).select_option(str(step.get("value") or target))
-            return _locator_outcome(result)
+            return self.dropdown_handler.select(page, step=step, dsl=dsl, execution_context=execution_context)
 
         if action == "upload_file":
-            result = self.element_locator.locate(page, action="upload_file", target=str(target), step=step)
-            _require_locator(result).set_input_files(str(step.get("file_path") or step.get("value") or ""))
-            return _locator_outcome(result)
+            return self.file_upload_handler.upload(page, step=step, dsl=dsl, execution_context=execution_context)
 
         if action == "wait":
             page.wait_for_timeout(int(step.get("ms") or step.get("timeoutMs") or 1000))
             return _outcome("timeout", str(step.get("ms") or step.get("timeoutMs") or 1000), 1.0, "waited")
 
         if action == "query_table":
-            page.locator("table").first.wait_for(state="visible")
-            return _outcome("table_visible", "table", 1.0, "table visible")
+            return self.query_handler.execute(page, step=step, dsl=dsl, execution_context=execution_context)
 
         if action == "query_table_count":
-            count = self._table_row_count(page)
-            empty_strategy = str(step.get("emptyStrategy") or step.get("empty_strategy") or "pass")
-            if count == 0 and empty_strategy != "pass":
-                raise AssertionError("Table has no rows.")
-            return _outcome("table_count", str(count), 0.92, _json_dumps({"row_count": count, "empty_strategy": empty_strategy}))
+            return self.query_handler.count_rows(page, step=step, dsl=dsl, execution_context=execution_context)
 
         if action == "for_each_table_row":
-            result = self._for_each_table_row(page, step)
-            return _outcome("table_row_loop", str(result["processed_rows"]), 0.84, _json_dumps(result))
+            return self.table_row_action_handler.process_rows(page, step=step, dsl=dsl, execution_context=execution_context)
 
         if action == "open_row_link_or_detail":
-            opened = self._open_first_table_row(page)
-            return _outcome("row_link_or_detail", "first_row", 0.78, _json_dumps(opened))
+            return self.table_row_action_handler.open_first_row(page, step=step, dsl=dsl, execution_context=execution_context)
 
         if action == "wait_for_dialog":
-            appeared = self._wait_for_dialog(page)
-            if not appeared:
-                raise AssertionError("Dialog did not appear.")
-            return _outcome("dialog_visible", "dialog", 0.88, "dialog visible")
+            return self.dialog_selector_handler.wait_for_dialog(page, step=step, dsl=dsl, execution_context=execution_context)
 
         if action == "close_dialog_by_common_controls":
-            closed = self._close_dialog_by_common_controls(page)
-            if not closed:
-                raise AssertionError("Dialog close control was not found.")
-            return _outcome("dialog_closed", "common_controls", 0.82, "dialog closed")
+            return self.dialog_selector_handler.close_by_common_controls(page, step=step, dsl=dsl, execution_context=execution_context)
 
         if action == "continue_until_all_rows_processed":
             return _outcome("loop_checkpoint", "all_rows_processed", 0.8, "loop handled by for_each_table_row")
 
         if action == "summary_assert":
-            return _outcome("summary_assert", str(target or "summary"), 0.9, "summary assertion recorded")
+            return self.assertion_handler.assert_step(page, step=step, dsl=dsl, execution_context=execution_context)
 
         if action == "auto_fill_form":
-            test_data = dict(dsl.get("testData") or {})
-            test_data.update(step.get("testData") or {})
-            result = self.auto_form_filler.fill(page, test_data=test_data)
-            if result.needs_clarification:
-                raise RuntimeError("needs_clarification:" + ",".join(result.needs_clarification))
-            return _outcome(
-                "auto_form_filler",
-                "form",
-                0.82,
-                _json_dumps(
-                    {
-                        "filled": result.filled,
-                        "defaults_used": result.defaults_used,
-                        "skipped": result.skipped,
-                    }
-                ),
-            )
+            return self.form_fill_handler.fill_form(page, step=step, dsl=dsl, execution_context=execution_context)
 
         if action == "click_table_row_action":
-            row_text = str(step.get("rowText") or step.get("row_text") or "")
-            action_name = str(step.get("button") or step.get("buttonText") or target)
-            row = page.locator("tbody tr").filter(has_text=row_text)
-            row.get_by_role("button", name=action_name, exact=True).click()
-            return _outcome("table_row_action_exact", f"{row_text}:{action_name}", 0.95, "table row action")
+            return self.table_row_action_handler.click_row_action(page, step=step, dsl=dsl, execution_context=execution_context)
 
         if action == "navigate_path":
-            return self._execute_navigation_path(page, step, dsl, writer=writer, step_number=step_number)
+            return self.navigation_handler.execute(page, step=step, dsl=dsl, execution_context=execution_context)
 
         if action == "business_goal":
             if step.get("pathSegments"):
-                return self._execute_navigation_path(page, step, dsl, writer=writer, step_number=step_number)
+                return self.navigation_handler.execute(page, step=step, dsl=dsl, execution_context=execution_context)
             goal_step = dict(step)
             credentials = dict(dsl.get("credentials") or {})
             credentials.update(dict(step.get("credentials") or {}))
             if credentials:
                 goal_step["credentials"] = credentials
-            execution_context = {
-                "step_number": step_number,
-                "step_id": step.get("id") or step.get("step_id") or step_number,
-                "vision_requested": bool((dsl.get("settings") or {}).get("visionFallbackEnabled")),
-                "ability_resolution": step.get("abilityResolution") or {},
-            }
-            if writer is not None:
-                execution_context["emit_runtime"] = (
-                    lambda message_type, phase, content, method, metadata: self._emit_runtime(
-                        writer,
-                        message_type,
-                        phase,
-                        content,
-                        method,
-                        {"step_number": step_number, **(metadata or {})},
-                    )
-                )
-                execution_context["append_debug"] = lambda event: writer.append_jsonl("locator-debug.jsonl", event)
             return self.goal_executor.execute(page, target=str(target), step=goal_step, execution_context=execution_context)
 
         raise ValueError(f"Unsupported DSL action: {action}")
@@ -654,7 +624,21 @@ class CaseRunner:
         segments = _runtime_path_segments(step.get("pathSegments") or target)
         if len(segments) < 2:
             raise RuntimeError("navigation_path_unresolved: pathSegments must contain at least two items.")
-        execution_context = {
+        return self.navigation_handler.execute(
+            page,
+            step={**step, "pathSegments": segments, "target": target or "/".join(segments)},
+            dsl=dsl,
+            execution_context=self._handler_execution_context(writer, step_number, step, dsl),
+        )
+
+    def _handler_execution_context(
+        self,
+        writer: ArtifactWriter | None,
+        step_number: int | None,
+        step: dict[str, Any],
+        dsl: dict[str, Any],
+    ) -> dict[str, Any]:
+        execution_context: dict[str, Any] = {
             "step_number": step_number,
             "step_id": step.get("id") or step.get("step_id") or step_number,
             "vision_requested": bool((dsl.get("settings") or {}).get("visionFallbackEnabled")),
@@ -672,15 +656,7 @@ class CaseRunner:
                 )
             )
             execution_context["append_debug"] = lambda event: writer.append_jsonl("locator-debug.jsonl", event)
-        result = self.goal_executor.menu_path_navigator.navigate_path(
-            page,
-            target or "/".join(segments),
-            segments,
-            execution_context=execution_context,
-        )
-        if result.status != "passed":
-            raise NavigationPathError(result)
-        return result.as_outcome()
+        return execution_context
 
     def _emit_ability_resolution(self, writer: ArtifactWriter, step_number: int, step: dict[str, Any]) -> None:
         resolution = step.get("abilityResolution") or {}

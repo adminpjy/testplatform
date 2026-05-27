@@ -3,8 +3,19 @@ from typing import Any
 
 from executor.aitp_executor.goal.goal_success_verifier import GoalSuccessVerifier
 from executor.aitp_executor.goal.login_form_resolver import LoginFormResolver
-from executor.aitp_executor.goal.menu_path_navigator import MenuPathNavigator, NavigationPathError
+from executor.aitp_executor.goal.menu_path_navigator import MenuPathNavigator
 from executor.aitp_executor.goal.recovery_policy import RecoveryPolicy
+from executor.aitp_executor.handlers.approval_workflow_handler import ApprovalWorkflowHandler
+from executor.aitp_executor.handlers.date_picker_handler import DatePickerHandler
+from executor.aitp_executor.handlers.detail_navigation_handler import DetailNavigationHandler
+from executor.aitp_executor.handlers.dropdown_handler import DropdownHandler
+from executor.aitp_executor.handlers.form_fill_handler import FormFillHandler
+from executor.aitp_executor.handlers.navigation_handler import NavigationHandler
+from executor.aitp_executor.handlers.org_selector_handler import OrgSelectorHandler
+from executor.aitp_executor.handlers.person_selector_handler import PersonSelectorHandler
+from executor.aitp_executor.handlers.query_handler import QueryHandler
+from executor.aitp_executor.handlers.table_handler import TableHandler
+from executor.aitp_executor.handlers.table_row_action_handler import TableRowActionHandler
 from executor.aitp_executor.locator.business_intent_normalizer import BusinessIntentNormalizer
 from executor.aitp_executor.locator.element_locator import ElementLocator, LocatorResult
 from executor.aitp_executor.runner.page_waiter import wait_for_page_ready
@@ -26,6 +37,17 @@ class GoalExecutor:
         self.recovery_policy = recovery_policy or RecoveryPolicy()
         self.login_resolver = login_resolver or LoginFormResolver()
         self.menu_path_navigator = menu_path_navigator or MenuPathNavigator()
+        self.table_handler = TableHandler(observer=self.locator.observer)
+        self.navigation_handler = NavigationHandler(locator=self.locator, menu_path_navigator=self.menu_path_navigator)
+        self.query_handler = QueryHandler(locator=self.locator, table_handler=self.table_handler)
+        self.table_row_action_handler = TableRowActionHandler(table_handler=self.table_handler)
+        self.form_fill_handler = FormFillHandler(locator=self.locator)
+        self.dropdown_handler = DropdownHandler(locator=self.locator)
+        self.date_picker_handler = DatePickerHandler(locator=self.locator)
+        self.org_selector_handler = OrgSelectorHandler(locator=self.locator)
+        self.person_selector_handler = PersonSelectorHandler()
+        self.detail_navigation_handler = DetailNavigationHandler()
+        self.approval_workflow_handler = ApprovalWorkflowHandler()
 
     def execute(
         self,
@@ -36,29 +58,54 @@ class GoalExecutor:
         execution_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         intent = self.normalizer.normalize(action="business_goal", target=target)
+        classified_intent = str((step.get("operationIntent") or {}).get("intent") or "")
 
-        if intent.goal_type == "navigation_path":
-            result = self.menu_path_navigator.navigate_path(
-                page,
-                target,
-                intent.path_segments,
-                execution_context=execution_context,
-            )
-            if result.status != "passed":
-                raise NavigationPathError(result)
-            return result.as_outcome()
+        if classified_intent == "navigate_path" or intent.goal_type == "navigation_path":
+            nav_step = dict(step)
+            if intent.path_segments and not nav_step.get("pathSegments"):
+                nav_step["pathSegments"] = intent.path_segments
+            return self.navigation_handler.execute(page, step=nav_step, dsl={}, execution_context=execution_context)
         if intent.name == "login_system":
             return self._login(page, step)
+        if classified_intent == "query_list":
+            return self.query_handler.execute(page, step={**step, "target": target or "查询"}, dsl={}, execution_context=execution_context)
+        if classified_intent in {"open_table_row", "view_detail"}:
+            return self.detail_navigation_handler.open_detail(page, step={**step, "target": target or "详情"}, dsl={}, execution_context=execution_context)
+        if classified_intent == "process_table_rows":
+            return self.table_row_action_handler.process_rows(page, step={**step, "target": target}, dsl={}, execution_context=execution_context)
+        if classified_intent == "click_table_row_action":
+            return self.table_row_action_handler.click_row_action(page, step={**step, "target": target}, dsl={}, execution_context=execution_context)
+        if classified_intent == "fill_form":
+            return self.form_fill_handler.fill_form(page, step=step, dsl={}, execution_context=execution_context)
+        if classified_intent == "select_dropdown":
+            return self.dropdown_handler.select(page, step={**step, "target": target}, dsl={}, execution_context=execution_context)
+        if classified_intent in {"select_date", "select_date_range"}:
+            return self.date_picker_handler.select_date(page, step={**step, "target": target}, dsl={}, execution_context=execution_context)
+        if classified_intent == "select_org":
+            return self.org_selector_handler.select(page, step={**step, "target": target}, dsl={}, execution_context=execution_context)
+        if classified_intent == "select_person":
+            return self.person_selector_handler.select(page, step={**step, "target": target}, dsl={}, execution_context=execution_context)
+        if classified_intent == "approval_pass":
+            return self.approval_workflow_handler.approval_pass(page, step=step, dsl={}, execution_context=execution_context)
+        if classified_intent == "approval_reject":
+            return self.approval_workflow_handler.approval_reject(page, step=step, dsl={}, execution_context=execution_context)
+        if classified_intent == "view_flow":
+            return self.approval_workflow_handler.view_flow(page, step=step, dsl={}, execution_context=execution_context)
         if intent.name == "enter_todo_list":
-            return self._click_goal(page, "navigate_menu", "工作台/我的待办", step, intent.name)
+            return self.navigation_handler.execute(
+                page,
+                step={**step, "target": "工作台/我的待办", "pathSegments": ["工作台", "我的待办"]},
+                dsl={},
+                execution_context=execution_context,
+            )
         if intent.name == "approval_pass":
-            return self._approval_pass(page, step)
+            return self.approval_workflow_handler.approval_pass(page, step=step, dsl={}, execution_context=execution_context)
         if intent.name == "approval_reject":
-            return self._approval_reject(page, step)
+            return self.approval_workflow_handler.approval_reject(page, step=step, dsl={}, execution_context=execution_context)
         if intent.name == "approval_flow_view":
-            return self._click_goal(page, "click", "查看审批流程", step, intent.name)
+            return self.approval_workflow_handler.view_flow(page, step=step, dsl={}, execution_context=execution_context)
         if intent.name == "query_record":
-            return self._click_goal(page, "click", "查询", step, intent.name)
+            return self.query_handler.execute(page, step={**step, "target": "查询"}, dsl={}, execution_context=execution_context)
         if intent.name == "create_record":
             return self._click_goal(page, "click", "新增", step, intent.name)
         if intent.name == "update_record":
@@ -66,7 +113,7 @@ class GoalExecutor:
         if intent.name == "delete_record":
             return self._click_goal(page, "click", "删除", step, intent.name)
         if intent.name == "open_detail":
-            return self._click_goal(page, "click", "详情", step, intent.name)
+            return self.detail_navigation_handler.open_detail(page, step={**step, "target": "详情"}, dsl={}, execution_context=execution_context)
 
         return self._click_goal(page, "click", target, step, intent.name)
 
