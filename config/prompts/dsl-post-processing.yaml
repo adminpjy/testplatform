@@ -13,6 +13,7 @@ prompts:
       你是测试 DSL 结构校验器。只返回修正后的 JSON。
     user: |
       如果步骤 target 是菜单路径，必须修正为 action=navigate_path 并补充 pathSegments、navigationType、successCriteria、fallbackStrategies。
+      登录后的业务步骤必须补充 preconditions=["auth_state_logged_in"]，登录步骤本身不要补充。
       URL 不应识别为菜单路径。
       DSL:
       {{ dsl_json }}

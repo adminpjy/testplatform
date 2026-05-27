@@ -39,6 +39,7 @@ class DslPostProcessor:
             current["intent"] = "approval_pass"
             current["target"] = "审批通过"
             current.setdefault("readableDescription", "审批通过")
+            _ensure_auth_precondition(current)
             return current
 
         if _is_approval_flow_target(target):
@@ -48,6 +49,7 @@ class DslPostProcessor:
             current["intent"] = "approval_flow_view"
             current["target"] = "查看审批流程"
             current.setdefault("readableDescription", "查看审批流程")
+            _ensure_auth_precondition(current)
             return current
 
         if action == "navigate_path":
@@ -56,6 +58,7 @@ class DslPostProcessor:
                 current["pathSegments"] = segments
                 current["navigationType"] = current.get("navigationType") or "menu_path"
                 _ensure_navigation_defaults(current, segments)
+            _ensure_auth_precondition(current)
             return current
 
         if action in {"business_goal", "navigate_menu", "click"}:
@@ -67,6 +70,7 @@ class DslPostProcessor:
                 current["navigationType"] = "menu_path"
                 current["readableDescription"] = f"菜单路径导航：{' → '.join(segments)}"
                 _ensure_navigation_defaults(current, segments)
+        _ensure_auth_precondition(current)
         return current
 
 
@@ -112,6 +116,75 @@ def _ensure_navigation_defaults(step: dict[str, Any], segments: list[str]) -> No
             f"面包屑包含{full_path}",
         ],
     )
+
+
+AUTH_REQUIRED_ACTIONS = {
+    "navigate_path",
+    "navigate_menu",
+    "query_table",
+    "query_table_count",
+    "open_table_row",
+    "open_row_link_or_detail",
+    "process_table_rows",
+    "for_each_table_row",
+    "click_table_row_action",
+    "auto_fill_form",
+    "fill_form",
+    "select",
+    "upload_file",
+    "wait_for_dialog",
+    "close_dialog_by_common_controls",
+    "assert_result",
+    "summary_assert",
+}
+
+AUTH_REQUIRED_INTENTS = {
+    "enter_page",
+    "navigate_path",
+    "query_list",
+    "open_table_row",
+    "process_table_rows",
+    "click_table_row_action",
+    "create_record",
+    "update_record",
+    "delete_record",
+    "view_detail",
+    "view_flow",
+    "approval_pass",
+    "approval_reject",
+    "approval_flow_view",
+    "fill_form",
+    "fill_field",
+    "select_dropdown",
+    "select_date",
+    "select_date_range",
+    "select_org",
+    "select_person",
+    "upload_file",
+    "assert_result",
+}
+
+
+def _ensure_auth_precondition(step: dict[str, Any]) -> None:
+    if not _requires_auth(step):
+        return
+    preconditions = [str(item) for item in step.get("preconditions") or [] if str(item).strip()]
+    if "auth_state_logged_in" not in preconditions:
+        preconditions.append("auth_state_logged_in")
+    step["preconditions"] = preconditions
+
+
+def _requires_auth(step: dict[str, Any]) -> bool:
+    action = str(step.get("action") or "")
+    target = str(step.get("target") or "")
+    intent = str(step.get("intent") or (step.get("operationIntent") or {}).get("intent") or "")
+    if action == "business_goal" and ("登录" in target or intent in {"login", "login_system", "username_password_login"}):
+        return False
+    if action in AUTH_REQUIRED_ACTIONS:
+        return True
+    if action == "business_goal":
+        return intent in AUTH_REQUIRED_INTENTS or bool(intent)
+    return intent in AUTH_REQUIRED_INTENTS
     step.setdefault(
         "fallbackStrategies",
         [

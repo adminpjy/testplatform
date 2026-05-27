@@ -3,6 +3,7 @@ from typing import Any
 
 from executor.aitp_executor.goal.goal_success_verifier import GoalSuccessVerifier
 from executor.aitp_executor.goal.login_form_resolver import LoginFormResolver
+from executor.aitp_executor.goal.login_result_verifier import LoginResultVerifier
 from executor.aitp_executor.goal.menu_path_navigator import MenuPathNavigator
 from executor.aitp_executor.goal.recovery_policy import RecoveryPolicy
 from executor.aitp_executor.handlers.approval_workflow_handler import ApprovalWorkflowHandler
@@ -29,6 +30,7 @@ class GoalExecutor:
         verifier: GoalSuccessVerifier | None = None,
         recovery_policy: RecoveryPolicy | None = None,
         login_resolver: LoginFormResolver | None = None,
+        login_verifier: LoginResultVerifier | None = None,
         menu_path_navigator: MenuPathNavigator | None = None,
     ) -> None:
         self.locator = locator or ElementLocator()
@@ -36,6 +38,7 @@ class GoalExecutor:
         self.verifier = verifier or GoalSuccessVerifier()
         self.recovery_policy = recovery_policy or RecoveryPolicy()
         self.login_resolver = login_resolver or LoginFormResolver()
+        self.login_verifier = login_verifier or LoginResultVerifier()
         self.menu_path_navigator = menu_path_navigator or MenuPathNavigator()
         self.table_handler = TableHandler(observer=self.locator.observer)
         self.navigation_handler = NavigationHandler(locator=self.locator, menu_path_navigator=self.menu_path_navigator)
@@ -66,7 +69,7 @@ class GoalExecutor:
                 nav_step["pathSegments"] = intent.path_segments
             return self.navigation_handler.execute(page, step=nav_step, dsl={}, execution_context=execution_context)
         if intent.name == "login_system":
-            return self._login(page, step)
+            return self._login(page, step, execution_context=execution_context)
         if classified_intent == "query_list":
             return self.query_handler.execute(page, step={**step, "target": target or "查询"}, dsl={}, execution_context=execution_context)
         if classified_intent in {"open_table_row", "view_detail"}:
@@ -117,10 +120,11 @@ class GoalExecutor:
 
         return self._click_goal(page, "click", target, step, intent.name)
 
-    def _login(self, page: Any, step: dict[str, Any]) -> dict[str, Any]:
+    def _login(self, page: Any, step: dict[str, Any], *, execution_context: dict[str, Any] | None = None) -> dict[str, Any]:
         credentials = dict(step.get("credentials") or {})
         username = str(step.get("username") or credentials.get("username") or os.getenv("REAL_MIS_USERNAME") or "admin")
         password = str(step.get("password") or credentials.get("password") or os.getenv("REAL_MIS_PASSWORD") or "123456")
+        ctx = execution_context or {}
         wait_for_page_ready(page)
         form = self.login_resolver.resolve(page)
         if form.username_locator is None or form.password_locator is None:
@@ -131,15 +135,17 @@ class GoalExecutor:
                 + "Captured candidates: "
                 + str(form.candidates[:6])
             )
+        _emit(ctx, "progress", "login", "正在输入测试账号。", "goal_executor", {"field": "username"})
         form.username_locator.fill(username)
+        _emit(ctx, "progress", "login", "正在输入测试密码。", "goal_executor", {"field": "password", "redacted": True})
         form.password_locator.fill(password)
+        _emit(ctx, "progress", "login", "正在提交登录请求。", "goal_executor", {})
         if form.submit_locator is not None:
             form.submit_locator.click()
         else:
             form.password_locator.press("Enter")
-        page.wait_for_timeout(600)
-        wait_for_page_ready(page)
-        return _outcome(
+        auth_result = self.login_verifier.verify_after_submit(page, ctx)
+        outcome = _outcome(
             LocatorResult(
                 form.submit_locator or form.password_locator,
                 form.strategy,
@@ -149,8 +155,10 @@ class GoalExecutor:
                 candidates=form.candidates,
             ),
             verified=True,
-            verify_reason="login_submitted",
+            verify_reason=f"login_success:{auth_result.reason}",
         )
+        outcome["auth_state"] = auth_result.as_dict()
+        return outcome
 
     def _approval_pass(self, page: Any, step: dict[str, Any]) -> dict[str, Any]:
         wait_for_page_ready(page)
@@ -212,3 +220,9 @@ def _outcome(result: LocatorResult, *, verified: bool, verify_reason: str) -> di
         "candidates": result.candidates,
         "verified": verified,
     }
+
+
+def _emit(ctx: dict[str, Any], message_type: str, phase: str, content: str, method: str, metadata: dict[str, Any]) -> None:
+    emitter = ctx.get("emit_runtime")
+    if callable(emitter):
+        emitter(message_type, phase, content, method, metadata)

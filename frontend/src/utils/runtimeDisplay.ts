@@ -16,6 +16,8 @@ const phaseTitles: Record<string, string> = {
   open_system: "正在打开被测系统",
   open_url: "正在打开页面",
   login: "正在登录系统",
+  login_result: "正在验证登录结果",
+  auth_guard: "正在检查登录状态",
   input: "正在填写输入框",
   click: "正在点击页面元素",
   navigate_menu: "正在导航菜单",
@@ -80,6 +82,9 @@ const methodLabels: Record<string, string> = {
   vision_resolver: "视觉兜底",
   human_intervention: "人工介入",
   system_login_check: "登录检查",
+  login_result_verifier: "登录结果校验",
+  auth_state_detector: "登录状态检测",
+  global_interruption_handler: "中断处理",
   llm_provider: "大模型",
   natural_language_parser: "测试目标解析",
   json_utils: "JSON 校验",
@@ -120,6 +125,9 @@ export function readableRuntimeMessage(message: RuntimeMessage): string {
   }
   if (message.phase === "navigation_path") {
     return message.content || "正在按菜单层级查找并进入目标页面。";
+  }
+  if (message.phase === "login_result" || message.phase === "auth_guard") {
+    return message.content || "正在确认是否已经成功进入目标系统。";
   }
   if (message.phase === "llm_resolver") {
     return "页面存在多个相似操作，正在结合上下文进行判断。";
@@ -198,6 +206,7 @@ export function runtimeDetailView(message: RuntimeMessage): RuntimeDetailView | 
   const parent = metadataValue(metadata, "parent");
   const leaf = metadataValue(metadata, "leaf");
   const failureType = metadataValue(metadata, "failureType");
+  const authState = metadataValue(metadata, "authState");
   const visionFallback = metadataValue(metadata, "visionFallback");
 
   if (stepNumber) lines.push(`步骤编号：S${String(stepNumber).padStart(3, "0")}`);
@@ -233,6 +242,7 @@ export function runtimeDetailView(message: RuntimeMessage): RuntimeDetailView | 
   if (confidence) lines.push(`定位置信度：${formatConfidence(confidence)}`);
   if (fallbackReason) lines.push(`兜底原因：${fallbackReason}`);
   if (failureType) lines.push(`失败类型：${failureType}`);
+  if (authState) lines.push(`登录状态：${authState}`);
   if (visionFallback) lines.push(`视觉兜底：${visionFallback}`);
   if (requested !== null && message.phase === "vision") {
     lines.push(`视觉兜底配置：${requested === "true" ? "已开启" : "未开启"}`);

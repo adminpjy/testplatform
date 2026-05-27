@@ -99,6 +99,7 @@ def test_post_processor_converts_business_goal_path() -> None:
     assert step["action"] == "navigate_path"
     assert step["pathSegments"] == ["工作台", "我的待办"]
     assert step["originalAction"] == "business_goal"
+    assert "auth_state_logged_in" in step["preconditions"]
 
 
 def test_post_processor_converts_for_each_table_row_to_process_table_rows() -> None:
@@ -116,8 +117,25 @@ def test_post_processor_converts_approval_clicks_to_business_goals() -> None:
     flow_step = DslPostProcessor().normalize_step({"action": "click", "target": "查看审批流程"})
     assert pass_step["action"] == "business_goal"
     assert pass_step["intent"] == "approval_pass"
+    assert "auth_state_logged_in" in pass_step["preconditions"]
     assert flow_step["action"] == "business_goal"
     assert flow_step["intent"] == "approval_flow_view"
+    assert "auth_state_logged_in" in flow_step["preconditions"]
+
+
+def test_post_processor_adds_auth_precondition_to_business_steps() -> None:
+    normalized = DslPostProcessor().normalize_dsl(
+        {
+            "steps": [
+                {"action": "business_goal", "target": "登录系统", "intent": "login_system"},
+                {"action": "query_table", "target": "用户列表"},
+                {"action": "fill_form", "target": "新增用户"},
+            ],
+        }
+    )
+    assert "preconditions" not in normalized["steps"][0]
+    assert normalized["steps"][1]["preconditions"] == ["auth_state_logged_in"]
+    assert normalized["steps"][2]["preconditions"] == ["auth_state_logged_in"]
 
 
 def test_post_processor_collects_missing_critical_fields() -> None:

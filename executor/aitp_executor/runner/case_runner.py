@@ -25,6 +25,7 @@ from executor.aitp_executor.handlers import (
 )
 from executor.aitp_executor.locator.auto_form_filler import AutoFormFiller
 from executor.aitp_executor.locator.element_locator import ElementLocator
+from executor.aitp_executor.observer.auth_state_detector import AuthStateDetector, AuthStateResult
 from executor.aitp_executor.reports.artifact_writer import ArtifactWriter
 from executor.aitp_executor.reports.report_writer import ReportWriter
 from executor.aitp_executor.runner.page_waiter import wait_for_page_ready
@@ -58,6 +59,7 @@ class CaseRunner:
         self.person_selector_handler = PersonSelectorHandler(dialog_handler=self.dialog_selector_handler)
         self.file_upload_handler = FileUploadHandler(locator=self.element_locator)
         self.assertion_handler = AssertionHandler()
+        self.auth_state_detector = AuthStateDetector()
         self.event_sink = event_sink
 
     def run(self, *, run_code: str, dsl: dict[str, Any]) -> dict[str, Any]:
@@ -195,6 +197,14 @@ class CaseRunner:
             {"step_number": step_number, "action": action, "target": target},
         )
         self._emit_ability_resolution(writer, step_number, step)
+        writer.append_jsonl(
+            "execution-trace.jsonl",
+            {"type": "step.execute", "step_number": step_number, "step": _redact_step(step)},
+        )
+        self._wait_for_page_ready(writer, page, step_number=step_number, reason="before_step")
+        auth_failure = self._auth_precondition_failure(page, writer, step_number, step, action, target)
+        if auth_failure is not None:
+            return auth_failure
         if action in {"business_goal", "navigate_path"}:
             self._emit_runtime(
                 writer,
@@ -256,11 +266,6 @@ class CaseRunner:
                 "action_verifier",
                 {"step_number": step_number, "target": target},
             )
-        writer.append_jsonl(
-            "execution-trace.jsonl",
-            {"type": "step.execute", "step_number": step_number, "step": _redact_step(step)},
-        )
-        self._wait_for_page_ready(writer, page, step_number=step_number, reason="before_step")
 
         status = "passed"
         error_summary = None
@@ -388,6 +393,144 @@ class CaseRunner:
             "success" if status == "passed" else "error",
             "step",
             "步骤执行成功" if status == "passed" else str(error_summary),
+            "runner",
+            {"step_number": step_number, "action": action, "target": target},
+        )
+        return result
+
+    def _auth_precondition_failure(
+        self,
+        page: Any,
+        writer: ArtifactWriter,
+        step_number: int,
+        step: dict[str, Any],
+        action: str,
+        target: str,
+    ) -> dict[str, Any] | None:
+        if not _step_requires_auth(step):
+            return None
+
+        started_at = _utc_now()
+        auth_result = self.auth_state_detector.detect_auth_state(page)
+        writer.append_jsonl(
+            "locator-debug.jsonl",
+            {
+                "phase": "auth_state_detected",
+                "stepId": step.get("id") or step.get("step_id") or step_number,
+                "authState": auth_result.authState,
+                "confidence": auth_result.confidence,
+                "failureType": auth_result.failureType,
+                "evidence": auth_result.evidence,
+                "decision": _auth_decision(auth_result),
+                "reason": auth_result.reason,
+            },
+        )
+
+        if auth_result.authState == "login_success":
+            self._emit_runtime(
+                writer,
+                "success",
+                "auth_guard",
+                "已确认当前处于登录后的系统页面，可以继续执行业务步骤。",
+                "auth_state_detector",
+                {"step_number": step_number, **auth_result.as_dict()},
+            )
+            return None
+
+        if auth_result.authState not in {"login_failed", "login_page", "login_requires_manual_action"}:
+            return None
+
+        writer.append_jsonl(
+            "locator-debug.jsonl",
+            {
+                "phase": "precondition_failed",
+                "stepId": step.get("id") or step.get("step_id") or step_number,
+                "action": action,
+                "target": target,
+                "requiredPrecondition": "auth_state_logged_in",
+                "actualAuthState": auth_result.authState,
+                "rootCause": auth_result.failureType or auth_result.authState,
+                "decision": "skip_and_fail_run",
+                "evidence": auth_result.evidence,
+            },
+        )
+
+        error_summary = _auth_error_summary(auth_result)
+        failure_type = _auth_failure_type(auth_result)
+        failure_details = {
+            "rootCause": failure_type,
+            "precondition": "auth_state_logged_in",
+            "auth_state": auth_result.as_dict(),
+            "message": "当前仍停留在登录页，且检测到登录未成功，因此不执行后续业务步骤。",
+        }
+        failure_analysis = self.goal_executor.recovery_policy.analyze_failure(
+            error_summary=error_summary,
+            action=action,
+            target=target,
+            failure_type=failure_type,
+            details=failure_details,
+        )
+        self._emit_runtime(
+            writer,
+            "error",
+            "auth_guard",
+            _auth_runtime_message(auth_result),
+            "auth_state_detector",
+            {"step_number": step_number, "action": action, "target": target, **auth_result.as_dict()},
+        )
+        self._emit_failure_analysis_runtime(writer, step_number, action, target, failure_analysis)
+
+        screenshot_path = self._write_screenshot(page, writer, step_number)
+        dom_snapshot_path = self._write_dom_snapshot(page, writer, step_number)
+        accessibility_snapshot_path = self._write_accessibility_snapshot(page, writer, step_number)
+        ended_at = _utc_now()
+        result = {
+            "step_number": step_number,
+            "step_id": str(step.get("id") or step_number),
+            "step_name": step.get("name") or target or action,
+            "action": action,
+            "target": target,
+            "status": "failed",
+            "locator_strategy": "auth_state_guard",
+            "element_ref": None,
+            "confidence": min(auth_result.confidence, 0.95),
+            "reason": "auth_precondition_failed",
+            "needs_vision_fallback": False,
+            "fallback_reason": failure_analysis.get("failureType") or failure_type,
+            "failure_type": failure_analysis.get("failureType") or failure_type,
+            "failure_details": failure_details,
+            "failure_analysis": failure_analysis,
+            "suggested_recovery": failure_analysis.get("suggestedRecovery"),
+            "screenshot_path": screenshot_path,
+            "dom_snapshot_path": dom_snapshot_path,
+            "accessibility_snapshot_path": accessibility_snapshot_path,
+            "error_summary": error_summary,
+            "started_at": started_at,
+            "ended_at": ended_at,
+            "duration_ms": _duration_ms(started_at, ended_at),
+        }
+        writer.append_jsonl("step-result.jsonl", result)
+        writer.append_jsonl(
+            "locator-debug.jsonl",
+            {
+                "step_number": step_number,
+                "action": action,
+                "target": target,
+                "locator_strategy": "auth_state_guard",
+                "status": "failed",
+                "error_summary": error_summary,
+                "confidence": auth_result.confidence,
+                "reason": "auth_precondition_failed",
+                "failure_type": result["failure_type"],
+                "failure_details": failure_details,
+                "failure_analysis": failure_analysis,
+            },
+        )
+        self._emit_runtime(
+            writer,
+            "error",
+            "step",
+            error_summary,
             "runner",
             {"step_number": step_number, "action": action, "target": target},
         )
@@ -987,6 +1130,115 @@ def _require_locator(result: Any) -> Any:
     return result.locator
 
 
+AUTH_REQUIRED_ACTIONS = {
+    "navigate_path",
+    "navigate_menu",
+    "query_table",
+    "query_table_count",
+    "open_table_row",
+    "open_row_link_or_detail",
+    "process_table_rows",
+    "for_each_table_row",
+    "click_table_row_action",
+    "create_record",
+    "update_record",
+    "delete_record",
+    "approval_pass",
+    "approval_reject",
+    "view_detail",
+    "auto_fill_form",
+    "fill_form",
+    "select",
+    "upload_file",
+    "wait_for_dialog",
+    "close_dialog_by_common_controls",
+}
+
+AUTH_REQUIRED_INTENTS = {
+    "enter_page",
+    "navigate_path",
+    "query_list",
+    "open_table_row",
+    "process_table_rows",
+    "click_table_row_action",
+    "create_record",
+    "update_record",
+    "delete_record",
+    "view_detail",
+    "view_flow",
+    "approval_pass",
+    "approval_reject",
+    "fill_form",
+    "fill_field",
+    "select_dropdown",
+    "select_date",
+    "select_date_range",
+    "select_org",
+    "select_person",
+    "select_tree_node",
+    "select_from_dialog",
+    "upload_file",
+    "assert_result",
+}
+
+
+def _step_requires_auth(step: dict[str, Any]) -> bool:
+    preconditions = [str(item) for item in step.get("preconditions") or []]
+    if "auth_state_logged_in" in preconditions:
+        return True
+    action = str(step.get("action") or "")
+    target = str(step.get("target") or "")
+    intent = str(step.get("intent") or (step.get("operationIntent") or {}).get("intent") or "")
+    if action == "business_goal" and ("登录" in target or intent in {"login", "login_system", "username_password_login"}):
+        return False
+    if action in AUTH_REQUIRED_ACTIONS:
+        return True
+    if action == "business_goal" and intent not in {"", "login", "login_system", "username_password_login"}:
+        return intent in AUTH_REQUIRED_INTENTS
+    return intent in AUTH_REQUIRED_INTENTS
+
+
+def _auth_decision(result: AuthStateResult) -> str:
+    if result.authState == "login_success":
+        return "continue_run"
+    if result.authState in {"login_failed", "login_page", "login_requires_manual_action"}:
+        return "skip_and_fail_run"
+    return "continue_with_unknown_auth_state"
+
+
+def _auth_failure_type(result: AuthStateResult) -> str:
+    if result.authState == "login_failed":
+        return "login_failed"
+    if result.authState == "login_page":
+        return "auth_not_logged_in"
+    if result.authState == "login_requires_manual_action":
+        return "login_requires_manual_action"
+    return str(result.failureType or "precondition_auth_not_satisfied")
+
+
+def _auth_error_summary(result: AuthStateResult) -> str:
+    if result.authState == "login_failed":
+        return (
+            "login_failed: 检测到目标系统返回登录失败提示，当前仍停留在登录页面。"
+            "后续业务步骤已停止。可能原因包括用户名或密码错误、账号被禁用、AD 账号未绑定或密码未同步。"
+        )
+    if result.authState == "login_page":
+        return "auth_not_logged_in: 当前仍停留在登录页面，登录未完成，因此不执行后续业务步骤。"
+    if result.authState == "login_requires_manual_action":
+        return "login_requires_manual_action: 登录后需要人工处理，例如强制修改密码，因此不执行后续业务步骤。"
+    return f"precondition_auth_not_satisfied: {result.reason}"
+
+
+def _auth_runtime_message(result: AuthStateResult) -> str:
+    if result.authState == "login_failed":
+        return "当前仍停留在登录页面，且检测到登录失败提示，后续业务步骤不会继续执行。"
+    if result.authState == "login_page":
+        return "当前仍是登录页面，登录未完成，后续业务步骤不会继续执行。"
+    if result.authState == "login_requires_manual_action":
+        return "登录后需要人工处理，后续业务步骤已停止。"
+    return "认证前置条件未满足，后续业务步骤已停止。"
+
+
 def _locator_outcome(result: Any) -> dict[str, Any]:
     return {
         "locator_strategy": result.strategy,
@@ -1046,6 +1298,11 @@ def _normalize_runtime_dsl(dsl: dict[str, Any]) -> dict[str, Any]:
             current["pathSegments"] = segments
             current["navigationType"] = "menu_path"
             current["normalizedBy"] = "executor_runtime"
+        if _step_requires_auth(current):
+            preconditions = [str(item) for item in current.get("preconditions") or [] if str(item).strip()]
+            if "auth_state_logged_in" not in preconditions:
+                preconditions.append("auth_state_logged_in")
+            current["preconditions"] = preconditions
         steps.append(current)
     normalized["steps"] = steps
     return normalized

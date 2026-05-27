@@ -28,6 +28,12 @@ prompts:
       三级路径也必须完整保留 pathSegments。
       navigate_path 必须包含 successCriteria 和 fallbackStrategies。
 
+      登录状态前置条件规则：
+      登录后的业务步骤必须包含：
+      "preconditions":["auth_state_logged_in"]
+      这些步骤包括菜单导航、查询、表格操作、新增、修改、删除、审批、查看详情、填写表单、选择下拉框、选择日期、组织机构选择、人员选择、文件上传和结果断言。
+      登录步骤本身不要添加 auth_state_logged_in。
+
       MIS 常用操作生成规则：
       1. 打开一条待办：
          用户说“打开一条待办 / 处理一条待办 / 找一条待办审批”时，优先生成：

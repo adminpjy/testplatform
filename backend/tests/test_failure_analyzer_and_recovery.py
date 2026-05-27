@@ -26,6 +26,26 @@ def test_navigation_failure_does_not_use_vision_as_primary_type() -> None:
     assert any(item["code"] == "try_menu_search" for item in analysis["suggestedRecovery"])
 
 
+def test_login_failure_overrides_navigation_failure() -> None:
+    analysis = FailureAnalyzer().analyze_step_failure(
+        {
+            "action": "navigate_path",
+            "target": "工作台/我的待办",
+            "error_summary": "Login was failed, and you have 4 retries. Wrong user name or password.",
+            "failure_type": "menu_parent_not_found",
+            "failure_details": {
+                "auth_state": {
+                    "authState": "login_failed",
+                    "evidence": ["Login was failed", "Wrong user name or password", "you have 4 retries"],
+                }
+            },
+        }
+    )
+    assert analysis["failureType"] == "login_failed"
+    assert analysis["category"] == "authentication"
+    assert any(item["code"] == "check_test_account" for item in analysis["suggestedRecovery"])
+
+
 def test_recovery_suggestions_for_common_mis_failures() -> None:
     dropdown = FailureAnalyzer().analyze_step_failure(
         {"action": "select", "target": "状态", "error_summary": "dropdown_option_not_found: 停用"}

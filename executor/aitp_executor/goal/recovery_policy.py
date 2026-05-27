@@ -12,6 +12,31 @@ def _strategy(code: str, label: str, *, automatic: bool = True) -> dict[str, Any
 
 class RecoveryPolicy:
     strategy_catalog: dict[str, list[dict[str, Any]]] = {
+        "login_failed": [
+            _strategy("check_test_account", "检查测试账号和密码", automatic=False),
+            _strategy("check_account_status", "确认账号是否被禁用、锁定或未绑定", automatic=False),
+            _strategy("check_ad_password_sync", "确认 AD 密码是否已同步", automatic=False),
+            _strategy("ask_admin", "联系系统管理员确认账号状态", automatic=False),
+        ],
+        "authentication_failed": [
+            _strategy("check_test_account", "检查认证账号和密码", automatic=False),
+            _strategy("check_account_binding", "确认账号绑定和认证策略", automatic=False),
+            _strategy("ask_admin", "联系系统管理员确认认证状态", automatic=False),
+        ],
+        "auth_not_logged_in": [
+            _strategy("rerun_login_step", "重新执行登录步骤"),
+            _strategy("check_login_result", "检查登录结果提示"),
+            _strategy("ask_human", "请求人工确认登录状态", automatic=False),
+        ],
+        "login_requires_manual_action": [
+            _strategy("manual_change_password", "人工处理强制修改密码或安全确认", automatic=False),
+            _strategy("update_test_account", "更换符合测试条件的账号", automatic=False),
+        ],
+        "login_state_unknown": [
+            _strategy("wait_and_reobserve", "等待后重新观察登录状态"),
+            _strategy("check_global_interruption", "检查登录后中断提示"),
+            _strategy("ask_human", "请求人工确认登录结果", automatic=False),
+        ],
         "menu_parent_not_found": [
             _strategy("reobserve_page", "重新读取页面菜单结构"),
             _strategy("try_top_nav", "尝试顶部导航"),
@@ -229,6 +254,8 @@ class RecoveryPolicy:
         fallback = _clean_failure_type(fallback_reason)
         text = " ".join(str(item or "") for item in [error_summary, action, target, explicit, fallback, details])
         detected = _detect_from_text(text)
+        if detected in {"login_failed", "authentication_failed", "auth_not_logged_in", "login_requires_manual_action", "login_state_unknown"}:
+            return detected
         if explicit and explicit != "vision_fallback_not_configured":
             return _canonicalize(explicit, text)
         if detected and detected != "vision_fallback_not_configured":
@@ -259,6 +286,36 @@ def _clean_failure_type(value: str | None) -> str | None:
 def _detect_from_text(text: str) -> str | None:
     lower = text.lower()
     patterns = [
+        ("login_failed", [
+            "login_failed",
+            "登录失败",
+            "用户名或密码错误",
+            "账号或密码错误",
+            "账户或密码错误",
+            "密码错误",
+            "认证失败",
+            "登录名或密码不正确",
+            "账户被禁用",
+            "账号被禁用",
+            "账号已锁定",
+            "账户已锁定",
+            "用户不存在",
+            "剩余重试次数",
+            "请联系管理员",
+            "login was failed",
+            "wrong user name or password",
+            "wrong username or password",
+            "invalid username or password",
+            "authentication failed",
+            "account disabled",
+            "account locked",
+            "you have",
+            "retries",
+            "please contact the administrator",
+        ]),
+        ("auth_not_logged_in", ["auth_not_logged_in", "precondition_auth_not_satisfied", "当前仍停留在登录页面", "login form is still visible"]),
+        ("login_requires_manual_action", ["login_requires_manual_action", "强制修改密码", "必须修改初始密码", "must change password"]),
+        ("login_state_unknown", ["login_state_unknown"]),
         ("menu_parent_not_found", ["menu_parent_not_found", "未找到一级菜单"]),
         ("menu_child_not_found", ["menu_child_not_found", "未找到二级菜单", "但未找到"]),
         ("menu_expand_failed", ["menu_expand_failed", "展开失败"]),
@@ -334,6 +391,8 @@ def _infer_from_action(action: str, text: str) -> str:
 
 
 def _category(failure_type: str) -> str:
+    if failure_type.startswith(("login_", "auth_", "authentication_")):
+        return "authentication"
     if failure_type.startswith(("menu_", "navigation_")):
         return "navigation"
     if failure_type.startswith("table_"):
@@ -359,6 +418,11 @@ def _category(failure_type: str) -> str:
 
 def _summary(failure_type: str, *, target: str | None, error_summary: str | None) -> str:
     labels = {
+        "login_failed": "登录失败，未进入目标系统。",
+        "authentication_failed": "认证失败，未进入目标系统。",
+        "auth_not_logged_in": "登录状态未满足，当前仍停留在登录页。",
+        "login_requires_manual_action": "登录后需要人工处理。",
+        "login_state_unknown": "登录结果无法确认。",
         "menu_child_not_found": "未找到目标子菜单。",
         "menu_parent_not_found": "未找到目标父菜单。",
         "navigation_goal_not_reached": "已尝试导航，但未达到目标页面。",

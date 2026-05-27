@@ -1219,6 +1219,15 @@ button:disabled {
   font-size: 13px;
 }
 
+.error-summary-card__suggestion ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+}
+
+.error-summary-card__suggestion li {
+  margin: 2px 0;
+}
+
 .metadata-block {
   max-height: 240px;
   overflow: auto;
