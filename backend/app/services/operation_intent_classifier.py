@@ -97,6 +97,8 @@ def annotate_steps_with_operation_intents(dsl: dict[str, Any], *, instruction: s
 
 
 def _intent_from_action(action: str, target: str) -> OperationIntentResult | None:
+    if action == "open_url":
+        return _result("enter_page", "navigation", 0.9, "action 指向打开系统入口或页面。", [action])
     if action in {"query_table", "query_table_count"}:
         return _result("query_list", "query", 0.9, "action 指向列表查询或表格计数。", [action])
     if action in {"for_each_table_row", "process_table_rows"}:

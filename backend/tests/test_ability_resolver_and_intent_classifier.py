@@ -15,6 +15,7 @@ from app.services.operation_intent_classifier import OperationIntentClassifier
 def test_operation_intent_classifier_recognizes_common_mis_intents() -> None:
     classifier = OperationIntentClassifier()
     assert classifier.classify(action="business_goal", target="工作台/我的待办").intent == "navigate_path"
+    assert classifier.classify(action="open_url", target="https://work.bypc.com.cn", instruction="输入账号密码").intent == "enter_page"
     assert classifier.classify(target="审批通过").intent == "approval_pass"
     assert classifier.classify(target="查看审批流程").intent == "view_flow"
     assert classifier.classify(target="选择状态").intent == "select_dropdown"

@@ -67,7 +67,7 @@ def test_auth_state_detects_login_captcha_required(page: Page) -> None:
     assert result.shouldStopProtectedSteps is True
 
 
-def test_auth_state_detects_otp_and_code_scanning_challenge(page: Page) -> None:
+def test_auth_state_does_not_treat_alternate_auth_links_as_challenge(page: Page) -> None:
     page.set_content(
         """
         <main>
@@ -76,6 +76,23 @@ def test_auth_state_detects_otp_and_code_scanning_challenge(page: Page) -> None:
           <p>code scanning authentication</p>
           <input name="username" />
           <input type="password" placeholder="Password" />
+          <button>Login</button>
+        </main>
+        """
+    )
+    result = AuthStateDetector().detect_auth_state(page)
+    assert result.authState == "login_page"
+    assert result.failureType == "auth_state_not_logged_in"
+
+
+def test_auth_state_detects_visible_otp_challenge(page: Page) -> None:
+    page.set_content(
+        """
+        <main>
+          <input name="username" />
+          <input type="password" placeholder="Password" />
+          <label>OTP</label>
+          <input name="j_otpcode" placeholder="OTP(One-Time Password)" />
           <button>Login</button>
         </main>
         """
@@ -208,6 +225,31 @@ def test_business_step_is_blocked_after_login_captcha(page: Page, monkeypatch: p
     runtime_text = writer.path("runtime-stream.jsonl").read_text(encoding="utf-8")
     assert "验证码或二次认证" in runtime_text
     assert "正在查找一级菜单" not in runtime_text
+
+
+def test_open_url_is_not_blocked_by_auth_guard_even_with_auth_precondition(page: Page) -> None:
+    page.set_content(
+        """
+        <main>
+          <button>OTP</button>
+          <p>About OTP</p>
+          <p>About code scanning authentication</p>
+          <input name="username" />
+          <input type="password" placeholder="Password" />
+          <button>Login</button>
+        </main>
+        """
+    )
+    result = ProtectedStepGuard().check_before_step(
+        {
+            "action": "open_url",
+            "target": "https://work.bypc.com.cn",
+            "preconditions": {"authState": "logged_in"},
+            "operationIntent": {"intent": "fill_form"},
+        },
+        page,
+    )
+    assert result.allowed is True
 
 
 def test_login_goal_fails_when_submit_returns_error(page: Page, monkeypatch: pytest.MonkeyPatch) -> None:

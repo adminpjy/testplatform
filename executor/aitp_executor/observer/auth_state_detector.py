@@ -68,14 +68,10 @@ CAPTCHA_MARKERS = [
     "captcha",
     "verification code",
     "security code",
-    "otp",
     "one-time password",
     "two-factor",
     "two factor",
     "authentication code",
-    "code scanning authentication",
-    "scanning authentication",
-    "about otp",
 ]
 
 MANUAL_ACTION_MARKERS = [
@@ -321,9 +317,11 @@ def _captcha_evidence(page: Any, lower_text: str, login_form: dict[str, Any]) ->
             "input[id*='captcha' i]",
             "input[placeholder*='验证码']",
             "input[placeholder*='verification' i]",
-            "input[placeholder*='code' i]",
+            "input[placeholder*='security code' i]",
             "input[name*='otp' i]",
             "input[id*='otp' i]",
+            "input[name*='sms_checkcode' i]",
+            "input[id*='sms' i][id*='otp' i]",
         ],
     ):
         evidence.append("captcha input visible")
@@ -351,13 +349,28 @@ def _captcha_evidence(page: Any, lower_text: str, login_form: dict[str, Any]) ->
         ],
     ):
         evidence.append("captcha refresh control visible")
-    if "otp" in lower_text:
+    if _any_visible(page, ["input[name*='otp' i]", "input[id*='otp' i]", "input[name*='sms_checkcode' i]"]):
         evidence.append("OTP challenge visible")
-    if "code scanning authentication" in lower_text or "scanning authentication" in lower_text:
+    if _qr_challenge_visible(page):
         evidence.append("code scanning authentication visible")
     if evidence and login_form.get("form_visible"):
         evidence.append("login form visible")
     return list(dict.fromkeys(evidence))
+
+
+def _qr_challenge_visible(page: Any) -> bool:
+    return _any_visible(
+        page,
+        [
+            "img[src*='qr' i]",
+            "img[id*='qr' i]",
+            "img[class*='qr' i]",
+            "canvas[id*='qr' i]",
+            "canvas[class*='qr' i]",
+            ".qrcode",
+            ".qr-code",
+        ],
+    )
 
 
 def _login_submit_visible(page: Any) -> bool:

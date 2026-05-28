@@ -158,13 +158,16 @@ AUTH_REQUIRED_INTENTS = {
 
 
 def step_requires_auth(step: dict[str, Any]) -> bool:
+    action = str(step.get("action") or "")
+    if action == "open_url":
+        return False
+
     preconditions = step.get("preconditions")
     if isinstance(preconditions, dict) and preconditions.get("authState") == "logged_in":
         return True
     if isinstance(preconditions, list) and "auth_state_logged_in" in [str(item) for item in preconditions]:
         return True
 
-    action = str(step.get("action") or "")
     target = str(step.get("target") or "")
     intent = str(step.get("intent") or (step.get("operationIntent") or {}).get("intent") or "")
     if action == "business_goal" and _is_login_target(target, intent):

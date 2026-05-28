@@ -138,6 +138,23 @@ def test_post_processor_adds_auth_precondition_to_business_steps() -> None:
     assert normalized["steps"][2]["preconditions"] == {"authState": "logged_in"}
 
 
+def test_post_processor_never_requires_auth_for_open_url() -> None:
+    normalized = DslPostProcessor().normalize_dsl(
+        {
+            "steps": [
+                {
+                    "action": "open_url",
+                    "target": "https://work.example.test/",
+                    "operationIntent": {"intent": "fill_form"},
+                    "preconditions": {"authState": "logged_in"},
+                }
+            ]
+        }
+    )
+    assert normalized["steps"][0]["action"] == "open_url"
+    assert "preconditions" not in normalized["steps"][0]
+
+
 def test_post_processor_collects_missing_critical_fields() -> None:
     normalized = DslPostProcessor().normalize_dsl(
         {

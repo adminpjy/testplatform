@@ -26,6 +26,10 @@ class DslPostProcessor:
         action = str(current.get("action") or "")
         target = str(current.get("target") or "")
 
+        if action == "open_url":
+            _remove_auth_precondition(current)
+            return current
+
         if action == "for_each_table_row":
             _remember_original(current, action, target, "for_each_table_row is normalized to process_table_rows")
             current["action"] = "process_table_rows"
@@ -189,10 +193,31 @@ def _ensure_auth_precondition(step: dict[str, Any]) -> None:
     step["preconditions"] = {"authState": "logged_in"}
 
 
+def _remove_auth_precondition(step: dict[str, Any]) -> None:
+    current = step.get("preconditions")
+    if isinstance(current, dict):
+        cleaned = dict(current)
+        if cleaned.get("authState") == "logged_in":
+            cleaned.pop("authState", None)
+        if cleaned:
+            step["preconditions"] = cleaned
+        else:
+            step.pop("preconditions", None)
+        return
+    if isinstance(current, list):
+        cleaned = [item for item in current if str(item) != "auth_state_logged_in"]
+        if cleaned:
+            step["preconditions"] = cleaned
+        else:
+            step.pop("preconditions", None)
+
+
 def _requires_auth(step: dict[str, Any]) -> bool:
     action = str(step.get("action") or "")
     target = str(step.get("target") or "")
     intent = str(step.get("intent") or (step.get("operationIntent") or {}).get("intent") or "")
+    if action == "open_url":
+        return False
     if action == "business_goal" and ("登录" in target or intent in {"login", "login_system", "username_password_login"}):
         return False
     if action in AUTH_REQUIRED_ACTIONS:
