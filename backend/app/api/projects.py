@@ -72,6 +72,15 @@ def update_test_project(
 
 @router.delete("/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_test_project(project_id: int, db: Session = Depends(get_db)) -> None:
+    _delete_project_or_404(project_id, db)
+
+
+@router.post("/{project_id}/delete", status_code=status.HTTP_204_NO_CONTENT)
+def delete_test_project_fallback(project_id: int, db: Session = Depends(get_db)) -> None:
+    _delete_project_or_404(project_id, db)
+
+
+def _delete_project_or_404(project_id: int, db: Session) -> None:
     project = get_project_model(db, project_id)
     if project is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")

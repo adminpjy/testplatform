@@ -1,4 +1,4 @@
-import { apiUrl, deleteJson, getJson, postJson, putJson } from "./client";
+import { ApiError, apiUrl, deleteJson, getJson, postJson, putJson } from "./client";
 import type {
   AbilityRule,
   AbilityStats,
@@ -73,8 +73,16 @@ export function updateProject(projectId: number, payload: Partial<ProjectCreateP
   return putJson<TestProject>(`/api/projects/${projectId}`, payload);
 }
 
-export function deleteProject(projectId: number): Promise<void> {
-  return deleteJson<void>(`/api/projects/${projectId}`);
+export async function deleteProject(projectId: number): Promise<void> {
+  try {
+    await deleteJson<void>(`/api/projects/${projectId}`);
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 405) {
+      await postJson<void>(`/api/projects/${projectId}/delete`, {});
+      return;
+    }
+    throw error;
+  }
 }
 
 export function getProjectAccounts(projectId: number): Promise<ProjectAccount[]> {
