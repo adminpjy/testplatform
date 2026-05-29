@@ -1,6 +1,8 @@
 from fastapi import APIRouter
 
+from app.api.accounts import router as accounts_router
 from app.api.abilities import router as abilities_router
+from app.api.cases import router as cases_router
 from app.api.failure_samples import router as failure_samples_router
 from app.api.files import router as files_router
 from app.api.human_interventions import router as human_interventions_router
@@ -16,6 +18,8 @@ api_router = APIRouter()
 api_router.include_router(system_router)
 api_router.include_router(systems_router, prefix="/api/systems", tags=["systems"])
 api_router.include_router(projects_router, prefix="/api/projects", tags=["projects"])
+api_router.include_router(accounts_router, prefix="/api/accounts", tags=["accounts"])
+api_router.include_router(cases_router, prefix="/api/cases", tags=["cases"])
 api_router.include_router(prompts_router, prefix="/api/prompts", tags=["prompts"])
 api_router.include_router(abilities_router, prefix="/api/abilities", tags=["abilities"])
 api_router.include_router(test_runs_router, prefix="/api/test-runs", tags=["test-runs"])
