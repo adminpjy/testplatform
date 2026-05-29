@@ -752,17 +752,6 @@ button:disabled {
   padding: 16px;
 }
 
-.llm-mock-warning {
-  margin-bottom: 12px;
-  border: 1px solid #f59e0b;
-  border-radius: 8px;
-  background: #fffbeb;
-  color: #92400e;
-  font-size: 13px;
-  font-weight: 700;
-  padding: 10px 12px;
-}
-
 .llm-status-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

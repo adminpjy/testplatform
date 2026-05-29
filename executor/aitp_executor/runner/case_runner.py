@@ -1513,13 +1513,12 @@ def _json_dumps(value: Any) -> str:
 
 def _sandbox_metadata(provider: SandboxProvider) -> dict[str, Any]:
     mode = os.getenv("EXECUTOR_MODE", "local").strip().lower() or "local"
-    cube_mock = _env_bool("CUBE_MOCK", True)
     local_browser = _env_bool("LOCAL_BROWSER", True)
     provider_name = provider.__class__.__name__
     is_cube = mode == "cube" or provider_name == "CubeSandboxProvider"
     if is_cube:
         mode_label = "Cube Sandbox"
-        if cube_mock or local_browser:
+        if local_browser:
             starting_message = "正在拉起 Cube Sandbox 执行环境，并使用本地浏览器承载本阶段运行。"
             ready_message = "Cube Sandbox 执行环境已就绪，已准备开始页面操作。"
         else:
@@ -1533,7 +1532,6 @@ def _sandbox_metadata(provider: SandboxProvider) -> dict[str, Any]:
         "mode": mode,
         "mode_label": mode_label,
         "provider": provider_name,
-        "cube_mock": cube_mock,
         "local_browser": local_browser,
         "cube_api_url": _safe_env_url("CUBE_API_URL"),
         "cube_cdp_port": os.getenv("CUBE_CDP_PORT", ""),

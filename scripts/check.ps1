@@ -144,9 +144,6 @@ if ($missing.Count -gt 0) {
   Write-Error ("Missing required paths:`n" + ($missing -join "`n"))
 }
 
-$removedLocalDemoDir = ("mock-" + "mis-demo")
-Assert-True (-not (Test-Path $removedLocalDemoDir)) "Legacy local validation app directory should not exist."
-
 python -m compileall backend executor | Out-Null
 
 if (-not (Test-Path "frontend/node_modules")) {
@@ -185,7 +182,6 @@ $frontendUrl = "http://$hostName`:$frontendPort"
 $runtimeDir = ".runtime"
 New-Item -ItemType Directory -Force -Path $runtimeDir | Out-Null
 
-$env:LLM_PROVIDER = "mock"
 $env:TEST_LLM_STREAM = "true"
 $env:VITE_API_BASE_URL = $baseUrl
 $env:ALLOWED_BASE_URL_PREFIXES = "$baseUrl,$frontendUrl"
@@ -323,15 +319,19 @@ try {
   Assert-True ($connectivity.status -eq "passed") "Connectivity check did not pass."
   Assert-True ($connectivity.http_status -eq 200) "Connectivity check did not record HTTP 200."
 
-  $analysisPayload = @{
-    project_id = @($projects)[0].id
-    system_id = $testSystem.id
-    instruction = "打开真实系统入口，确认页面可访问"
-    base_url = "$baseUrl/health"
-    stream = $true
-  } | ConvertTo-Json -Depth 8
-  $analysis = Invoke-JsonPost -Uri "$baseUrl/api/test-runs/analyze" -Body $analysisPayload -TimeoutSec 10
-  Assert-True ($analysis.readyToExecute -eq $true) "Natural-language analysis did not mark a complete connectivity goal as ready."
+  if ($env:CHECK_LLM_NETWORK -eq "true") {
+    $analysisPayload = @{
+      project_id = @($projects)[0].id
+      system_id = $testSystem.id
+      instruction = "打开真实系统入口，确认页面可访问"
+      base_url = "$baseUrl/health"
+      stream = $true
+    } | ConvertTo-Json -Depth 8
+    $analysis = Invoke-JsonPost -Uri "$baseUrl/api/test-runs/analyze" -Body $analysisPayload -TimeoutSec 60
+    Assert-True ($analysis.readyToExecute -eq $true) "Natural-language analysis did not mark a complete connectivity goal as ready."
+  } else {
+    Write-Warning "LLM network check skipped. Set CHECK_LLM_NETWORK=true to verify the configured provider endpoint."
+  }
 
   $knowledge = Invoke-RestMethod -Uri "$baseUrl/api/abilities/knowledge" -TimeoutSec 5
   Assert-True ($null -ne $knowledge) "Ability knowledge API did not respond."

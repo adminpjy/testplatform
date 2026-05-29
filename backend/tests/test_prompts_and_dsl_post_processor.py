@@ -1,13 +1,96 @@
 from pathlib import Path
+import json
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app.llm.mock_provider import MockLLMProvider
+from app.llm.provider import LLMRequest
 from app.schemas.test_runs import NaturalLanguageTestRequest
 from app.services.dsl_post_processor import DslPostProcessor
 from app.services.natural_language_parser import NaturalLanguageParser
 from app.services.prompt_manager import PromptManager
+
+
+class StaticTestLLMProvider:
+    def complete(self, request: LLMRequest) -> str:
+        if request.prompt_key == "test_dsl_generation":
+            return json.dumps(_test_plan_response(request.user_prompt), ensure_ascii=False)
+        return json.dumps(_test_analysis_response(request.user_prompt), ensure_ascii=False)
+
+    def stream_complete(self, request: LLMRequest):
+        yield self.complete(request)
+
+
+def _test_analysis_response(prompt: str) -> dict:
+    return {
+        "readyToExecute": True,
+        "confidence": 0.9,
+        "understoodGoal": "测试目标已识别",
+        "missingFields": [],
+        "clarifyingQuestions": [],
+        "assumptions": [],
+        "riskLevel": "low",
+        "normalizedInstruction": "测试目标已识别",
+    }
+
+
+def _test_plan_response(prompt: str) -> dict:
+    instruction = _instruction_from_prompt(prompt)
+    steps: list[dict] = []
+    test_data: dict = {}
+    missing_fields: list[str] = []
+    if "登录系统" in instruction:
+        steps.append({"action": "business_goal", "target": "登录系统", "intent": "login_system"})
+    if "工作台/我的待办" in instruction:
+        steps.append(
+            {
+                "action": "navigate_path",
+                "target": "工作台/我的待办",
+                "pathSegments": ["工作台", "我的待办"],
+                "navigationType": "menu_path",
+            }
+        )
+    if "打开一条我的待办" in instruction:
+        steps.append({"action": "open_table_row", "target": "我的待办列表"})
+    if "处理所有我的待办" in instruction or "每一条" in instruction:
+        steps.append({"action": "process_table_rows", "target": "我的待办列表"})
+    if "审批通过" in instruction:
+        steps.append({"action": "business_goal", "target": "审批通过当前单据", "intent": "approval_pass"})
+    if "查看审批流程" in instruction:
+        steps.append({"action": "business_goal", "target": "查看审批流程", "intent": "approval_flow_view"})
+    if "新增用户" in instruction:
+        steps.append({"action": "business_goal", "target": "新增用户", "intent": "create_record"})
+        if "组织机构为信息中心" in instruction:
+            test_data["组织机构"] = "信息中心"
+        if "负责人张三" in instruction:
+            test_data["负责人"] = "张三"
+    if "删除用户" in instruction and "用户名" not in instruction:
+        missing_fields.append("删除目标记录")
+    return {
+        "caseName": "静态测试用例",
+        "baseUrl": "https://work.example.test/",
+        "credentials": {},
+        "testData": test_data,
+        "settings": {},
+        "steps": steps,
+        "missingFields": missing_fields,
+        "clarifyingQuestions": [],
+    }
+
+
+def _instruction_from_prompt(prompt: str) -> str:
+    text = prompt.split("INPUT_JSON:", 1)[-1]
+    decoder = json.JSONDecoder()
+    for index, char in enumerate(text):
+        if char != "{":
+            continue
+        try:
+            value, _ = decoder.raw_decode(text[index:])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value, dict):
+            return str(value.get("instruction") or "")
+    return prompt
 
 
 def test_natural_language_plan_generates_navigate_path() -> None:
@@ -17,7 +100,7 @@ def test_natural_language_plan_generates_navigate_path() -> None:
         credentials={"username": "tester", "secret_ref": "runtime"},
         stream=True,
     )
-    dsl = NaturalLanguageParser(provider=MockLLMProvider()).plan(payload)
+    dsl = NaturalLanguageParser(provider=StaticTestLLMProvider()).plan(payload)
     assert any(step.get("action") == "navigate_path" and step.get("pathSegments") == ["工作台", "我的待办"] for step in dsl.steps)
 
 
@@ -27,7 +110,7 @@ def test_natural_language_plan_generates_open_table_row_for_single_todo() -> Non
         base_url="https://work.example.test/",
         stream=True,
     )
-    dsl = NaturalLanguageParser(provider=MockLLMProvider()).plan(payload)
+    dsl = NaturalLanguageParser(provider=StaticTestLLMProvider()).plan(payload)
     assert any(step.get("action") == "open_table_row" for step in dsl.steps)
     assert not any(step.get("action") == "process_table_rows" for step in dsl.steps)
 
@@ -38,7 +121,7 @@ def test_natural_language_plan_generates_process_table_rows_only_for_all_todos()
         base_url="https://work.example.test/",
         stream=True,
     )
-    dsl = NaturalLanguageParser(provider=MockLLMProvider()).plan(payload)
+    dsl = NaturalLanguageParser(provider=StaticTestLLMProvider()).plan(payload)
     assert any(step.get("action") == "process_table_rows" for step in dsl.steps)
 
 
@@ -48,7 +131,7 @@ def test_natural_language_plan_generates_approval_pass_business_goal() -> None:
         base_url="https://work.example.test/",
         stream=True,
     )
-    dsl = NaturalLanguageParser(provider=MockLLMProvider()).plan(payload)
+    dsl = NaturalLanguageParser(provider=StaticTestLLMProvider()).plan(payload)
     assert any(step.get("action") == "business_goal" and step.get("intent") == "approval_pass" for step in dsl.steps)
 
 
@@ -58,7 +141,7 @@ def test_natural_language_plan_generates_approval_flow_view_intent() -> None:
         base_url="https://work.example.test/",
         stream=True,
     )
-    dsl = NaturalLanguageParser(provider=MockLLMProvider()).plan(payload)
+    dsl = NaturalLanguageParser(provider=StaticTestLLMProvider()).plan(payload)
     assert any(step.get("action") == "business_goal" and step.get("intent") == "approval_flow_view" for step in dsl.steps)
 
 
@@ -68,7 +151,7 @@ def test_natural_language_plan_extracts_form_test_data() -> None:
         base_url="https://work.example.test/",
         stream=True,
     )
-    dsl = NaturalLanguageParser(provider=MockLLMProvider()).plan(payload)
+    dsl = NaturalLanguageParser(provider=StaticTestLLMProvider()).plan(payload)
     assert dsl.testData["组织机构"] == "信息中心"
     assert dsl.testData["负责人"] == "张三"
     assert any(step.get("intent") == "create_record" for step in dsl.steps)
@@ -80,7 +163,7 @@ def test_natural_language_plan_marks_delete_missing_record_target() -> None:
         base_url="https://work.example.test/",
         stream=True,
     )
-    dsl = NaturalLanguageParser(provider=MockLLMProvider()).plan(payload)
+    dsl = NaturalLanguageParser(provider=StaticTestLLMProvider()).plan(payload)
     assert "删除目标记录" in dsl.missingFields
     assert not any(step.get("intent") == "delete_record" for step in dsl.steps)
 
@@ -239,6 +322,6 @@ def test_connectivity_goal_is_ready_when_base_url_is_provided() -> None:
         base_url="https://work.example.test/health",
         stream=True,
     )
-    result = NaturalLanguageParser(provider=MockLLMProvider()).analyze(payload)
+    result = NaturalLanguageParser(provider=StaticTestLLMProvider()).analyze(payload)
     assert result.readyToExecute is True
     assert result.missingFields == []

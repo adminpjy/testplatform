@@ -46,7 +46,7 @@ class LLMElementResolver:
 
 
 def _configured_from_env() -> bool:
-    provider = os.getenv("LLM_PROVIDER", "mock").strip().lower()
+    provider = os.getenv("LLM_PROVIDER", "openai_compatible").strip().lower()
     return provider in {"openai", "openai-compatible", "openai_compatible"} and bool(os.getenv("TEST_LLM_BASE_URL")) and bool(os.getenv("TEST_LLM_API_KEY"))
 
 

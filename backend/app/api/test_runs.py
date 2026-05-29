@@ -355,20 +355,16 @@ def _analysis_events(payload: NaturalLanguageTestRequest) -> Iterator[str]:
         return f"id: {event_id}\nevent: {message_type}\ndata: {json.dumps(body, ensure_ascii=False, default=str)}\n\n"
 
     parser = NaturalLanguageParser()
-    provider_is_mock = settings.llm_provider.strip().lower() == "mock"
     yield emit(
-        "warning" if provider_is_mock else "progress",
+        "progress",
         "understanding",
-        "当前使用 MockLLMProvider，不会调用真实 LLM；请配置 LLM_PROVIDER=openai_compatible 后重启服务。"
-        if provider_is_mock
-        else "正在理解测试目标，并准备安全的 LLM 输入。",
+        "正在理解测试目标，并准备安全的 LLM 输入。",
         "natural_language_parser",
         {
             "provider": settings.llm_provider,
             "model": settings.test_llm_model,
             "endpoint": _safe_llm_endpoint(),
             "stream": payload.stream if payload.stream is not None else settings.test_llm_stream,
-            "mock": provider_is_mock,
             "password_policy": "credentials and password-like text are redacted before prompt construction",
         },
     )

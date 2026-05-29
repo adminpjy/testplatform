@@ -197,7 +197,6 @@ export function runtimeDetailView(message: RuntimeMessage): RuntimeDetailView | 
   const rawLength = metadataValue(metadata, "rawLength");
   const modeLabel = metadataValue(metadata, "mode_label");
   const sandboxStatus = metadataValue(metadata, "sandbox_status");
-  const cubeMock = metadataValue(metadata, "cube_mock");
   const localBrowser = metadataValue(metadata, "local_browser");
   const waitedMs = metadataValue(metadata, "waited_ms");
   const textLength = metadataValue(metadata, "text_length");
@@ -226,9 +225,6 @@ export function runtimeDetailView(message: RuntimeMessage): RuntimeDetailView | 
   if (rawLength) lines.push(`回复长度：${rawLength} 字符`);
   if (modeLabel) lines.push(`执行环境：${modeLabel}`);
   if (sandboxStatus) lines.push(`环境状态：${sandboxStatus === "ready" ? "已就绪" : "启动中"}`);
-  if (cubeMock !== null && message.method === "sandbox_provider") {
-    lines.push(`Cube Mock：${cubeMock === "true" ? "开启" : "关闭"}`);
-  }
   if (localBrowser !== null && message.method === "sandbox_provider") {
     lines.push(`本地浏览器承载：${localBrowser === "true" ? "是" : "否"}`);
   }

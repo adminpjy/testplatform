@@ -37,17 +37,11 @@ export function AnalysisTracePanel({
         <span>{analyzing ? "流式分析中" : "分析已结束"}</span>
       </div>
 
-      {status.isMock ? (
-        <div className="llm-mock-warning">
-          当前未调用真实 LLM，正在使用 MockLLMProvider。请配置正式 LLM 环境变量并重启服务。
-        </div>
-      ) : null}
-
       <div className="llm-status-grid">
         <div>
           <span>LLM 交互</span>
           <strong>{status.provider} / {status.model}</strong>
-          <small>{status.endpoint || "使用本地 Mock Provider"}</small>
+          <small>{status.endpoint || "未配置模型接口"}</small>
         </div>
         <div>
           <span>当前状态</span>
@@ -214,10 +208,9 @@ function buildAnalysisStatus(messages: RuntimeMessage[], dsl: TestCaseDSL | null
   const latest = [...messages].reverse().find((message) => message.phase !== "llm_chunk");
   const dslStatus = buildDslStatus(messages, dsl, analyzing);
   return {
-    provider: metadataValue(providerMessage, "provider") || "mock",
+    provider: metadataValue(providerMessage, "provider") || "openai_compatible",
     model: metadataValue(providerMessage, "model") || "DeepSeek-V4",
     endpoint: metadataValue(providerMessage, "endpoint"),
-    isMock: metadataValue(providerMessage, "mock") === "true" || metadataValue(providerMessage, "provider") === "mock",
     currentStage: latest ? readableTitle(latest) : "等待分析",
     latestMessage: latest?.content || "点击分析后显示 LLM 交互状态",
     dslSteps: dsl?.steps.length || 0,

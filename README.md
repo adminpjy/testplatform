@@ -75,7 +75,6 @@ Formal runtime controls:
 
 ```text
 EXECUTOR_MODE=cube
-CUBE_MOCK=true
 LOCAL_BROWSER=true
 RUNS_ROOT=artifacts/runs
 ALLOWED_BASE_URL_PREFIXES=https://work.bypc.com.cn

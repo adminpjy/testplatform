@@ -31,10 +31,6 @@ class LLMProvider(Protocol):
 
 def get_llm_provider(config: Settings = settings) -> LLMProvider:
     provider_name = config.llm_provider.strip().lower()
-    if provider_name == "mock":
-        from app.llm.mock_provider import MockLLMProvider
-
-        return MockLLMProvider()
     if provider_name in {"openai", "openai-compatible", "openai_compatible"}:
         from app.llm.openai_compatible import OpenAICompatibleProvider
 
