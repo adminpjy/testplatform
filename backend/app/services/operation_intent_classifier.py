@@ -39,6 +39,12 @@ class OperationIntentClassifier:
         if action_intent is not None:
             return action_intent
 
+        login_hit = _login_expression(target_text) or _login_expression(str(stepName or ""))
+        if action_text == "business_goal" and login_hit:
+            return _result("login", "authentication", 0.94, "目标明确指向登录系统。", [login_hit])
+        if not action_text and login_hit:
+            return _result("login", "authentication", 0.9, "自然语言目标明确指向登录系统。", [login_hit])
+
         expression_rules = [
             ("view_flow", "approval", 0.9, ["查看审批流程", "审批流程", "流程图", "审批记录"]),
             ("approval_pass", "approval", 0.9, ["审批通过", "审核通过", "同意", "批准"]),
@@ -121,6 +127,17 @@ def _intent_from_action(action: str, target: str) -> OperationIntentResult | Non
         if any(token in target for token in ["日期", "时间", "开始", "结束", "有效期"]):
             return _result("select_date", "form", 0.78, "输入目标是日期或时间字段。", [target])
         return _result("fill_field", "form", 0.78, "action 指向字段输入。", [action])
+    return None
+
+
+def _login_expression(text: str) -> str | None:
+    compact = str(text or "").strip().lower().replace(" ", "")
+    if not compact:
+        return None
+    expressions = ["登录系统", "登录", "login", "signin", "sign-in"]
+    for expression in expressions:
+        if expression in compact:
+            return expression
     return None
 
 

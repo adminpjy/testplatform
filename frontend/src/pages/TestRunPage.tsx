@@ -10,6 +10,7 @@ import {
   getSystems,
   getRunFailureSamples,
   getRunHumanInterventions,
+  getTestRun,
   getTestRunArtifacts,
   getTestRuns,
   getTestRunSteps,
@@ -98,6 +99,16 @@ export function TestRunPage() {
   useEffect(() => {
     void bootstrap();
   }, []);
+
+  useEffect(() => {
+    if (!activeRun || !["created", "running", "analyzing", "planned"].includes(activeRun.status)) {
+      return;
+    }
+    const timer = window.setInterval(() => {
+      void refreshActiveRun(activeRun.id);
+    }, 2000);
+    return () => window.clearInterval(timer);
+  }, [activeRun?.id, activeRun?.status]);
 
   async function bootstrap() {
     try {
@@ -324,6 +335,28 @@ export function TestRunPage() {
     setInterventions(interventionList);
     setScreenshotRefreshKey(Date.now());
     setRuntimeReloadKey((value) => value + 1);
+  }
+
+  async function refreshActiveRun(runId: number) {
+    try {
+      const [nextRun, stepList, artifactList, sampleList, interventionList, runList] = await Promise.all([
+        getTestRun(runId),
+        getTestRunSteps(runId),
+        getTestRunArtifacts(runId),
+        getRunFailureSamples(runId),
+        getRunHumanInterventions(runId),
+        getTestRuns()
+      ]);
+      setActiveRun(nextRun);
+      setSteps(stepList);
+      setArtifacts(artifactList);
+      setFailureSamples(sampleList);
+      setInterventions(interventionList);
+      setRuns(runList);
+      setScreenshotRefreshKey(Date.now());
+    } catch (error) {
+      setApiError(error instanceof Error ? error.message : String(error));
+    }
   }
 
   const canExecute = Boolean(plannedDsl && selectedProjectId && instruction.trim() && !isAnalyzing && !isExecuting);

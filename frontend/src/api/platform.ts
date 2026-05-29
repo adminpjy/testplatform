@@ -129,6 +129,10 @@ export function getTestRuns(): Promise<TestRun[]> {
   return getJson<TestRun[]>("/api/test-runs");
 }
 
+export function getTestRun(runId: number): Promise<TestRun> {
+  return getJson<TestRun>(`/api/test-runs/${runId}`);
+}
+
 export function getTestRunSteps(runId: number): Promise<TestStepRun[]> {
   return getJson<TestStepRun[]>(`/api/test-runs/${runId}/steps`);
 }

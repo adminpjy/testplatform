@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
-import { navigationItems, routeFromHash, type AppRoute } from "./routes/navigation";
+import { routeFromHash, type AppRoute } from "./routes/navigation";
 import { AbilityCenterPage } from "./pages/AbilityCenterPage";
 import { FailureSamplesPage } from "./pages/FailureSamplesPage";
 import { ReportsPage } from "./pages/ReportsPage";
@@ -19,18 +19,10 @@ export default function App() {
     return () => window.removeEventListener("hashchange", handleHashChange);
   }, []);
 
-  const activeItem = useMemo(() => navigationItems.find((item) => item.id === route), [route]);
-
   return (
     <div className="page-shell">
       <TopNav route={route} />
       <main className="page-content">
-        <header className="app-topbar">
-          <div>
-            <h1>{activeItem?.label || "测试运行"}</h1>
-            <p>{activeItem?.description || ""}</p>
-          </div>
-        </header>
         {renderPage(route)}
       </main>
     </div>

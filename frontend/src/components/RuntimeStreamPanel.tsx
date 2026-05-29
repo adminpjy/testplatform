@@ -15,7 +15,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { openRuntimeStream } from "../api/runtimeStream";
 import { fileUrl } from "../api/client";
 import type { TestStepRun } from "../types/platform";
-import type { RuntimeMessage } from "../types/runtime";
+import type { RuntimeMessage, RuntimeMessageType } from "../types/runtime";
 import {
   methodLabel,
   metadataString,
@@ -46,6 +46,18 @@ const FILTERS: Array<{ value: RuntimeFilter; label: string }> = [
   { value: "vision", label: "视觉兜底" },
   { value: "error", label: "错误" }
 ];
+
+interface RuntimeStepGroup {
+  key: string;
+  title: string;
+  summary: string;
+  type: RuntimeMessageType;
+  latest: RuntimeMessage;
+  messages: RuntimeMessage[];
+  step: TestStepRun | null;
+  stepLabel: string | null;
+  screenshotPath: string | null;
+}
 
 export function RuntimeStreamPanel({
   runId,
@@ -101,9 +113,12 @@ export function RuntimeStreamPanel({
   const visibleMessages = useMemo(() => {
     return filter === "all" ? messages : messages.filter((message) => runtimeFilterOf(message) === filter);
   }, [filter, messages]);
+  const visibleGroups = useMemo(() => {
+    return buildRuntimeGroups(visibleMessages, steps);
+  }, [steps, visibleMessages]);
   const emptyText = useMemo(() => {
-    return visibleMessages.length === 0 ? "暂无运行消息" : null;
-  }, [visibleMessages.length]);
+    return visibleGroups.length === 0 ? "暂无运行消息" : null;
+  }, [visibleGroups.length]);
 
   return (
     <section className={["runtime-stream-panel", className].filter(Boolean).join(" ")}>
@@ -136,51 +151,61 @@ export function RuntimeStreamPanel({
 
       <div className="runtime-stream-panel__body" aria-live="polite">
         {emptyText ? <div className="runtime-stream-panel__empty">{emptyText}</div> : null}
-        {visibleMessages.map((message, index) => {
-          const step = findMessageStep(message, steps);
-          const eventScreenshotPath = metadataString(message, "screenshot_path") || metadataString(message, "screenshotUrl");
-          const screenshot = step?.screenshot_path ? fileUrl(step.screenshot_path) : eventScreenshotPath ? fileUrl(eventScreenshotPath) : null;
-          const loading = index === visibleMessages.length - 1 && connected && message.type === "progress";
-          const detail = runtimeDetailView(message);
+        {visibleGroups.map((group, index) => {
+          const screenshot = group.screenshotPath ? fileUrl(group.screenshotPath) : null;
+          const loading = index === visibleGroups.length - 1 && connected && group.type === "progress";
           return (
-            <article className={`runtime-stream-message runtime-stream-message--${message.type}`} key={message.id}>
-              <div className="runtime-stream-message__icon">{messageIcon(message, loading)}</div>
-              <div className="runtime-stream-message__content">
-                <div className="runtime-stream-message__title-row">
-                  <time dateTime={message.createdAt || undefined}>{formatTime(message.createdAt)}</time>
-                  <strong>{readableRuntimeTitle(message)}</strong>
+            <article className={`runtime-step-group runtime-step-group--${group.type}`} key={group.key}>
+              <div className="runtime-step-group__icon">{messageIcon(group.latest, loading)}</div>
+              <div className="runtime-step-group__content">
+                <div className="runtime-step-group__title-row">
+                  <time dateTime={group.latest.createdAt || undefined}>{formatTime(group.latest.createdAt)}</time>
+                  <strong>{group.title}</strong>
+                  {loading ? <span className="runtime-step-group__running">执行中</span> : null}
                 </div>
-                <p>{readableRuntimeMessage(message)}</p>
-                <div className="runtime-stream-message__meta">
-                  <span>方法：{methodLabel(message.method)}</span>
-                  {step ? <span>步骤：{step.step_id || step.id}</span> : null}
+                <p>{group.summary}</p>
+                <div className="runtime-step-group__meta">
+                  {group.stepLabel ? <span>{group.stepLabel}</span> : null}
+                  <span>{group.messages.length} 条过程日志</span>
                 </div>
-                <div className="runtime-stream-message__actions">
+                <div className="runtime-step-group__actions">
                   {screenshot ? (
                     <button
                       className="ghost-button"
                       type="button"
-                      onClick={() => onPreviewScreenshot?.(screenshot, step?.step_name || readableRuntimeTitle(message))}
+                      onClick={() => onPreviewScreenshot?.(screenshot, group.step?.step_name || group.title)}
                     >
                       <Image size={14} />
-                      查看截图
+                      查看步骤截图
                     </button>
                   ) : (
-                    <span className="runtime-stream-message__no-shot">暂无截图</span>
+                    <span className="runtime-step-group__no-shot">等待步骤截图</span>
                   )}
-                  {detail ? (
-                    <details className="runtime-stream-message__details">
-                      <summary>
-                        <Eye size={14} />
-                        查看详情
-                      </summary>
-                      <ul className="runtime-detail-list">
-                        {detail.lines.map((line) => (
-                          <li key={line}>{line}</li>
-                        ))}
-                      </ul>
-                    </details>
-                  ) : null}
+                  <details className="runtime-step-group__details">
+                    <summary>
+                      <Eye size={14} />
+                      查看详情
+                    </summary>
+                    <div className="runtime-log-list">
+                      {group.messages.map((message) => (
+                        <div className="runtime-log-line" key={message.id}>
+                          <div className="runtime-log-line__header">
+                            <time dateTime={message.createdAt || undefined}>{formatTime(message.createdAt)}</time>
+                            <strong>{readableRuntimeTitle(message)}</strong>
+                            <span>{methodLabel(message.method)}</span>
+                          </div>
+                          <p>{readableRuntimeMessage(message)}</p>
+                          {runtimeDetailView(message) ? (
+                            <ul>
+                              {runtimeDetailView(message)?.lines.map((line) => (
+                                <li key={line}>{line}</li>
+                              ))}
+                            </ul>
+                          ) : null}
+                        </div>
+                      ))}
+                    </div>
+                  </details>
                 </div>
               </div>
             </article>
@@ -204,6 +229,124 @@ function appendMessage(current: RuntimeMessage[], next: RuntimeMessage): Runtime
 
 function dedupeMessages(messages: RuntimeMessage[]): RuntimeMessage[] {
   return messages.reduce<RuntimeMessage[]>(appendMessage, []);
+}
+
+function buildRuntimeGroups(messages: RuntimeMessage[], steps: TestStepRun[]): RuntimeStepGroup[] {
+  const grouped = new Map<string, RuntimeMessage[]>();
+  for (const message of messages) {
+    const key = runtimeGroupKey(message);
+    grouped.set(key, [...(grouped.get(key) || []), message]);
+  }
+
+  return Array.from(grouped.entries()).map(([key, groupMessages]) => {
+    const sorted = [...groupMessages].sort((left, right) => left.id - right.id);
+    const latest = sorted[sorted.length - 1];
+    const step = findMessageStep(latest, steps) || findGroupStep(sorted, steps);
+    const stepNumber = groupStepNumber(sorted, step);
+    const title = runtimeGroupTitle(key, latest, step, stepNumber);
+    return {
+      key,
+      title,
+      summary: runtimeGroupSummary(sorted, latest),
+      type: runtimeGroupType(sorted),
+      latest,
+      messages: sorted,
+      step,
+      stepLabel: stepNumber ? `步骤 S${String(stepNumber).padStart(3, "0")}` : null,
+      screenshotPath: runtimeGroupScreenshot(sorted, step)
+    };
+  });
+}
+
+function runtimeGroupKey(message: RuntimeMessage): string {
+  const stepNumber = metadataString(message, "step_number") || metadataString(message, "step_id");
+  if (stepNumber) return `step-${stepNumber}`;
+  const phase = message.phase || "";
+  if (
+    [
+      "understanding",
+      "planning",
+      "sandbox_starting",
+      "sandbox_ready",
+      "open_system",
+      "open_url",
+      "browser",
+      "page_ready"
+    ].includes(phase)
+  ) {
+    return "stage-prepare";
+  }
+  if (["reporting", "completed", "failed"].includes(phase)) {
+    return "stage-result";
+  }
+  return `event-${phase || message.id}`;
+}
+
+function runtimeGroupTitle(
+  key: string,
+  latest: RuntimeMessage,
+  step: TestStepRun | null,
+  stepNumber: string | null
+): string {
+  if (key === "stage-prepare") return "执行准备";
+  if (key === "stage-result") return "报告与结果";
+  if (stepNumber || step) {
+    const name = step?.step_name || metadataString(latest, "step_name") || metadataString(latest, "target");
+    return `步骤 ${stepNumber ? `S${String(stepNumber).padStart(3, "0")}` : ""}${name ? `：${name}` : ""}`;
+  }
+  return readableRuntimeTitle(latest);
+}
+
+function runtimeGroupSummary(messages: RuntimeMessage[], latest: RuntimeMessage): string {
+  const finalStepMessage = [...messages].reverse().find((message) => message.phase === "step");
+  if (finalStepMessage?.type === "success") {
+    return "步骤已完成，截图和调试证据已保存。";
+  }
+  if (finalStepMessage?.type === "error") {
+    return readableRuntimeMessage(finalStepMessage);
+  }
+  const useful = [...messages]
+    .reverse()
+    .find((message) => !["ability_resolve", "auth_guard"].includes(message.phase || ""));
+  return readableRuntimeMessage(useful || latest);
+}
+
+function runtimeGroupType(messages: RuntimeMessage[]): RuntimeMessageType {
+  if (messages.some((message) => message.type === "error")) return "error";
+  if (messages.some((message) => message.type === "warning")) return "warning";
+  const latest = messages[messages.length - 1];
+  if (latest?.type === "progress") return "progress";
+  if (messages.some((message) => message.type === "success")) return "success";
+  return latest?.type || "text";
+}
+
+function runtimeGroupScreenshot(messages: RuntimeMessage[], step: TestStepRun | null): string | null {
+  const messageWithScreenshot = [...messages]
+    .reverse()
+    .find((message) => metadataString(message, "screenshot_path") || metadataString(message, "screenshotUrl"));
+  return (
+    (messageWithScreenshot
+      ? metadataString(messageWithScreenshot, "screenshot_path") || metadataString(messageWithScreenshot, "screenshotUrl")
+      : null) ||
+    step?.screenshot_path ||
+    null
+  );
+}
+
+function findGroupStep(messages: RuntimeMessage[], steps: TestStepRun[]): TestStepRun | null {
+  for (const message of [...messages].reverse()) {
+    const step = findMessageStep(message, steps);
+    if (step) return step;
+  }
+  return null;
+}
+
+function groupStepNumber(messages: RuntimeMessage[], step: TestStepRun | null): string | null {
+  const messageWithStep = messages.find((message) => metadataString(message, "step_number") || metadataString(message, "step_id"));
+  return (
+    (messageWithStep ? metadataString(messageWithStep, "step_number") || metadataString(messageWithStep, "step_id") : null) ||
+    (step ? String(step.step_id || step.id) : null)
+  );
 }
 
 function formatTime(value: string | null): string {

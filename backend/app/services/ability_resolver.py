@@ -137,6 +137,7 @@ def _request_from_any(value: AbilityResolveRequest | dict[str, Any]) -> AbilityR
 
 def _rule_types_for_intent(intent: str, action: str) -> list[str]:
     mapping = {
+        "login": ["login", "global_interruption", "risk_policy"],
         "navigate_path": ["navigation"],
         "enter_page": ["navigation"],
         "query_list": ["query", "table_detection"],
@@ -197,6 +198,7 @@ def _score_rule(rule: dict[str, Any], payload: AbilityResolveRequest) -> tuple[f
 
 def _preferred_codes(intent: str) -> set[str]:
     return {
+        "login": {"LOGIN-USERNAME-PASSWORD-v1", "LOGIN-SUCCESS-DETECT-v1", "LOGIN-CAPTCHA-DETECT-v1", "LOGIN-RETRY-RISK-v1"},
         "navigate_path": {"NAV-MENU-PATH-v1", "NAV-EXPAND-PARENT-v1", "NAV-ALREADY-ON-TARGET-v1"},
         "enter_page": {"NAV-MENU-PATH-v1", "NAV-DASHBOARD-CARD-v1", "NAV-MENU-SEARCH-v1"},
         "approval_pass": {"APPROVAL-PASS-v1", "APPROVAL-FILL-OPINION-v1", "APPROVAL-CONFIRM-v1"},

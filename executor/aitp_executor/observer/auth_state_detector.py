@@ -43,35 +43,9 @@ LOGIN_FAILURE_MARKERS = [
     "authentication failed",
     "account disabled",
     "account locked",
-    "you have",
-    "retries",
-    "retry",
     "disabled or unbound regular ad account",
     "ad account password was not updated",
-    "forgot password",
     "please contact the administrator",
-]
-
-CAPTCHA_MARKERS = [
-    "验证码",
-    "输入验证码",
-    "图形验证码",
-    "校验码",
-    "动态码",
-    "短信验证码",
-    "手机验证码",
-    "认证码",
-    "二次认证",
-    "安全验证",
-    "滑块验证",
-    "请输入验证码",
-    "captcha",
-    "verification code",
-    "security code",
-    "one-time password",
-    "two-factor",
-    "two factor",
-    "authentication code",
 ]
 
 MANUAL_ACTION_MARKERS = [
@@ -121,26 +95,18 @@ class AuthStateDetector:
 
         login_form = _login_form_state(page, lower)
         failure_evidence = _matching_markers(lower, LOGIN_FAILURE_MARKERS)
-        captcha_evidence = _captcha_evidence(page, lower, login_form)
         manual_evidence = _matching_markers(lower, MANUAL_ACTION_MARKERS)
         interruption_evidence = _matching_markers(lower, LOW_RISK_INTERRUPTION_MARKERS)
         success_evidence = _success_evidence(page, lower, url, title, login_form)
         remaining_retries = _extract_remaining_retries(text)
 
-        if captcha_evidence:
-            evidence = [*captcha_evidence, *failure_evidence, *login_form["evidence"]]
-            if not login_form["business_menu_visible"]:
-                evidence.append("business menu not visible")
+        if success_evidence and not login_form["form_visible"]:
             return AuthStateResult(
-                authState="login_captcha_required",
-                confidence=0.9 if login_form["form_visible"] else 0.85,
-                failureType="authentication_challenge_required",
-                evidence=list(dict.fromkeys(evidence)),
-                remainingRetries=remaining_retries,
-                shouldStopProtectedSteps=True,
-                requiresHumanAction=True,
-                shouldContinue=False,
-                reason="login captcha or authentication challenge is visible",
+                authState="logged_in",
+                confidence=0.9 if login_form["business_menu_visible"] else 0.86,
+                evidence=success_evidence,
+                shouldContinue=True,
+                reason="main application evidence is visible and login form disappeared",
             )
 
         if failure_evidence and login_form["password_visible"] and login_form["submit_visible"]:
@@ -180,15 +146,6 @@ class AuthStateDetector:
                 shouldStopProtectedSteps=True,
                 shouldContinue=False,
                 reason="manual login action is required",
-            )
-
-        if success_evidence and not login_form["form_visible"]:
-            return AuthStateResult(
-                authState="logged_in",
-                confidence=0.86,
-                evidence=success_evidence,
-                shouldContinue=True,
-                reason="main application evidence is visible and login form disappeared",
             )
 
         if interruption_evidence and _has_low_risk_continue_button(page):
@@ -282,12 +239,26 @@ def _login_form_state(page: Any, lower_text: str) -> dict[str, Any]:
             "input[id*='user' i]",
             "input[name*='login' i]",
             "input[id*='login' i]",
-            "input:not([type='hidden']):not([type='password']):not([type='checkbox']):not([type='radio']):not([type='submit'])",
+            "input[name*='account' i]",
+            "input[id*='account' i]",
+            "input[name*='mobile' i]",
+            "input[id*='mobile' i]",
+            "input[placeholder*='用户名']",
+            "input[placeholder*='账号']",
+            "input[placeholder*='账户']",
+            "input[placeholder*='手机号']",
+            "input[placeholder*='User' i]",
+            "input[placeholder*='Account' i]",
+            "input[title*='Login' i]",
+            "input[title*='User' i]",
+            "input[title*='Account' i]",
+            "input[title*='Mobile' i]",
         ],
     )
     submit_visible = _login_submit_visible(page)
     authentication_center_visible = "authentication center" in lower_text or "用户认证中心" in lower_text
-    business_menu_visible = _any_visible(page, ["aside", "nav", "[role='menu']", ".ant-menu", ".el-menu", ".sidebar", ".top-nav"])
+    business_menu_visible = _any_visible(page, ["aside", "nav", "[role='menu']", ".ant-menu", ".el-menu", ".sidebar", ".top-nav", ".home_header", "#layout_sider", ".el-aside"])
+    login_context = authentication_center_visible or "login" in lower_text or "authn" in lower_text or "idp" in lower_text or (password_visible and submit_visible)
     evidence: list[str] = []
     if username_visible:
         evidence.append("username input visible")
@@ -303,74 +274,10 @@ def _login_form_state(page: Any, lower_text: str) -> dict[str, Any]:
         "submit_visible": submit_visible,
         "authentication_center_visible": authentication_center_visible,
         "business_menu_visible": business_menu_visible,
+        "login_context": login_context,
         "form_visible": password_visible and (username_visible or submit_visible),
         "evidence": evidence,
     }
-
-
-def _captcha_evidence(page: Any, lower_text: str, login_form: dict[str, Any]) -> list[str]:
-    evidence = _matching_markers(lower_text, CAPTCHA_MARKERS)
-    if _any_visible(
-        page,
-        [
-            "input[name*='captcha' i]",
-            "input[id*='captcha' i]",
-            "input[placeholder*='验证码']",
-            "input[placeholder*='verification' i]",
-            "input[placeholder*='security code' i]",
-            "input[name*='otp' i]",
-            "input[id*='otp' i]",
-            "input[name*='sms_checkcode' i]",
-            "input[id*='sms' i][id*='otp' i]",
-        ],
-    ):
-        evidence.append("captcha input visible")
-    if _any_visible(
-        page,
-        [
-            "img[src*='captcha' i]",
-            "img[id*='captcha' i]",
-            "img[class*='captcha' i]",
-            "canvas",
-            ".captcha",
-            ".verify-code",
-            ".verification-code",
-        ],
-    ):
-        evidence.append("captcha image visible")
-    if _any_visible(
-        page,
-        [
-            "button:has-text('刷新')",
-            "a:has-text('换一张')",
-            "button:has-text('Refresh')",
-            "[title*='验证码']",
-            "[title*='refresh' i]",
-        ],
-    ):
-        evidence.append("captcha refresh control visible")
-    if _any_visible(page, ["input[name*='otp' i]", "input[id*='otp' i]", "input[name*='sms_checkcode' i]"]):
-        evidence.append("OTP challenge visible")
-    if _qr_challenge_visible(page):
-        evidence.append("code scanning authentication visible")
-    if evidence and login_form.get("form_visible"):
-        evidence.append("login form visible")
-    return list(dict.fromkeys(evidence))
-
-
-def _qr_challenge_visible(page: Any) -> bool:
-    return _any_visible(
-        page,
-        [
-            "img[src*='qr' i]",
-            "img[id*='qr' i]",
-            "img[class*='qr' i]",
-            "canvas[id*='qr' i]",
-            "canvas[class*='qr' i]",
-            ".qrcode",
-            ".qr-code",
-        ],
-    )
 
 
 def _login_submit_visible(page: Any) -> bool:

@@ -38,12 +38,9 @@ export function ErrorSummaryCard({ run, steps, apiError, onIntervention, onDebug
     );
   }
 
-  const authChallenge = isAuthChallenge(errorText);
-  const loginFailure = !authChallenge && isLoginFailure(errorText);
-  const remainingRetries = authChallenge || loginFailure ? remainingRetriesFrom(errorText) : null;
-  const summaryText = authChallenge
-    ? "系统检测到登录流程出现验证码或二次认证，当前尚未进入目标业务系统。为了避免账号被锁定，系统没有继续自动重试，也没有继续执行后续业务步骤。"
-    : loginFailure
+  const loginFailure = isLoginFailure(errorText) || isAuthChallenge(errorText);
+  const remainingRetries = loginFailure ? remainingRetriesFrom(errorText) : null;
+  const summaryText = loginFailure
     ? "系统检测到当前仍停留在认证中心登录页，并发现登录失败提示。为了避免账号被锁定，系统没有继续执行后续业务步骤。"
     : shortSummary(errorText);
   return (
@@ -51,7 +48,7 @@ export function ErrorSummaryCard({ run, steps, apiError, onIntervention, onDebug
       <div className="panel-heading">
         <h2>
           <AlertTriangle size={16} />
-          {authChallenge ? "登录触发验证码，已停止后续测试步骤" : loginFailure ? "登录失败，已停止后续测试步骤" : "错误摘要"}
+          {loginFailure ? "登录未成功，已停止后续测试步骤" : "错误摘要"}
         </h2>
         <button className="ghost-button" type="button" onClick={() => setExpanded((value) => !value)}>
           {expanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
@@ -65,32 +62,11 @@ export function ErrorSummaryCard({ run, steps, apiError, onIntervention, onDebug
         </div>
         <div>
           <span>失败类型</span>
-          <strong>{authChallenge ? "login_captcha_required" : loginFailure ? "login_failed" : failedStep ? readableStepAction(failedStep) : apiError ? "接口错误" : run?.status || "failed"}</strong>
+          <strong>{loginFailure ? "login_failed" : failedStep ? readableStepAction(failedStep) : apiError ? "接口错误" : run?.status || "failed"}</strong>
         </div>
       </div>
       <p>{summaryText}</p>
-      {authChallenge ? (
-        <>
-          <div className="error-summary-card__suggestion">
-            <strong>证据：</strong>
-            <ul>
-              {authChallengeEvidence(errorText).map((item) => <li key={item}>{item}</li>)}
-              {remainingRetries !== null ? <li>剩余重试次数：{remainingRetries}</li> : null}
-            </ul>
-          </div>
-          <div className="error-summary-card__suggestion">
-            <strong>可能原因：</strong>
-            <ul>
-              <li>用户名或密码多次输入错误；</li>
-              <li>认证系统触发验证码；</li>
-              <li>账号需要 OTP 或扫码认证；</li>
-              <li>测试账号未加入白名单；</li>
-              <li>账号存在安全策略限制。</li>
-            </ul>
-          </div>
-          <p className="error-summary-card__suggestion">建议检查测试账号和密码，重置账号失败次数，在测试环境关闭验证码或将测试账号加入白名单；也可以通过人工介入完成验证码后继续检测登录状态。</p>
-        </>
-      ) : loginFailure ? (
+      {loginFailure ? (
         <>
           <div className="error-summary-card__suggestion">
             <strong>证据：</strong>
@@ -114,7 +90,7 @@ export function ErrorSummaryCard({ run, steps, apiError, onIntervention, onDebug
         <p className="error-summary-card__suggestion">建议先查看当前截图和步骤证据；如果页面存在业务弹窗或特殊控件，可发起人工介入并沉淀规则草案。</p>
       )}
       <div className="action-bar">
-        {authChallenge || loginFailure ? (
+        {loginFailure ? (
           <>
             <button className="secondary-button" type="button" onClick={onDebug} disabled={!run}>
               修改账号信息
@@ -218,20 +194,6 @@ function loginEvidence(value: string): string[] {
     evidence.push("Wrong user name or password");
   }
   if (lower.includes("authentication center") || value.includes("认证中心")) evidence.push("Authentication Center / 用户认证中心可见");
-  evidence.push("登录表单仍可见");
-  evidence.push("未检测到业务系统主菜单");
-  return Array.from(new Set(evidence));
-}
-
-function authChallengeEvidence(value: string): string[] {
-  const lower = value.toLowerCase();
-  const evidence: string[] = [];
-  if (value.includes("验证码") || lower.includes("captcha") || lower.includes("verification code")) {
-    evidence.push("验证码或校验码可见");
-  }
-  if (lower.includes("otp") || lower.includes("one-time password")) evidence.push("OTP 认证可见");
-  if (lower.includes("code scanning authentication") || lower.includes("scanning authentication")) evidence.push("扫码认证入口可见");
-  if (lower.includes("login was failed") || value.includes("登录失败")) evidence.push("登录失败提示可见");
   evidence.push("登录表单仍可见");
   evidence.push("未检测到业务系统主菜单");
   return Array.from(new Set(evidence));

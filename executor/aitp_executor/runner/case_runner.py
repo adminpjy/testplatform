@@ -213,6 +213,7 @@ class CaseRunner:
         target = str(step.get("target") or step.get("selector") or "")
         locatable_action = action in {"input", "click", "confirm_dialog", "navigate_menu", "select", "upload_file", "business_goal", "navigate_path"}
         vision_requested = bool((dsl.get("settings") or {}).get("visionFallbackEnabled"))
+        is_login_goal = _is_login_goal_step(step)
         self._emit_runtime(
             writer,
             "progress",
@@ -221,7 +222,8 @@ class CaseRunner:
             "runner",
             {"step_number": step_number, "action": action, "target": target},
         )
-        self._emit_ability_resolution(writer, step_number, step)
+        if action != "open_url":
+            self._emit_ability_resolution(writer, step_number, step)
         writer.append_jsonl(
             "execution-trace.jsonl",
             {"type": "step.execute", "step_number": step_number, "step": _redact_step(step)},
@@ -230,7 +232,7 @@ class CaseRunner:
         auth_failure = self._auth_precondition_failure(page, writer, step_number, step, action, target)
         if auth_failure is not None:
             return auth_failure
-        if action in {"business_goal", "navigate_path"}:
+        if action in {"business_goal", "navigate_path"} and not is_login_goal:
             self._emit_runtime(
                 writer,
                 "progress",
@@ -239,7 +241,7 @@ class CaseRunner:
                 "goal_executor",
                 {"step_number": step_number, "target": target},
             )
-        if locatable_action:
+        if locatable_action and not is_login_goal:
             self._emit_runtime(
                 writer,
                 "progress",
@@ -273,7 +275,7 @@ class CaseRunner:
                 "element_locator",
                 {"step_number": step_number, "action": action, "target": target},
             )
-        if action in {"click", "confirm_dialog", "navigate_menu", "business_goal", "navigate_path"}:
+        if action in {"click", "confirm_dialog", "navigate_menu", "business_goal", "navigate_path"} and not is_login_goal:
             self._emit_runtime(
                 writer,
                 "progress",
@@ -282,7 +284,7 @@ class CaseRunner:
                 "playwright",
                 {"step_number": step_number, "target": target},
             )
-        if action in {"wait_for_text", "assert_text_exists", "assert_text_not_exists", "assert_url_contains", "business_goal", "navigate_path"}:
+        if action in {"wait_for_text", "assert_text_exists", "assert_text_not_exists", "assert_url_contains", "business_goal", "navigate_path"} and not is_login_goal:
             self._emit_runtime(
                 writer,
                 "progress",
@@ -419,7 +421,21 @@ class CaseRunner:
             "step",
             "步骤执行成功" if status == "passed" else str(error_summary),
             "runner",
-            {"step_number": step_number, "action": action, "target": target},
+            {
+                "step_number": step_number,
+                "step_id": result["step_id"],
+                "step_name": result["step_name"],
+                "action": action,
+                "target": target,
+                "status": status,
+                "duration_ms": result["duration_ms"],
+                "screenshot_path": screenshot_path,
+                "dom_snapshot_path": dom_snapshot_path,
+                "accessibility_snapshot_path": accessibility_snapshot_path,
+                "locator_strategy": locator_strategy,
+                "confidence": result["confidence"],
+                "failure_type": failure_type,
+            },
         )
         return result
 
@@ -581,7 +597,21 @@ class CaseRunner:
             "step",
             error_summary,
             "runner",
-            {"step_number": step_number, "action": action, "target": target},
+            {
+                "step_number": step_number,
+                "step_id": result["step_id"],
+                "step_name": result["step_name"],
+                "action": action,
+                "target": target,
+                "status": "failed",
+                "duration_ms": result["duration_ms"],
+                "screenshot_path": screenshot_path,
+                "dom_snapshot_path": dom_snapshot_path,
+                "accessibility_snapshot_path": accessibility_snapshot_path,
+                "locator_strategy": "protected_step_guard",
+                "confidence": result["confidence"],
+                "failure_type": result["failure_type"],
+            },
         )
         return result
 
@@ -650,14 +680,15 @@ class CaseRunner:
         state = wait_for_page_ready(page)
         payload = {**metadata, **state.as_dict()}
         writer.append_jsonl("execution-trace.jsonl", {"type": "page.ready", **payload})
-        self._emit_runtime(
-            writer,
-            "success" if state.ready else "warning",
-            "page_ready",
-            "页面已加载完成" if state.ready else "页面加载等待超时，继续执行并保留证据。",
-            "page_waiter",
-            payload,
-        )
+        if reason == "open_system" or not state.ready:
+            self._emit_runtime(
+                writer,
+                "success" if state.ready else "warning",
+                "page_ready",
+                "页面已加载完成" if state.ready else "页面加载等待超时，继续执行并保留证据。",
+                "page_waiter",
+                payload,
+            )
         return state.as_dict()
 
     def _emit_locator_decision_runtime(
@@ -680,15 +711,6 @@ class CaseRunner:
                 "llm_element_resolver",
                 {"step_number": step_number, "action": action, "target": target, "strategy": strategy, "confidence": confidence},
             )
-        else:
-            self._emit_runtime(
-                writer,
-                "text",
-                "llm_resolver",
-                "LLM 未触发：当前步骤已通过确定性定位或页面语义定位完成。",
-                "llm_element_resolver",
-                {"step_number": step_number, "action": action, "target": target, "strategy": strategy, "confidence": confidence},
-            )
 
         if outcome.get("needs_vision_fallback"):
             self._emit_runtime(
@@ -704,15 +726,6 @@ class CaseRunner:
                     "fallback_reason": outcome.get("fallback_reason"),
                     "requested": vision_requested,
                 },
-            )
-        else:
-            self._emit_runtime(
-                writer,
-                "text",
-                "vision",
-                "视觉兜底未触发：当前定位置信度足够。" if vision_requested else "视觉兜底未开启，本步骤未执行视觉识别。",
-                "vision_resolver",
-                {"step_number": step_number, "action": action, "target": target, "requested": vision_requested},
             )
 
     def _emit_runtime(
@@ -931,7 +944,7 @@ class CaseRunner:
         writer.append_jsonl("locator-debug.jsonl", debug_event)
         if not selected_rules:
             return
-        for rule in selected_rules[:5]:
+        for rule in selected_rules[:1]:
             message = rule.get("runtimeMessage") or f"命中规则 {rule.get('rule_code')}：将按{rule.get('rule_name')}处理。"
             self._emit_runtime(
                 writer,
@@ -1266,6 +1279,16 @@ def _skipped_step_result(step_number: int, step: dict[str, Any], *, reason: str)
         "ended_at": timestamp,
         "duration_ms": 0,
     }
+
+
+def _is_login_goal_step(step: dict[str, Any]) -> bool:
+    action = str(step.get("action") or "")
+    if action != "business_goal":
+        return False
+    target = str(step.get("target") or step.get("name") or step.get("step_name") or "")
+    intent = str((step.get("operationIntent") or {}).get("intent") or step.get("intent") or "")
+    compact = target.strip().lower().replace(" ", "")
+    return "登录" in target or compact in {"login", "signin", "sign-in"} or intent in {"login", "login_system", "username_password_login"}
 
 
 def _redact_step(step: dict[str, Any]) -> dict[str, Any]:

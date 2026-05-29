@@ -18,10 +18,19 @@
 body {
   margin: 0;
   background: #edf1f6;
+  overflow-x: hidden;
+}
+
+html,
+#root {
+  width: 100%;
+  overflow-x: hidden;
 }
 
 .page-shell {
+  width: 100%;
   min-height: 100vh;
+  overflow-x: hidden;
   background: #f5f7fb;
 }
 
@@ -91,6 +100,8 @@ body {
 
 .page-content {
   width: 100%;
+  max-width: 100%;
+  min-width: 0;
   padding: 20px 24px;
 }
 
@@ -221,12 +232,18 @@ a {
 
 .test-run-workspace {
   display: flex;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
   flex-direction: column;
   gap: 16px;
 }
 
 .workspace-section {
   display: flex;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
   flex-direction: column;
   gap: 10px;
 }
@@ -260,17 +277,29 @@ a {
 
 .execution-observation-grid {
   grid-template-columns: minmax(0, 1fr) minmax(500px, 1fr);
+  height: clamp(640px, calc(100vh - 120px), 820px);
+  align-items: stretch;
 }
 
 .runtime-column,
 .screenshot-column {
+  display: flex;
+  min-height: 0;
   min-width: 0;
+  flex-direction: column;
 }
 
 .screenshot-column {
-  display: flex;
-  flex-direction: column;
   gap: 16px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.execution-observation-grid .runtime-stream-panel {
+  flex: 1 1 auto;
+  height: 100%;
+  min-height: 640px;
+  max-height: none;
 }
 
 .runtime-empty-state {
@@ -299,6 +328,9 @@ a {
 }
 
 .surface-panel {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
   border: 1px solid #d8dee8;
   border-radius: 8px;
   background: #ffffff;
@@ -384,8 +416,11 @@ a {
 }
 
 .compact-form-grid {
-  display: grid;
-  grid-template-columns: minmax(180px, 0.7fr) minmax(220px, 0.8fr) minmax(260px, 1.1fr) minmax(160px, 0.7fr) minmax(160px, 0.7fr) auto;
+  display: flex;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  flex-wrap: wrap;
   gap: 10px;
   align-items: end;
 }
@@ -394,9 +429,18 @@ a {
 .compact-textarea,
 .compact-json-editor {
   display: flex;
+  max-width: 100%;
   min-width: 0;
   flex-direction: column;
   gap: 6px;
+}
+
+.compact-form-grid > label {
+  flex: 1 1 220px;
+}
+
+.compact-form-grid__wide {
+  flex: 2 1 420px;
 }
 
 .compact-form-grid label span,
@@ -410,15 +454,21 @@ a {
 
 .compact-form-grid input,
 .compact-form-grid select {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
   min-height: 34px;
   padding: 7px 9px;
 }
 
 .switch-row {
   display: inline-flex;
+  flex: 0 1 180px;
   align-items: center;
   gap: 8px;
   min-height: 34px;
+  align-self: end;
+  justify-content: flex-start;
   white-space: nowrap;
 }
 
@@ -432,8 +482,13 @@ a {
 }
 
 .compact-textarea textarea {
+  width: 100%;
+  max-width: 100%;
   max-height: 120px;
   min-height: 96px;
+  overflow-x: hidden;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 
 .json-editor-toggle {
@@ -1327,13 +1382,14 @@ button:disabled {
 
 .debug-drawer {
   position: fixed;
-  top: 0;
+  top: 56px;
   right: 0;
   z-index: 30;
   display: flex;
-  width: min(560px, 100vw);
-  height: 100vh;
+  width: min(560px, calc(100vw - 24px));
+  height: calc(100vh - 56px);
   flex-direction: column;
+  overflow: hidden;
   transform: translateX(100%);
   border-left: 1px solid #d8dee8;
   background: #ffffff;
@@ -1341,12 +1397,22 @@ button:disabled {
   transition: transform 160ms ease;
 }
 
+.debug-drawer:not(.debug-drawer--open) {
+  visibility: hidden;
+  pointer-events: none;
+  border-left: 0;
+  box-shadow: none;
+}
+
 .debug-drawer--open {
   transform: translateX(0);
+  visibility: visible;
+  pointer-events: auto;
 }
 
 .debug-drawer__header {
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
   justify-content: space-between;
   border-bottom: 1px solid #e2e8f0;
@@ -1361,6 +1427,14 @@ button:disabled {
 .debug-drawer__header span {
   color: #64748b;
   font-size: 12px;
+}
+
+.debug-drawer__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-bottom: 28px;
 }
 
 .debug-section {
@@ -1387,6 +1461,12 @@ button:disabled {
   color: #e2e8f0;
   font-size: 12px;
   padding: 10px;
+}
+
+.debug-section textarea {
+  width: 100%;
+  max-height: 180px;
+  resize: vertical;
 }
 
 .debug-feedback {
@@ -1546,6 +1626,49 @@ button:disabled {
   color: #1d4ed8;
 }
 
+.ability-page {
+  gap: 16px;
+}
+
+.ability-page > .surface-panel,
+.ability-page .ability-rules-layout > .surface-panel,
+.ability-page .ability-stat-grid > .surface-panel,
+.ability-page .prompt-manager-panel {
+  padding: 16px;
+}
+
+.ability-page .panel-heading {
+  align-items: center;
+  margin-bottom: 14px;
+}
+
+.ability-page .panel-heading h1,
+.ability-page .panel-heading h2,
+.ability-page .panel-heading h3 {
+  min-width: 0;
+  line-height: 1.25;
+}
+
+.ability-page .panel-heading h2 {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.ability-center-header {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.ability-center-header .panel-heading {
+  align-items: center;
+  margin-bottom: 0;
+}
+
+.ability-center-header .tab-strip {
+  padding-top: 2px;
+}
+
 .ability-rule-grid,
 .failure-sample-list,
 .settings-grid {
@@ -1606,6 +1729,25 @@ button:disabled {
   display: grid;
   gap: 14px;
   grid-template-columns: minmax(0, 1.1fr) minmax(420px, 0.9fr);
+}
+
+.ability-rules-list {
+  min-width: 0;
+}
+
+.ability-page .ability-rules-toolbar {
+  align-items: center;
+  gap: 16px;
+}
+
+.ability-rules-toolbar h2 {
+  min-width: 92px;
+}
+
+.ability-rule-type-filter {
+  width: min(320px, 48%);
+  min-width: 220px;
+  margin-left: auto;
 }
 
 .ability-rule-detail {
@@ -1827,8 +1969,23 @@ button:disabled {
     grid-template-columns: 1fr;
   }
 
-  .compact-form-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+  .execution-observation-grid {
+    height: auto;
+  }
+
+  .execution-observation-grid .runtime-stream-panel {
+    height: auto;
+    min-height: 520px;
+  }
+
+  .screenshot-column {
+    overflow: visible;
+    padding-right: 0;
+  }
+
+  .compact-form-grid > label,
+  .compact-form-grid__wide {
+    flex-basis: min(320px, 100%);
   }
 }
 
@@ -1860,6 +2017,15 @@ button:disabled {
   .run-history-row,
   .step-screenshot-row__summary {
     grid-template-columns: 1fr;
+  }
+
+  .compact-form-grid > label,
+  .compact-form-grid__wide {
+    flex-basis: 100%;
+  }
+
+  .switch-row {
+    flex-basis: 100%;
   }
 
   .step-screenshot-row__thumb {

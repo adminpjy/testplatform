@@ -4,8 +4,7 @@ export function TopNav({ route }: { route: AppRoute }) {
   return (
     <header className="top-nav">
       <a className="top-nav__brand" href="#test-run">
-        <strong>AI MIS Test</strong>
-        <span>智能功能测试平台</span>
+        <strong>石化智云智能功能测试平台</strong>
       </a>
       <nav className="top-nav__links" aria-label="主导航">
         {navigationItems.map((item) => {

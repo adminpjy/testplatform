@@ -16,6 +16,7 @@ def test_operation_intent_classifier_recognizes_common_mis_intents() -> None:
     classifier = OperationIntentClassifier()
     assert classifier.classify(action="business_goal", target="工作台/我的待办").intent == "navigate_path"
     assert classifier.classify(action="open_url", target="https://work.bypc.com.cn", instruction="输入账号密码").intent == "enter_page"
+    assert classifier.classify(action="business_goal", target="登录系统", instruction="输入账号密码").intent == "login"
     assert classifier.classify(target="审批通过").intent == "approval_pass"
     assert classifier.classify(target="查看审批流程").intent == "view_flow"
     assert classifier.classify(target="选择状态").intent == "select_dropdown"
@@ -25,6 +26,7 @@ def test_operation_intent_classifier_recognizes_common_mis_intents() -> None:
 def test_ability_resolver_matches_navigation_approval_form_dropdown_and_org_rules() -> None:
     with _session() as db:
         cases = [
+            ("login", ["login", "risk_policy"], "LOGIN-USERNAME-PASSWORD-v1"),
             ("navigate_path", ["navigation"], "NAV-MENU-PATH-v1"),
             ("approval_pass", ["approval_workflow"], "APPROVAL-PASS-v1"),
             ("fill_form", ["form_fill", "form_control"], "FORM-FILL-TEXT-v1"),

@@ -60,10 +60,9 @@ def test_auth_state_detects_login_captcha_required(page: Page) -> None:
         """
     )
     result = AuthStateDetector().detect_auth_state(page)
-    assert result.authState == "login_captcha_required"
-    assert result.failureType == "authentication_challenge_required"
+    assert result.authState == "login_failed"
+    assert result.failureType == "login_failed"
     assert result.remainingRetries == 3
-    assert result.requiresHumanAction is True
     assert result.shouldStopProtectedSteps is True
 
 
@@ -98,8 +97,8 @@ def test_auth_state_detects_visible_otp_challenge(page: Page) -> None:
         """
     )
     result = AuthStateDetector().detect_auth_state(page)
-    assert result.authState == "login_captcha_required"
-    assert result.requiresHumanAction is True
+    assert result.authState == "login_page"
+    assert result.failureType == "auth_state_not_logged_in"
 
 
 def test_auth_state_detects_login_page_without_error(page: Page) -> None:
@@ -129,6 +128,33 @@ def test_auth_state_detects_login_success(page: Page) -> None:
     result = AuthStateDetector().detect_auth_state(page)
     assert result.authState == "logged_in"
     assert result.shouldContinue is True
+
+
+def test_auth_state_does_not_treat_business_dashboard_canvas_as_captcha(page: Page) -> None:
+    page.set_content(
+        """
+        <header class="home_header">
+          <span>中燕信息一体化运营平台</span>
+          <button>退出系统</button>
+          <span class="userName">测试用户</span>
+        </header>
+        <aside id="layout_sider" class="el-aside">
+          <ul class="el-menu" role="menu">
+            <li>工作台</li>
+            <li>我的待办</li>
+          </ul>
+        </aside>
+        <main>
+          <h1>首页</h1>
+          <input role="combobox" value="2026-05" />
+          <div id="map-container"><canvas data-zr-dom-id="zr_0"></canvas></div>
+        </main>
+        """
+    )
+    result = AuthStateDetector().detect_auth_state(page)
+    assert result.authState == "logged_in"
+    assert result.failureType is None
+    assert "captcha image visible" not in result.evidence
 
 
 def test_auth_state_detects_low_risk_login_interruption(page: Page) -> None:
@@ -218,12 +244,11 @@ def test_business_step_is_blocked_after_login_captcha(page: Page, monkeypatch: p
         {"settings": {}},
     )
     assert result["status"] == "failed"
-    assert result["failure_type"] == "protected_step_blocked_by_auth_challenge"
-    assert result["failure_details"]["rootCause"] == "authentication_challenge_required"
-    assert result["failure_details"]["requiresHumanAction"] is True
+    assert result["failure_type"] == "protected_step_blocked_by_login_failure"
+    assert result["failure_details"]["rootCause"] == "login_failed"
     assert result["locator_strategy"] == "protected_step_guard"
     runtime_text = writer.path("runtime-stream.jsonl").read_text(encoding="utf-8")
-    assert "验证码或二次认证" in runtime_text
+    assert "后续业务步骤" in runtime_text
     assert "正在查找一级菜单" not in runtime_text
 
 
@@ -290,10 +315,9 @@ def test_login_goal_stops_when_captcha_is_required(page: Page, monkeypatch: pyte
     )
     with pytest.raises(RuntimeError) as exc_info:
         LoginGoalExecutor().execute_login_goal(page, {"action": "business_goal", "target": "登录系统"}, {})
-    assert getattr(exc_info.value, "failure_type") == "authentication_challenge_required"
+    assert getattr(exc_info.value, "failure_type") == "login_failed"
     auth_state = getattr(exc_info.value, "details")["auth_state"]
-    assert auth_state["authState"] == "login_captcha_required"
-    assert auth_state["requiresHumanAction"] is True
+    assert auth_state["authState"] == "login_failed"
 
 
 def test_protected_guard_allows_business_page_without_menu_target(page: Page) -> None:

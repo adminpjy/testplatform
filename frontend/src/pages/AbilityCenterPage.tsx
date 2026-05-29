@@ -124,8 +124,8 @@ export function AbilityCenterPage() {
   }
 
   return (
-    <div className="page-stack">
-      <section className="surface-panel">
+    <div className="page-stack ability-page">
+      <section className="surface-panel ability-center-header">
         <div className="panel-heading">
           <h1>能力中心</h1>
           <button className="secondary-button" type="button" onClick={() => void loadData()}>
@@ -209,13 +209,13 @@ function RulesView({
   const filteredRules = rules.filter((rule) => !ruleTypeFilter || rule.rule_type === ruleTypeFilter);
   return (
     <div className="ability-rules-layout">
-      <section className="surface-panel">
-        <div className="panel-heading">
+      <section className="surface-panel ability-rules-list">
+        <div className="panel-heading ability-rules-toolbar">
           <h2>
             <ScrollText size={18} />
             规则库
           </h2>
-          <select value={ruleTypeFilter} onChange={(event) => setRuleTypeFilter(event.target.value)}>
+          <select className="ability-rule-type-filter" value={ruleTypeFilter} onChange={(event) => setRuleTypeFilter(event.target.value)}>
             <option value="">全部 rule_type</option>
             {ruleTypes.map((type) => (
               <option key={type} value={type}>

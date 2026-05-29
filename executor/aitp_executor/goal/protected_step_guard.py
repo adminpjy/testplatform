@@ -68,14 +68,6 @@ class ProtectedStepGuard:
                 reason="当前页面仍是登录页，且检测到登录失败提示，受保护业务步骤已阻断。",
             )
 
-        if auth_result.authState == "login_captcha_required":
-            return _blocked(
-                auth_result,
-                failure_type="protected_step_blocked_by_auth_challenge",
-                root_cause="authentication_challenge_required",
-                reason="当前登录流程触发验证码或二次认证，尚未进入业务系统，因此不会继续执行后续步骤。",
-            )
-
         if auth_result.authState == "login_page":
             return _blocked(
                 auth_result,

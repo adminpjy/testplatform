@@ -1,9 +1,12 @@
 from datetime import datetime, timezone
+from threading import Thread
+from types import SimpleNamespace
 from uuid import uuid4
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.db.session import SessionLocal
 from app.models import FailureSample, RuntimeMessage, TestArtifact, TestCase, TestProject, TestRun, TestStepRun, TestSystem
 from app.schemas.test_runs import TestCaseDSL, TestRunCreate
 from app.services.ability_resolver import annotate_dsl_with_abilities
@@ -40,37 +43,51 @@ def create_and_execute_run(db: Session, payload: TestRunCreate) -> TestRun:
         case_id=case.id if case else None,
         instruction=payload.instruction or (case.instruction if case else None),
         base_url=payload.base_url or dsl.get("baseUrl") or (system.base_url if system else project.base_url),
-        status="created",
-        current_phase="created",
+        status="running",
+        current_phase="executing",
         dsl_json=_redact_dsl_for_storage(dsl),
+        started_at=_utc_now(),
     )
     db.add(run)
     db.commit()
     db.refresh(run)
 
-    run.status = "running"
-    run.current_phase = "executing"
-    run.started_at = _utc_now()
-    db.add(run)
-    db.commit()
+    _start_background_execution(run.id, dsl)
+    return run
 
-    try:
-        execution_result = CaseRunner(event_sink=_runtime_sink(db, run.id)).run(run_code=run.run_code, dsl=dsl)
-        _persist_execution_result(db, run, execution_result)
-        run.status = "passed" if execution_result["status"] == "passed" else "failed"
-        run.current_phase = "completed" if run.status == "passed" else "failed"
-        run.summary_json = execution_result["summary"]
-    except Exception as exc:
-        run.status = "failed"
-        run.current_phase = "failed"
-        run.summary_json = {"status": "failed", "errorSummary": str(exc)}
-    finally:
-        run.ended_at = _utc_now()
+
+def _start_background_execution(run_id: int, dsl: dict) -> None:
+    thread = Thread(target=_execute_run_background, args=(run_id, dsl), daemon=True)
+    thread.start()
+
+
+def _execute_run_background(run_id: int, dsl: dict) -> None:
+    with SessionLocal() as db:
+        run = db.get(TestRun, run_id)
+        if run is None:
+            return
+
+        run.status = "running"
+        run.current_phase = "executing"
+        if run.started_at is None:
+            run.started_at = _utc_now()
         db.add(run)
         db.commit()
-        db.refresh(run)
 
-    return run
+        try:
+            execution_result = CaseRunner(event_sink=_runtime_sink(db, run.id)).run(run_code=run.run_code, dsl=dsl)
+            _persist_execution_result(db, run, execution_result)
+            run.status = "passed" if execution_result["status"] == "passed" else "failed"
+            run.current_phase = "completed" if run.status == "passed" else "failed"
+            run.summary_json = execution_result["summary"]
+        except Exception as exc:
+            run.status = "failed"
+            run.current_phase = "failed"
+            run.summary_json = {"status": "failed", "errorSummary": str(exc)}
+        finally:
+            run.ended_at = _utc_now()
+            db.add(run)
+            db.commit()
 
 
 def list_runs(db: Session) -> list[TestRun]:
@@ -93,7 +110,7 @@ def list_artifacts(db: Session, run_id: int) -> list[TestArtifact]:
     )
 
 
-def latest_screenshot(db: Session, run_id: int) -> TestArtifact | None:
+def latest_screenshot(db: Session, run_id: int) -> TestArtifact | SimpleNamespace | None:
     for artifact_type in ("screenshot", "failure_screenshot", "sandbox_screenshot"):
         artifact = db.scalars(
             select(TestArtifact)
@@ -102,7 +119,19 @@ def latest_screenshot(db: Session, run_id: int) -> TestArtifact | None:
         ).first()
         if artifact is not None:
             return artifact
-    return None
+    run = db.get(TestRun, run_id)
+    if run is None or not run.run_code:
+        return None
+
+    from executor.aitp_executor.utils.file_paths import relative_to_project, runs_root, safe_name
+
+    run_root = runs_root() / safe_name(run.run_code)
+    candidates = list((run_root / "screenshots").glob("step-*.png"))
+    candidates.extend(run_root.glob("sandbox-started.png"))
+    if not candidates:
+        return None
+    latest = max(candidates, key=lambda path: (path.stat().st_mtime, path.name))
+    return SimpleNamespace(file_path=relative_to_project(latest))
 
 
 def report_artifact(db: Session, run_id: int) -> TestArtifact | None:
@@ -324,17 +353,17 @@ def _stored_failure_type(analysis_failure_type: str, failure_details: dict, auth
     auth_state_value = str(auth_state.get("authState") or "")
     root_cause = str(failure_details.get("rootCause") or auth_state.get("failureType") or "")
     if (
-        auth_state_value == "login_captcha_required"
-        or root_cause == "authentication_challenge_required"
-        or analysis_failure_type in {"authentication_challenge_required", "protected_step_blocked_by_auth_challenge"}
+        auth_state_value in {"login_failed", "login_page"}
+        or root_cause in {"login_failed", "auth_state_not_logged_in"}
+        or analysis_failure_type in {"protected_step_blocked_by_login_failure", "auth_state_not_logged_in"}
     ):
-        return "login_captcha_required"
+        return "login_failed" if auth_state_value == "login_failed" or root_cause == "login_failed" else "auth_state_not_logged_in"
     return analysis_failure_type
 
 
 def _failure_sample_summary(failure_type_value: str, fallback: object) -> str:
-    if failure_type_value == "login_captcha_required":
-        return "登录失败后触发验证码或二次认证，当前未进入业务系统，已停止后续步骤。"
+    if failure_type_value == "login_failed":
+        return "登录未成功，当前未进入业务系统，已停止后续步骤。"
     return str(fallback or "Step failed without error summary.")
 
 
@@ -342,10 +371,7 @@ def _candidate_rule_type(failure_type_value: object) -> str:
     failure_type_text = str(failure_type_value or "")
     if failure_type_text in {
         "login_failed",
-        "login_captcha_required",
-        "authentication_challenge_required",
         "protected_step_blocked_by_login_failure",
-        "protected_step_blocked_by_auth_challenge",
         "auth_state_not_logged_in",
     }:
         return "login"
