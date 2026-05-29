@@ -282,6 +282,7 @@ def _persist_execution_result(db: Session, run: TestRun, execution_result: dict)
         "execution_trace": "execution_trace",
         "runtime_stream": "runtime_stream",
         "sandbox_screenshot": "sandbox_screenshot",
+        "playwright_trace": "playwright_trace",
     }
     for key, artifact_type in artifact_types.items():
         _add_artifact(db, run.id, None, artifact_type, artifacts.get(key), {"run_code": run.run_code})
@@ -388,13 +389,22 @@ def _add_artifact(
 ) -> None:
     if not file_path:
         return
+    enriched_metadata = dict(metadata or {})
+    try:
+        from executor.aitp_executor.utils.file_paths import resolve_project_path
+
+        resolved_path = resolve_project_path(file_path)
+        if resolved_path.exists() and resolved_path.is_file():
+            enriched_metadata.setdefault("file_size_bytes", resolved_path.stat().st_size)
+    except Exception:
+        pass
     db.add(
         TestArtifact(
             run_id=run_id,
             step_id=step_id,
             artifact_type=artifact_type,
             file_path=file_path,
-            metadata_json=metadata,
+            metadata_json=enriched_metadata,
         )
     )
 

@@ -73,6 +73,12 @@ class Settings(BaseSettings):
     goal_max_iterations: int = Field(default=12, alias="GOAL_MAX_ITERATIONS")
     goal_total_timeout_ms: int = Field(default=90000, alias="GOAL_TOTAL_TIMEOUT_MS")
     goal_single_action_timeout_ms: int = Field(default=15000, alias="GOAL_SINGLE_ACTION_TIMEOUT_MS")
+    trace_viewer_enabled: bool = Field(default=True, alias="TRACE_VIEWER_ENABLED")
+    trace_viewer_host: str = Field(default="0.0.0.0", alias="TRACE_VIEWER_HOST")
+    trace_viewer_public_host: str = Field(default="localhost", alias="TRACE_VIEWER_PUBLIC_HOST")
+    trace_viewer_port_start: int = Field(default=39000, alias="TRACE_VIEWER_PORT_START")
+    trace_viewer_port_end: int = Field(default=39100, alias="TRACE_VIEWER_PORT_END")
+    trace_viewer_idle_timeout_seconds: int = Field(default=600, alias="TRACE_VIEWER_IDLE_TIMEOUT_SECONDS")
 
     model_config = SettingsConfigDict(
         env_file=".env",

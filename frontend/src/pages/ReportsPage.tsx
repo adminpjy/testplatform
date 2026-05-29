@@ -2,14 +2,16 @@ import { ExternalLink, RefreshCw } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { apiUrl } from "../api/client";
-import { getTestRuns } from "../api/platform";
+import { getTestRunArtifacts, getTestRuns } from "../api/platform";
 import { DataTable } from "../components/DataTable";
 import { StatusBadge } from "../components/StatusBadge";
-import type { TestRun } from "../types/platform";
+import { TraceViewerCard } from "../components/TraceViewerCard";
+import type { TestArtifact, TestRun } from "../types/platform";
 
 export function ReportsPage() {
   const [runs, setRuns] = useState<TestRun[]>([]);
   const [selectedRun, setSelectedRun] = useState<TestRun | null>(null);
+  const [selectedArtifacts, setSelectedArtifacts] = useState<TestArtifact[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -23,12 +25,21 @@ export function ReportsPage() {
     try {
       const nextRuns = await getTestRuns();
       setRuns(nextRuns);
-      setSelectedRun(nextRuns[0] || null);
+      await selectRun(nextRuns[0] || null);
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : String(requestError));
     } finally {
       setLoading(false);
     }
+  }
+
+  async function selectRun(run: TestRun | null) {
+    setSelectedRun(run);
+    if (!run) {
+      setSelectedArtifacts([]);
+      return;
+    }
+    setSelectedArtifacts(await getTestRunArtifacts(run.id));
   }
 
   return (
@@ -48,7 +59,7 @@ export function ReportsPage() {
               key: "run",
               title: "运行编码",
               render: (run) => (
-                <button className="table-link-button" type="button" onClick={() => setSelectedRun(run)}>
+                <button className="table-link-button" type="button" onClick={() => void selectRun(run)}>
                   {run.run_code}
                 </button>
               )
@@ -77,7 +88,10 @@ export function ReportsPage() {
           ) : null}
         </div>
         {selectedRun ? (
-          <iframe title="测试报告预览" src={apiUrl(`/api/reports/${selectedRun.id}`)} />
+          <>
+            <TraceViewerCard run={selectedRun} artifacts={selectedArtifacts} />
+            <iframe title="测试报告预览" src={apiUrl(`/api/reports/${selectedRun.id}`)} />
+          </>
         ) : (
           <div className="empty-state">选择一条运行记录查看报告</div>
         )}

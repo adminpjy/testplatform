@@ -1,4 +1,4 @@
-Set-StrictMode -Version Latest
+﻿Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 function Invoke-JsonPost {
@@ -159,6 +159,23 @@ try {
   Pop-Location
 }
 npm.cmd --prefix frontend run build | Out-Null
+
+if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
+  Write-Warning "Playwright Trace Viewer 依赖未安装：未找到 node。Trace 播放功能不可用。可安装 Node.js 后执行 npm install -g playwright。"
+} elseif (-not (Get-Command npm -ErrorAction SilentlyContinue)) {
+  Write-Warning "Playwright Trace Viewer 依赖未安装：未找到 npm。Trace 播放功能不可用。可安装 Node.js 后执行 npm install -g playwright。"
+} elseif (-not (Get-Command npx -ErrorAction SilentlyContinue)) {
+  Write-Warning "Playwright Trace Viewer 依赖未安装：未找到 npx。Trace 播放功能不可用。可执行 npm install -g playwright。"
+} else {
+  try {
+    $traceCheck = Start-Process -FilePath "npx.cmd" -ArgumentList "--no-install playwright --version" -PassThru -Wait -WindowStyle Hidden
+    if ($traceCheck.ExitCode -ne 0) {
+      Write-Warning "Playwright Trace Viewer 依赖未安装，Trace 播放功能不可用。可执行 npm install -g playwright。"
+    }
+  } catch {
+    Write-Warning "Playwright Trace Viewer 依赖未安装，Trace 播放功能不可用。可执行 npm install -g playwright。"
+  }
+}
 
 $hostName = "127.0.0.1"
 $backendPort = New-FreePort

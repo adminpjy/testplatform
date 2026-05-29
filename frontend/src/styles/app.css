@@ -351,6 +351,12 @@ a {
   padding: 16px;
 }
 
+.report-preview-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
 .panel-heading {
   display: flex;
   align-items: center;
@@ -1322,6 +1328,104 @@ button:disabled {
 .report-artifacts-tab {
   display: grid;
   gap: 12px;
+}
+
+.trace-viewer-card {
+  display: grid;
+  gap: 12px;
+  border: 1px solid #d8dee8;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 14px;
+}
+
+.trace-viewer-card__heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.trace-viewer-card__heading h3 {
+  margin: 0;
+  color: #10213d;
+  font-size: 16px;
+}
+
+.trace-viewer-card__heading p {
+  margin: 5px 0 0;
+  color: #8a4b00;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.trace-viewer-card__heading span {
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: #eef2f7;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 5px 9px;
+}
+
+.trace-viewer-card__heading span[data-status="ready"],
+.trace-viewer-card__heading span[data-status="running"] {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.trace-viewer-card__heading span[data-status="missing"],
+.trace-viewer-card__heading span[data-status="failed"] {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.trace-viewer-card__meta {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.trace-viewer-card__meta div {
+  border: 1px solid #e2e8f0;
+  border-radius: 7px;
+  background: #f8fafc;
+  padding: 9px 10px;
+}
+
+.trace-viewer-card__meta span {
+  display: block;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.trace-viewer-card__meta strong {
+  display: block;
+  margin-top: 3px;
+  overflow-wrap: anywhere;
+  color: #172033;
+  font-size: 13px;
+}
+
+.trace-viewer-card__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.trace-viewer-card__command {
+  display: block;
+  max-height: 120px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  border-radius: 7px;
+  background: #0f172a;
+  color: #e2e8f0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  padding: 10px;
 }
 
 .failure-sample__screenshot {

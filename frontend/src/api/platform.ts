@@ -21,7 +21,8 @@ import type {
   TestRunCreate,
   TestStepRun,
   TestSystem,
-  TestSystemCreate
+  TestSystemCreate,
+  TraceViewerResponse
 } from "../types/platform";
 import type { RuntimeMessageWire } from "../types/runtime";
 
@@ -143,6 +144,18 @@ export function getTestRunArtifacts(runId: number): Promise<TestArtifact[]> {
 
 export function getRuntimeMessages(runId: number): Promise<RuntimeMessageWire[]> {
   return getJson<RuntimeMessageWire[]>(`/api/test-runs/${runId}/runtime-messages`);
+}
+
+export function startTraceViewer(runId: number): Promise<TraceViewerResponse> {
+  return postJson<TraceViewerResponse>(`/api/test-runs/${runId}/trace-viewer/start`, {});
+}
+
+export function getTraceViewerStatus(runId: number): Promise<TraceViewerResponse> {
+  return getJson<TraceViewerResponse>(`/api/test-runs/${runId}/trace-viewer/status`);
+}
+
+export function stopTraceViewer(runId: number): Promise<TraceViewerResponse> {
+  return postJson<TraceViewerResponse>(`/api/test-runs/${runId}/trace-viewer/stop`, {});
 }
 
 export function getFailureSamples(runId?: number): Promise<FailureSample[]> {

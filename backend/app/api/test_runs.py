@@ -25,6 +25,7 @@ from app.schemas.test_runs import (
     TestRunCreate,
     TestRunRead,
     TestStepRunRead,
+    TraceViewerResponse,
 )
 from app.services.human_interventions import (
     convert_intervention_to_rule_draft,
@@ -46,6 +47,7 @@ from app.services.test_run_execution import (
     list_runtime_messages,
     list_step_runs,
 )
+from app.services.trace_viewer_service import start_trace_viewer, stop_trace_viewer, trace_viewer_status
 
 router = APIRouter()
 STREAM_TYPES = {"text", "progress", "warning", "error", "success"}
@@ -230,6 +232,27 @@ def stop_test_run(run_id: int, db: Session = Depends(get_db)) -> TestRunRead:
         db.commit()
         db.refresh(run)
     return run
+
+
+@router.post("/{run_id}/trace-viewer/start", response_model=TraceViewerResponse)
+def start_test_run_trace_viewer(run_id: int, db: Session = Depends(get_db)) -> TraceViewerResponse:
+    _ensure_run_exists(db, run_id)
+    try:
+        return TraceViewerResponse.model_validate(start_trace_viewer(db, run_id))
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+
+@router.get("/{run_id}/trace-viewer/status", response_model=TraceViewerResponse)
+def read_test_run_trace_viewer_status(run_id: int, db: Session = Depends(get_db)) -> TraceViewerResponse:
+    _ensure_run_exists(db, run_id)
+    return TraceViewerResponse.model_validate(trace_viewer_status(run_id))
+
+
+@router.post("/{run_id}/trace-viewer/stop", response_model=TraceViewerResponse)
+def stop_test_run_trace_viewer(run_id: int, db: Session = Depends(get_db)) -> TraceViewerResponse:
+    _ensure_run_exists(db, run_id)
+    return TraceViewerResponse.model_validate(stop_trace_viewer(run_id))
 
 
 @router.get("/{run_id}/latest-screenshot")

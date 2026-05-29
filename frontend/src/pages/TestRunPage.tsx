@@ -27,6 +27,7 @@ import { RuntimeStreamPanel } from "../components/RuntimeStreamPanel";
 import { ScreenshotPreviewModal } from "../components/ScreenshotPreviewModal";
 import { StepScreenshotList } from "../components/StepScreenshotList";
 import { TestRunConfigCard } from "../components/TestRunConfigCard";
+import { TraceViewerCard } from "../components/TraceViewerCard";
 import type {
   AnalyzeResult,
   FailureSample,
@@ -639,6 +640,7 @@ function ReportArtifactsTab({ run, artifacts }: { run: TestRun | null; artifacts
   }
   return (
     <div className="report-artifacts-tab">
+      <TraceViewerCard run={run} artifacts={artifacts} />
       <a className="secondary-link" href={apiUrl(`/api/reports/${run.id}`)} target="_blank" rel="noreferrer">
         <ExternalLink size={14} />
         打开测试报告
@@ -661,6 +663,7 @@ function artifactLabel(type: string): string {
   if (type === "locator_debug") return "locator-debug";
   if (type === "runtime_stream") return "运行消息";
   if (type === "execution_trace") return "执行轨迹";
+  if (type === "playwright_trace") return "trace.zip";
   if (type === "summary") return "summary.json";
   if (type === "report") return "report.html";
   if (type === "screenshot") return "步骤截图";

@@ -73,6 +73,8 @@ class CaseRunner:
         error_summary = None
         session = None
         sandbox_screenshot_path = None
+        trace_started = False
+        playwright_trace_path = None
 
         self._emit_runtime(writer, "text", "understanding", "正在理解测试用例", "runner", {"run_code": run_code})
         self._emit_runtime(writer, "progress", "planning", "正在生成测试步骤", "runner", {"steps": len(steps)})
@@ -89,6 +91,7 @@ class CaseRunner:
             )
             session = self.provider.start()
             page = session.page
+            trace_started = self._start_playwright_trace(session, writer)
             sandbox_screenshot_path = self._write_sandbox_screenshot(page, writer)
             self._emit_runtime(
                 writer,
@@ -156,6 +159,8 @@ class CaseRunner:
             self._emit_runtime(writer, "error", "failed", str(error_summary), "runner", {"run_code": run_code})
         finally:
             if session is not None:
+                if trace_started:
+                    playwright_trace_path = self._stop_playwright_trace(session, writer)
                 session.close()
 
         ended_at = _utc_now()
@@ -175,7 +180,7 @@ class CaseRunner:
         }
         summary_path = writer.write_json("summary.json", summary)
         self._emit_runtime(writer, "progress", "reporting", "正在生成报告", "report_writer", {"summary": summary_path})
-        report_path = report_writer.write(summary, results)
+        report_path = report_writer.write(summary, results, trace_path=playwright_trace_path)
         self._emit_runtime(
             writer,
             "success" if status == "passed" else "error",
@@ -197,6 +202,7 @@ class CaseRunner:
                 "execution_trace": writer.relative(writer.path("execution-trace.jsonl")),
                 "runtime_stream": writer.relative(writer.path("runtime-stream.jsonl")),
                 "sandbox_screenshot": sandbox_screenshot_path,
+                "playwright_trace": playwright_trace_path,
             },
         }
 
@@ -978,6 +984,68 @@ class CaseRunner:
             page.screenshot(path=str(path), full_page=True)
             return writer.relative(path)
         except PlaywrightError:
+            return None
+
+    def _start_playwright_trace(self, session: Any, writer: ArtifactWriter) -> bool:
+        tracing = getattr(getattr(session, "context", None), "tracing", None)
+        if tracing is None:
+            self._emit_runtime(
+                writer,
+                "warning",
+                "trace",
+                "当前浏览器上下文不支持 Playwright Trace 录制。",
+                "runner",
+                {},
+            )
+            return False
+        try:
+            tracing.start(screenshots=True, snapshots=True, sources=False)
+            self._emit_runtime(
+                writer,
+                "progress",
+                "trace",
+                "已开始录制 Playwright Trace。",
+                "runner",
+                {"trace_path": writer.relative(writer.playwright_trace_path())},
+            )
+            return True
+        except Exception as exc:
+            self._emit_runtime(
+                writer,
+                "warning",
+                "trace",
+                f"Playwright Trace 录制启动失败：{exc}",
+                "runner",
+                {},
+            )
+            return False
+
+    def _stop_playwright_trace(self, session: Any, writer: ArtifactWriter) -> str | None:
+        tracing = getattr(getattr(session, "context", None), "tracing", None)
+        if tracing is None:
+            return None
+        try:
+            path = writer.playwright_trace_path()
+            tracing.stop(path=path)
+            trace_path = writer.relative(path)
+            self._emit_runtime(
+                writer,
+                "success",
+                "trace",
+                "Playwright Trace 已保存。",
+                "runner",
+                {"trace_path": trace_path},
+            )
+            return trace_path
+        except Exception as exc:
+            self._emit_runtime(
+                writer,
+                "warning",
+                "trace",
+                f"Playwright Trace 保存失败：{exc}",
+                "runner",
+                {},
+            )
             return None
 
     def _continue_security_interstitial(self, page: Any) -> bool:

@@ -13,6 +13,7 @@ class ArtifactWriter:
         (self.run_dir / "screenshots").mkdir(parents=True, exist_ok=True)
         (self.run_dir / "dom").mkdir(parents=True, exist_ok=True)
         (self.run_dir / "accessibility").mkdir(parents=True, exist_ok=True)
+        (self.run_dir / "traces").mkdir(parents=True, exist_ok=True)
 
     def path(self, *parts: str) -> Path:
         return self.run_dir.joinpath(*parts)
@@ -28,6 +29,9 @@ class ArtifactWriter:
 
     def accessibility_snapshot_path(self, step_number: int) -> Path:
         return self.path("accessibility", f"step-{step_number:03d}.json")
+
+    def playwright_trace_path(self) -> Path:
+        return self.path("traces", "trace.zip")
 
     def write_json(self, filename: str, data: Any) -> str:
         path = self.path(filename)

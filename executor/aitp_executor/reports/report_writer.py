@@ -8,8 +8,9 @@ class ReportWriter:
     def __init__(self, artifact_writer: ArtifactWriter) -> None:
         self.artifact_writer = artifact_writer
 
-    def write(self, summary: dict[str, Any], steps: list[dict[str, Any]]) -> str:
+    def write(self, summary: dict[str, Any], steps: list[dict[str, Any]], trace_path: str | None = None) -> str:
         rows = "\n".join(_step_row(step) for step in steps)
+        trace_section = _trace_section(trace_path)
         html = f"""<!doctype html>
 <html lang="zh-CN">
   <head>
@@ -31,6 +32,9 @@ class ReportWriter:
       .status-passed {{ color: #17643a; font-weight: 700; }}
       .status-failed {{ color: #b42318; font-weight: 700; }}
       a {{ color: #146c75; }}
+      .trace-actions {{ display: flex; flex-wrap: wrap; gap: 10px; margin-top: 12px; }}
+      code {{ display: block; max-width: 100%; overflow: auto; border-radius: 6px; background: #0f172a; color: #e2e8f0; padding: 10px; }}
+      .security-note {{ color: #8a4b00; background: #fff7ed; border: 1px solid #fed7aa; border-radius: 6px; padding: 10px; }}
     </style>
   </head>
   <body>
@@ -63,6 +67,7 @@ class ReportWriter:
           </tbody>
         </table>
       </section>
+      {trace_section}
     </main>
   </body>
 </html>
@@ -83,3 +88,23 @@ def _step_row(step: dict[str, Any]) -> str:
   <td>{screenshot_link}</td>
   <td>{escape(str(step.get("error_summary") or ""))}</td>
 </tr>"""
+
+
+def _trace_section(trace_path: str | None) -> str:
+    if not trace_path:
+        return """<section>
+        <h2>Playwright Trace 回放</h2>
+        <p>当前运行未生成 trace.zip。</p>
+        <p class="security-note">Trace 可能包含页面截图、DOM、Network 请求和业务数据。请仅在内网或本机查看，不要上传到公网。</p>
+      </section>"""
+    escaped_path = escape(trace_path)
+    command = escape(f"npx playwright show-trace {trace_path}")
+    return f"""<section>
+        <h2>Playwright Trace 回放</h2>
+        <p class="security-note">Trace 可能包含页面截图、DOM、Network 请求和业务数据。请仅在内网或本机查看，不要上传到公网。</p>
+        <div class="trace-actions">
+          <a href="/files/{escaped_path}">下载 trace.zip</a>
+        </div>
+        <p>本地打开命令：</p>
+        <code>{command}</code>
+      </section>"""

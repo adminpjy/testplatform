@@ -188,6 +188,19 @@ export interface TestArtifact {
   created_at: string;
 }
 
+export interface TraceViewerResponse {
+  enabled: boolean;
+  status: "running" | "stopped" | "not_started" | "failed" | string;
+  viewerUrl: string | null;
+  port?: number | null;
+  tracePath?: string | null;
+  pid?: number | null;
+  startedAt?: string | null;
+  lastAccessedAt?: string | null;
+  error?: string | null;
+  message?: string | null;
+}
+
 export interface FailureSample {
   id: number;
   run_id: number;

@@ -155,6 +155,19 @@ class RuntimeMessageRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class TraceViewerResponse(BaseModel):
+    enabled: bool = True
+    status: str
+    viewerUrl: str | None = ""
+    port: int | None = None
+    tracePath: str | None = None
+    pid: int | None = None
+    startedAt: str | None = None
+    lastAccessedAt: str | None = None
+    error: str | None = ""
+    message: str | None = None
+
+
 class FailureSampleRead(BaseModel):
     id: int
     run_id: int
