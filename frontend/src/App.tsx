@@ -1,12 +1,13 @@
 import { useEffect, useState } from "react";
 
-import { routeFromHash, type AppRoute } from "./routes/navigation";
+import { idFromHash, routeFromHash, type AppRoute } from "./routes/navigation";
 import { AbilityCenterPage } from "./pages/AbilityCenterPage";
+import { CaseDetailPage } from "./pages/CaseDetailPage";
 import { FailureSamplesPage } from "./pages/FailureSamplesPage";
+import { ProjectsPage } from "./pages/ProjectsPage";
 import { ReportsPage } from "./pages/ReportsPage";
 import { SystemSettingsPage } from "./pages/SystemSettingsPage";
 import { TestRunPage } from "./pages/TestRunPage";
-import { TestSystemsPage } from "./pages/TestSystemsPage";
 import { TopNav } from "./components/TopNav";
 import "./styles/app.css";
 
@@ -31,14 +32,18 @@ export default function App() {
 
 function renderPage(route: AppRoute) {
   switch (route) {
+    case "projects":
+      return <ProjectsPage />;
+    case "project-detail":
+      return <ProjectsPage initialProjectId={idFromHash(window.location.hash, "projects")} />;
+    case "case-detail":
+      return <CaseDetailPage caseId={idFromHash(window.location.hash, "cases")} />;
     case "ability-center":
       return <AbilityCenterPage />;
     case "failure-samples":
       return <FailureSamplesPage />;
     case "reports":
       return <ReportsPage />;
-    case "systems":
-      return <TestSystemsPage />;
     case "settings":
       return <SystemSettingsPage />;
     case "test-run":

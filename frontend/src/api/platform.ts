@@ -1,20 +1,29 @@
-import { apiUrl, getJson, postJson, putJson } from "./client";
+import { apiUrl, deleteJson, getJson, postJson, putJson } from "./client";
 import type {
   AbilityRule,
   AbilityStats,
   AbilityKnowledge,
   AnalyzeResult,
+  DslValidationResult,
   FailureSample,
+  FailureAnalysis,
+  FixApplication,
+  FunctionalTestCase,
+  FunctionalTestCasePayload,
   HealthInfo,
   HumanIntervention,
   HumanInterventionCreate,
   NaturalLanguageTestRequest,
+  ProjectAccount,
+  ProjectAccountPayload,
+  ProjectCreatePayload,
   PromptInfo,
   PromptPreview,
   RuleDraft,
   SystemInfo,
   SystemCheckResult,
   TestArtifact,
+  TestCaseVersion,
   TestCaseDSL,
   TestProject,
   TestRun,
@@ -52,6 +61,131 @@ export function previewPrompt(promptKey: string, variables: Record<string, unkno
 
 export function getProjects(): Promise<TestProject[]> {
   return getJson<TestProject[]>("/api/projects");
+}
+
+export function createProject(payload: ProjectCreatePayload): Promise<TestProject> {
+  return postJson<TestProject>("/api/projects", payload);
+}
+
+export function updateProject(projectId: number, payload: Partial<ProjectCreatePayload>): Promise<TestProject> {
+  return putJson<TestProject>(`/api/projects/${projectId}`, payload);
+}
+
+export function deleteProject(projectId: number): Promise<void> {
+  return deleteJson<void>(`/api/projects/${projectId}`);
+}
+
+export function getProjectAccounts(projectId: number): Promise<ProjectAccount[]> {
+  return getJson<ProjectAccount[]>(`/api/projects/${projectId}/accounts`);
+}
+
+export function createProjectAccount(projectId: number, payload: ProjectAccountPayload): Promise<ProjectAccount> {
+  return postJson<ProjectAccount>(`/api/projects/${projectId}/accounts`, payload);
+}
+
+export function updateProjectAccount(accountId: number, payload: ProjectAccountPayload): Promise<ProjectAccount> {
+  return putJson<ProjectAccount>(`/api/accounts/${accountId}`, payload);
+}
+
+export function deleteProjectAccount(accountId: number): Promise<void> {
+  return deleteJson<void>(`/api/accounts/${accountId}`);
+}
+
+export function setProjectDefaultAccount(accountId: number): Promise<ProjectAccount> {
+  return postJson<ProjectAccount>(`/api/accounts/${accountId}/set-default`, {});
+}
+
+export function getProjectCases(projectId: number): Promise<FunctionalTestCase[]> {
+  return getJson<FunctionalTestCase[]>(`/api/projects/${projectId}/cases`);
+}
+
+export function createProjectCase(projectId: number, payload: FunctionalTestCasePayload): Promise<FunctionalTestCase> {
+  return postJson<FunctionalTestCase>(`/api/projects/${projectId}/cases`, payload);
+}
+
+export function getCase(caseId: number): Promise<FunctionalTestCase> {
+  return getJson<FunctionalTestCase>(`/api/cases/${caseId}`);
+}
+
+export function updateCase(caseId: number, payload: FunctionalTestCasePayload): Promise<FunctionalTestCase> {
+  return putJson<FunctionalTestCase>(`/api/cases/${caseId}`, payload);
+}
+
+export function deleteCase(caseId: number): Promise<void> {
+  return deleteJson<void>(`/api/cases/${caseId}`);
+}
+
+export function enableCase(caseId: number): Promise<FunctionalTestCase> {
+  return postJson<FunctionalTestCase>(`/api/cases/${caseId}/enable`, {});
+}
+
+export function disableCase(caseId: number): Promise<FunctionalTestCase> {
+  return postJson<FunctionalTestCase>(`/api/cases/${caseId}/disable`, {});
+}
+
+export function copyCase(caseId: number): Promise<FunctionalTestCase> {
+  return postJson<FunctionalTestCase>(`/api/cases/${caseId}/copy`, {});
+}
+
+export function getCaseVersions(caseId: number): Promise<TestCaseVersion[]> {
+  return getJson<TestCaseVersion[]>(`/api/cases/${caseId}/versions`);
+}
+
+export function activateCaseVersion(caseId: number, versionId: number): Promise<FunctionalTestCase> {
+  return postJson<FunctionalTestCase>(`/api/cases/${caseId}/versions/${versionId}/activate`, {});
+}
+
+export function validateCaseDsl(caseId: number, dsl_json: TestCaseDSL): Promise<DslValidationResult> {
+  return postJson<DslValidationResult>(`/api/cases/${caseId}/dsl/validate`, { dsl_json });
+}
+
+export function formatCaseDsl(caseId: number, dsl_json: TestCaseDSL): Promise<TestCaseDSL> {
+  return postJson<TestCaseDSL>(`/api/cases/${caseId}/dsl/format`, { dsl_json });
+}
+
+export function saveCaseDsl(caseId: number, dsl_json: TestCaseDSL, change_summary?: string): Promise<FunctionalTestCase> {
+  return putJson<FunctionalTestCase>(`/api/cases/${caseId}/dsl`, {
+    dsl_json,
+    change_summary,
+    change_type: "manual_edit"
+  });
+}
+
+export function analyzeCase(caseId: number, instruction?: string, testData?: Record<string, unknown>): Promise<AnalyzeResult> {
+  return postJson<AnalyzeResult>(`/api/cases/${caseId}/analyze`, { instruction, testData });
+}
+
+export function generateCaseDsl(caseId: number, instruction?: string, testData?: Record<string, unknown>): Promise<TestCaseDSL> {
+  return postJson<TestCaseDSL>(`/api/cases/${caseId}/generate-dsl`, { instruction, testData });
+}
+
+export function saveGeneratedCaseDsl(
+  caseId: number,
+  dsl_json: TestCaseDSL,
+  test_data_json?: Record<string, unknown>,
+  change_summary?: string
+): Promise<FunctionalTestCase> {
+  return postJson<FunctionalTestCase>(`/api/cases/${caseId}/save-generated-dsl`, {
+    dsl_json,
+    test_data_json,
+    change_summary
+  });
+}
+
+export function getCaseRuns(caseId: number): Promise<TestRun[]> {
+  return getJson<TestRun[]>(`/api/cases/${caseId}/runs`);
+}
+
+export function getCaseFailureSamples(caseId: number): Promise<FailureSample[]> {
+  return getJson<FailureSample[]>(`/api/cases/${caseId}/failure-samples`);
+}
+
+export function getCaseFailureAnalyses(caseId: number): Promise<FailureAnalysis[]> {
+  return getJson<FailureAnalysis[]>(`/api/cases/${caseId}/failure-analyses`);
+}
+
+export function getCaseFixApplications(caseId: number): Promise<FixApplication[]> {
+  return getJson<FixApplication[]>(`/api/cases/${caseId}/fix-applications`);
 }
 
 export function getSystems(): Promise<TestSystem[]> {

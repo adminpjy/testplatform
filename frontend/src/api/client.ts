@@ -36,6 +36,12 @@ export async function putJson<T>(path: string, body: unknown): Promise<T> {
   });
 }
 
+export async function deleteJson<T = void>(path: string): Promise<T> {
+  return requestJson<T>(path, {
+    method: "DELETE"
+  });
+}
+
 export function apiUrl(path: string): string {
   if (/^https?:\/\//.test(path)) {
     return path;
@@ -61,6 +67,9 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
     throw new ApiError(response.status, await readErrorBody(response));
   }
 
+  if (response.status === 204) {
+    return undefined as T;
+  }
   return (await response.json()) as T;
 }
 

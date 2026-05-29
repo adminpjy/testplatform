@@ -1,13 +1,15 @@
 import { Bot, Bug, ChevronDown, ChevronUp, Play, Search, UserRoundCheck } from "lucide-react";
 
-import type { AnalyzeResult, TestProject, TestSystem } from "../types/platform";
+import type { AnalyzeResult, FunctionalTestCase, TestProject, TestSystem } from "../types/platform";
 
 export function TestRunConfigCard({
   collapsed,
   testDataOpen,
   projects,
+  cases,
   systems,
   selectedProjectId,
+  selectedCaseId,
   selectedSystemId,
   baseUrl,
   username,
@@ -25,6 +27,7 @@ export function TestRunConfigCard({
   onToggleCollapsed,
   onToggleTestData,
   onProjectChange,
+  onCaseChange,
   onSystemChange,
   onBaseUrlChange,
   onUsernameChange,
@@ -40,8 +43,10 @@ export function TestRunConfigCard({
   collapsed: boolean;
   testDataOpen: boolean;
   projects: TestProject[];
+  cases: FunctionalTestCase[];
   systems: TestSystem[];
   selectedProjectId: number | "";
+  selectedCaseId: number | "";
   selectedSystemId: number | "";
   baseUrl: string;
   username: string;
@@ -59,6 +64,7 @@ export function TestRunConfigCard({
   onToggleCollapsed: () => void;
   onToggleTestData: () => void;
   onProjectChange: (projectId: number) => void;
+  onCaseChange: (caseId: number | "") => void;
   onSystemChange: (systemId: number | "") => void;
   onBaseUrlChange: (value: string) => void;
   onUsernameChange: (value: string) => void;
@@ -93,6 +99,20 @@ export function TestRunConfigCard({
                 {projects.map((project) => (
                   <option value={project.id} key={project.id}>
                     {project.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              <span>功能测试用例</span>
+              <select
+                value={selectedCaseId}
+                onChange={(event) => onCaseChange(event.target.value ? Number(event.target.value) : "")}
+              >
+                <option value="">临时测试目标</option>
+                {cases.map((item) => (
+                  <option value={item.id} key={item.id}>
+                    {item.case_name}
                   </option>
                 ))}
               </select>

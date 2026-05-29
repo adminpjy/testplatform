@@ -1,16 +1,190 @@
 export interface TestProject {
   id: number;
   project_code: string;
+  project_name: string | null;
   name: string;
   description: string | null;
   system_id: number | null;
   system_name: string | null;
   base_url: string | null;
   login_url: string | null;
+  home_url?: string | null;
+  auth_type?: string;
   environment: string | null;
+  default_timeout_ms?: number;
+  enable_trace_default?: boolean;
+  enable_screenshot_default?: boolean;
+  enable_dom_snapshot_default?: boolean;
+  enable_accessibility_snapshot_default?: boolean;
+  enable_vision_fallback_default?: boolean;
+  default_account_id?: number | null;
+  default_account?: ProjectAccount | null;
+  account_count?: number;
+  case_count?: number;
+  last_run_status?: string | null;
   status: string;
   created_at: string;
   updated_at: string;
+}
+
+export interface ProjectAccount {
+  id: number;
+  project_id: number | null;
+  account_name: string | null;
+  username: string;
+  role_name: string | null;
+  description: string | null;
+  allow_read: boolean;
+  allow_write: boolean;
+  allow_approval: boolean;
+  allow_delete: boolean;
+  is_default: boolean;
+  status: string;
+  secret_ref: string | null;
+  has_password: boolean;
+  expires_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ProjectCreatePayload {
+  project_name: string;
+  description?: string | null;
+  system_name?: string | null;
+  base_url?: string | null;
+  login_url?: string | null;
+  home_url?: string | null;
+  auth_type?: string;
+  default_timeout_ms?: number;
+  enable_trace_default?: boolean;
+  enable_screenshot_default?: boolean;
+  enable_dom_snapshot_default?: boolean;
+  enable_accessibility_snapshot_default?: boolean;
+  enable_vision_fallback_default?: boolean;
+  status?: string;
+}
+
+export interface ProjectAccountPayload {
+  account_name?: string | null;
+  username?: string;
+  password?: string | null;
+  secret_ref?: string | null;
+  role_name?: string | null;
+  description?: string | null;
+  allow_read?: boolean;
+  allow_write?: boolean;
+  allow_approval?: boolean;
+  allow_delete?: boolean;
+  is_default?: boolean;
+  status?: string;
+}
+
+export interface FunctionalTestCase {
+  id: number;
+  project_id: number;
+  case_code: string | null;
+  case_name: string;
+  description: string | null;
+  source_type: string;
+  natural_language_goal: string | null;
+  menu_path: string | null;
+  business_intent: string | null;
+  inherit_project_account: boolean;
+  account_id: number | null;
+  test_data_json: Record<string, unknown> | null;
+  preconditions_json: Record<string, unknown> | null;
+  success_criteria_json: Record<string, unknown> | null;
+  settings_json: Record<string, unknown> | null;
+  dsl_json: TestCaseDSL | null;
+  risk_level: string;
+  status: string;
+  current_version_id: number | null;
+  last_run_id: number | null;
+  last_run_status: string | null;
+  last_run_at: string | null;
+  run_count: number;
+  pass_count: number;
+  fail_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface FunctionalTestCasePayload {
+  case_name?: string;
+  description?: string | null;
+  source_type?: string;
+  natural_language_goal?: string | null;
+  menu_path?: string | null;
+  business_intent?: string | null;
+  inherit_project_account?: boolean;
+  account_id?: number | null;
+  test_data_json?: Record<string, unknown> | null;
+  preconditions_json?: Record<string, unknown> | null;
+  success_criteria_json?: Record<string, unknown> | null;
+  settings_json?: Record<string, unknown> | null;
+  dsl_json?: TestCaseDSL | null;
+  risk_level?: string;
+  status?: string;
+}
+
+export interface TestCaseVersion {
+  id: number;
+  case_id: number;
+  version_no: number;
+  version_label: string | null;
+  natural_language_goal: string | null;
+  dsl_json: TestCaseDSL | null;
+  test_data_json: Record<string, unknown> | null;
+  preconditions_json: Record<string, unknown> | null;
+  success_criteria_json: Record<string, unknown> | null;
+  settings_json: Record<string, unknown> | null;
+  change_type: string;
+  change_summary: string | null;
+  created_at: string;
+}
+
+export interface DslValidationResult {
+  valid: boolean;
+  errors: string[];
+  dsl_json: TestCaseDSL | null;
+}
+
+export interface FailureAnalysis {
+  id: number;
+  case_id: number | null;
+  run_id: number;
+  failure_sample_id: number;
+  analysis_status: string;
+  failure_category: string | null;
+  root_cause: string | null;
+  confidence: number | null;
+  evidence_json: Record<string, unknown> | null;
+  suggestions_json: Record<string, unknown> | null;
+  recommended_actions_json: Record<string, unknown> | null;
+  risk_level: string;
+  requires_human_review: boolean;
+  error_summary: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface FixApplication {
+  id: number;
+  case_id: number | null;
+  run_id: number | null;
+  failure_analysis_id: number | null;
+  fix_type: string;
+  status: string;
+  before_snapshot_json: Record<string, unknown> | null;
+  after_snapshot_json: Record<string, unknown> | null;
+  created_case_version_id: number | null;
+  created_rule_draft_id: number | null;
+  verify_run_id: number | null;
+  reason: string | null;
+  defect_draft_json: Record<string, unknown> | null;
+  created_at: string;
+  applied_at: string | null;
+  verified_at: string | null;
 }
 
 export interface AnalyzeResult {

@@ -230,6 +230,76 @@ a {
   grid-template-columns: minmax(300px, 0.65fr) minmax(520px, 1.35fr);
 }
 
+.project-page__header,
+.project-list-panel,
+.project-detail-panel,
+.case-detail-card {
+  padding: 16px;
+}
+
+.project-management-grid {
+  display: grid;
+  grid-template-columns: minmax(420px, 0.9fr) minmax(560px, 1.1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.project-detail-panel,
+.project-tab-panel,
+.project-form,
+.case-info-form,
+.case-json-grid {
+  display: grid;
+  gap: 14px;
+}
+
+.project-detail-panel > .tab-strip,
+.case-detail-card > .tab-strip {
+  border-bottom: 1px solid #e2e8f0;
+  padding-bottom: 10px;
+}
+
+.table-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.text-cell {
+  display: block;
+  max-width: 360px;
+  overflow-wrap: anywhere;
+}
+
+.case-dsl-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 0.34fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.case-json-editor {
+  min-height: 360px;
+  max-height: 560px;
+  overflow: auto;
+  white-space: pre;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+}
+
+.case-json-editor--small {
+  min-height: 160px;
+  max-height: 260px;
+}
+
+.case-version-panel {
+  min-width: 0;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #f8fafc;
+  padding: 12px;
+}
+
 .test-run-workspace {
   display: flex;
   width: 100%;
@@ -2057,6 +2127,8 @@ button:disabled {
 @media (max-width: 1180px) {
   .main-grid,
   .analysis-trace-grid,
+  .project-management-grid,
+  .case-dsl-layout,
   .page-grid--test-run,
   .page-grid--reports,
   .page-grid--systems,

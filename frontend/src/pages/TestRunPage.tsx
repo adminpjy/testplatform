@@ -6,7 +6,9 @@ import {
   convertInterventionToRule,
   createTestRun,
   executeIntervention,
+  getCase,
   getProjects,
+  getProjectCases,
   getSystems,
   getRunFailureSamples,
   getRunHumanInterventions,
@@ -36,6 +38,7 @@ import type {
   TestArtifact,
   TestCaseDSL,
   TestCaseStep,
+  FunctionalTestCase,
   TestProject,
   TestRun,
   TestStepRun,
@@ -65,9 +68,11 @@ const TEST_RUN_TABS: Array<{ id: TestRunTab; label: string }> = [
 
 export function TestRunPage() {
   const [projects, setProjects] = useState<TestProject[]>([]);
+  const [projectCases, setProjectCases] = useState<FunctionalTestCase[]>([]);
   const [systems, setSystems] = useState<TestSystem[]>([]);
   const [runs, setRuns] = useState<TestRun[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<number | "">("");
+  const [selectedCaseId, setSelectedCaseId] = useState<number | "">("");
   const [selectedSystemId, setSelectedSystemId] = useState<number | "">("");
   const [baseUrl, setBaseUrl] = useState("");
   const [username, setUsername] = useState("");
@@ -117,9 +122,21 @@ export function TestRunPage() {
       setProjects(projectList);
       setSystems(systemList);
       setRuns(runList);
+      const hashCaseId = caseIdFromHash();
+      if (hashCaseId) {
+        const savedCase = await getCase(hashCaseId);
+        setSelectedCaseId(savedCase.id);
+        setSelectedProjectId(savedCase.project_id);
+        await loadCasesForProject(savedCase.project_id, savedCase.id);
+        applyCaseToForm(savedCase, projectList);
+        return;
+      }
       if (projectList.length > 0) {
         const project = projectList[0];
         setSelectedProjectId(project.id);
+        await loadCasesForProject(project.id);
+        if (project.base_url) setBaseUrl(project.login_url || project.base_url);
+        if (project.default_account?.username) setUsername(project.default_account.username);
       }
       if (systemList.length > 0) {
         const system = systemList[0];
@@ -155,15 +172,61 @@ export function TestRunPage() {
     }
   }
 
-  function handleProjectChange(projectId: number) {
+  async function handleProjectChange(projectId: number) {
     setSelectedProjectId(projectId);
+    setSelectedCaseId("");
+    setPlannedDsl(null);
     const project = projects.find((item) => item.id === projectId);
     if (project) {
+      setBaseUrl(project.login_url || project.base_url || baseUrl);
+      setUsername(project.default_account?.username || username);
       const system = systems.find((item) => item.id === project.system_id);
       if (system) {
         handleSystemChange(system.id);
       }
     }
+    await loadCasesForProject(projectId);
+  }
+
+  async function loadCasesForProject(projectId: number, preferredCaseId?: number) {
+    const caseList = await getProjectCases(projectId);
+    setProjectCases(caseList);
+    if (preferredCaseId && !caseList.some((item) => item.id === preferredCaseId)) {
+      setSelectedCaseId("");
+    }
+  }
+
+  async function handleCaseChange(caseId: number | "") {
+    setSelectedCaseId(caseId);
+    if (!caseId) {
+      setPlannedDsl(null);
+      return;
+    }
+    const savedCase = await getCase(caseId);
+    applyCaseToForm(savedCase, projects);
+  }
+
+  function applyCaseToForm(savedCase: FunctionalTestCase, projectList: TestProject[]) {
+    const project = projectList.find((item) => item.id === savedCase.project_id);
+    setInstruction(savedCase.natural_language_goal || savedCase.case_name);
+    setPlannedDsl(savedCase.dsl_json);
+    setTestDataJson(JSON.stringify(savedCase.test_data_json || {}, null, 2));
+    if (project?.base_url) {
+      setBaseUrl(project.login_url || project.base_url);
+    }
+    if (project?.default_account?.username) {
+      setUsername(project.default_account.username);
+    }
+    setAnalysis({
+      readyToExecute: Boolean(savedCase.dsl_json),
+      confidence: savedCase.dsl_json ? 1 : 0,
+      understoodGoal: savedCase.natural_language_goal || savedCase.case_name,
+      missingFields: savedCase.dsl_json ? [] : ["DSL"],
+      clarifyingQuestions: savedCase.dsl_json ? [] : ["该用例尚未保存 DSL，请在用例详情页生成或保存 DSL。"],
+      assumptions: ["使用已保存的功能测试用例配置。"],
+      riskLevel: savedCase.risk_level || "low",
+      normalizedInstruction: savedCase.natural_language_goal || savedCase.case_name
+    });
   }
 
   function handleSystemChange(systemId: number) {
@@ -234,6 +297,7 @@ export function TestRunPage() {
       const run = await createTestRun({
         project_id: Number(selectedProjectId),
         system_id: selectedSystemId ? Number(selectedSystemId) : null,
+        case_id: selectedCaseId ? Number(selectedCaseId) : null,
         instruction,
         base_url: baseUrl,
         dsl_json: executableDsl
@@ -384,8 +448,10 @@ export function TestRunPage() {
           collapsed={configCollapsed}
           testDataOpen={testDataOpen}
           projects={projects}
+          cases={projectCases}
           systems={systems}
           selectedProjectId={selectedProjectId}
+          selectedCaseId={selectedCaseId}
           selectedSystemId={selectedSystemId}
           baseUrl={baseUrl}
           username={username}
@@ -402,7 +468,8 @@ export function TestRunPage() {
           hasActiveRun={Boolean(activeRun)}
           onToggleCollapsed={() => setConfigCollapsed((value) => !value)}
           onToggleTestData={() => setTestDataOpen((value) => !value)}
-          onProjectChange={handleProjectChange}
+          onProjectChange={(value) => void handleProjectChange(value)}
+          onCaseChange={(value) => void handleCaseChange(value)}
           onSystemChange={(value) => {
             if (value === "") {
               setSelectedSystemId("");
@@ -825,4 +892,9 @@ function parseTestDataFromJson(value: string): Record<string, unknown> {
     throw new Error("测试数据 JSON 必须是对象。");
   }
   return parsed as Record<string, unknown>;
+}
+
+function caseIdFromHash(): number | null {
+  const match = window.location.hash.match(/[?&]caseId=(\d+)/);
+  return match ? Number(match[1]) : null;
 }

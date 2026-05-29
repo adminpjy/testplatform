@@ -3,17 +3,19 @@ import {
   AlertTriangle,
   Database,
   FileText,
-  Monitor,
+  FolderKanban,
   Settings
 } from "lucide-react";
 import type { ComponentType } from "react";
 
 export type AppRoute =
+  | "projects"
+  | "project-detail"
+  | "case-detail"
   | "test-run"
   | "ability-center"
   | "failure-samples"
   | "reports"
-  | "systems"
   | "settings";
 
 export interface AppNavItem {
@@ -24,6 +26,12 @@ export interface AppNavItem {
 }
 
 export const navigationItems: AppNavItem[] = [
+  {
+    id: "projects",
+    label: "项目管理",
+    description: "项目、账号和功能测试用例",
+    icon: FolderKanban
+  },
   {
     id: "test-run",
     label: "测试运行",
@@ -49,12 +57,6 @@ export const navigationItems: AppNavItem[] = [
     icon: FileText
   },
   {
-    id: "systems",
-    label: "被测系统管理",
-    description: "配置真实系统、账号和连通性检查",
-    icon: Monitor
-  },
-  {
     id: "settings",
     label: "系统设置",
     description: "服务状态和运行配置",
@@ -63,6 +65,25 @@ export const navigationItems: AppNavItem[] = [
 ];
 
 export function routeFromHash(hash: string): AppRoute {
-  const value = hash.replace(/^#\/?/, "") as AppRoute;
+  const clean = hash.replace(/^#\/?/, "");
+  if (/^projects\/\d+/.test(clean)) {
+    return "project-detail";
+  }
+  if (/^cases\/\d+/.test(clean)) {
+    return "case-detail";
+  }
+  const value = clean as AppRoute;
   return navigationItems.some((item) => item.id === value) ? value : "test-run";
+}
+
+export function idFromHash(hash: string, prefix: "projects" | "cases"): number | null {
+  const match = hash.replace(/^#\/?/, "").match(new RegExp(`^${prefix}/(\\d+)`));
+  return match ? Number(match[1]) : null;
+}
+
+export function navRouteFor(route: AppRoute): AppRoute {
+  if (route === "project-detail" || route === "case-detail") {
+    return "projects";
+  }
+  return route;
 }
