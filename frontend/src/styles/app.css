@@ -502,6 +502,10 @@ a {
   font-weight: 700;
 }
 
+.test-run-api-error {
+  margin-top: 10px;
+}
+
 .compact-form-grid {
   display: flex;
   width: 100%;

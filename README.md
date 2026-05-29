@@ -58,9 +58,9 @@ LLM defaults:
 
 ```text
 LLM_PROVIDER=openai_compatible
-TEST_LLM_BASE_URL=https://ds.ai.sinopec.com/ds_v4_pro/v1/chat/completions
+TEST_LLM_BASE_URL=http://172.21.4.88/v1
 TEST_LLM_API_KEY=
-TEST_LLM_MODEL=DeepSeek-V4
+TEST_LLM_MODEL=DeepSeek
 TEST_LLM_TIMEOUT_SECONDS=120
 TEST_LLM_MAX_TOKENS=8192
 TEST_LLM_TEMPERATURE=0.6
@@ -77,7 +77,7 @@ Formal runtime controls:
 EXECUTOR_MODE=cube
 LOCAL_BROWSER=true
 RUNS_ROOT=artifacts/runs
-ALLOWED_BASE_URL_PREFIXES=https://work.bypc.com.cn
+ALLOWED_BASE_URL_PREFIXES=https://work.bypc.com.cn,https://menhu.bypc.com.cn
 PLAYWRIGHT_IGNORE_HTTPS_ERRORS=true
 ```
 

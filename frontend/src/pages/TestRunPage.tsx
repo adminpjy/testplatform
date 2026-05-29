@@ -4,7 +4,6 @@ import { useEffect, useRef, useState } from "react";
 import { apiUrl, fileUrl } from "../api/client";
 import {
   convertInterventionToRule,
-  createRunFromCase,
   createTestRun,
   executeIntervention,
   getCase,
@@ -270,19 +269,15 @@ export function TestRunPage() {
     setActiveTab("steps");
     try {
       const executableDsl = materializeDsl(plannedDsl, { baseUrl, username, password, visionFallback, instruction, testData: parseTestData() });
-      const run = selectedCaseId
-        ? await createRunFromCase(Number(selectedCaseId), {
-            testDataOverride: executableDsl.testData,
-            settingsOverride: executableDsl.settings,
-            runName: "case_run_from_test_run_page"
-          })
-        : await createTestRun({
-            project_id: Number(selectedProjectId),
-            case_id: null,
-            instruction,
-            base_url: baseUrl,
-            dsl_json: executableDsl
-          });
+      const run = await createTestRun({
+        project_id: Number(selectedProjectId),
+        case_id: selectedCaseId ? Number(selectedCaseId) : null,
+        instruction,
+        base_url: baseUrl,
+        dsl_json: executableDsl,
+        testDataOverride: executableDsl.testData,
+        settingsOverride: executableDsl.settings
+      });
       const runList = await getTestRuns();
       setRuns(runList);
       await selectRun(run);
@@ -460,6 +455,7 @@ export function TestRunPage() {
           onIntervention={() => setInterventionOpen(true)}
           onDebug={() => setDrawerOpen(true)}
         />
+        {apiError ? <pre className="error-detail error-detail--collapsed test-run-api-error">{apiError}</pre> : null}
       </section>
 
       <section className="workspace-section task-observation-section">

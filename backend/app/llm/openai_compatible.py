@@ -45,13 +45,16 @@ class OpenAICompatibleProvider:
         }
         url = self._completion_url()
 
-        with httpx.Client(timeout=float(self.timeout_seconds), verify=self._verify_value()) as client:
-            if request.stream:
-                return self._complete_streaming(client, url, payload, headers)
-            response = client.post(url, json=payload, headers=headers)
-            self._raise_for_status(response)
-            body = response.json()
-            return body["choices"][0]["message"]["content"]
+        try:
+            with httpx.Client(timeout=float(self.timeout_seconds), verify=self._verify_value()) as client:
+                if request.stream:
+                    return self._complete_streaming(client, url, payload, headers)
+                response = client.post(url, json=payload, headers=headers)
+                self._raise_for_status(response)
+                body = response.json()
+                return body["choices"][0]["message"]["content"]
+        except httpx.RequestError as exc:
+            raise LLMProviderError(f"LLM provider request failed: {exc.__class__.__name__}.") from exc
 
     def stream_complete(self, request: LLMRequest) -> Iterator[str]:
         if not self.base_url:
@@ -63,8 +66,11 @@ class OpenAICompatibleProvider:
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
         }
-        with httpx.Client(timeout=float(self.timeout_seconds), verify=self._verify_value()) as client:
-            yield from self._stream_chunks(client, self._completion_url(), self._payload(request, stream=True), headers)
+        try:
+            with httpx.Client(timeout=float(self.timeout_seconds), verify=self._verify_value()) as client:
+                yield from self._stream_chunks(client, self._completion_url(), self._payload(request, stream=True), headers)
+        except httpx.RequestError as exc:
+            raise LLMProviderError(f"LLM provider request failed: {exc.__class__.__name__}.") from exc
 
     def _payload(self, request: LLMRequest, *, stream: bool) -> dict:
         payload = {
