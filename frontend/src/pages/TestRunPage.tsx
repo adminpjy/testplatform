@@ -46,12 +46,6 @@ import type { RuntimeMessage } from "../types/runtime";
 import { normalizeRuntimeMessage } from "../types/runtime";
 
 const DEFAULT_TEST_DATA = `{
-  "用户名": "test001",
-  "手机号": "13800000000",
-  "组织机构": "信息中心",
-  "负责人": "张三",
-  "开始日期": "2026-06-01",
-  "结束日期": "2026-06-03"
 }`;
 
 type TestRunTab = "steps" | "history" | "failures" | "debug" | "artifacts";
@@ -75,7 +69,7 @@ export function TestRunPage() {
   const [password, setPassword] = useState("");
   const [testDataJson, setTestDataJson] = useState(DEFAULT_TEST_DATA);
   const [visionFallback, setVisionFallback] = useState(false);
-  const [instruction, setInstruction] = useState("1.打开真实内网系统 https://work.bypc.com.cn/，如果跳转到统一身份认证页面，等待登录页面加载完成，输入测试账号和密码，点击登录，登录后验证进入系统首页。2.进入“工作台-我的待办”3.获取待办列表数量4.循环点击列表中的链接，弹出对话框5.点击“返回”/取消/关闭等代表关闭对话框的按钮，关闭对话框6.反复4-5步，直至所有行被点击.");
+  const [instruction, setInstruction] = useState("");
   const [analysis, setAnalysis] = useState<AnalyzeResult | null>(null);
   const [plannedDsl, setPlannedDsl] = useState<TestCaseDSL | null>(null);
   const [analysisMessages, setAnalysisMessages] = useState<RuntimeMessage[]>([]);
@@ -228,8 +222,7 @@ export function TestRunPage() {
         base_url: baseUrl,
         credentials: { username, password },
         testData: parseTestData(),
-        settings: { visionFallbackEnabled: visionFallback },
-        stream: true
+        settings: { visionFallbackEnabled: visionFallback }
       }, (wireMessage) => {
         const message = normalizeRuntimeMessage(wireMessage);
         if (message.phase === "llm_chunk") {
@@ -341,7 +334,12 @@ export function TestRunPage() {
     try {
       const intervention = await executeIntervention(activeRun.id, interventionId);
       setInterventions((current) => [intervention, ...current.filter((item) => item.id !== intervention.id)]);
-      await reloadRunDetails(activeRun);
+      const recoveryRunId = Number(intervention.execution_result_json?.["recoveryRunId"] || 0);
+      if (recoveryRunId > 0) {
+        await refreshActiveRun(recoveryRunId);
+      } else {
+        await reloadRunDetails(activeRun);
+      }
     } catch (error) {
       setApiError(error instanceof Error ? error.message : String(error));
       throw error;
@@ -466,7 +464,7 @@ export function TestRunPage() {
           </div>
         </div>
         {analysisMessages.length > 0 || plannedDsl || isAnalyzing ? (
-          <AnalysisTracePanel messages={analysisMessages} analyzing={isAnalyzing} dsl={plannedDsl} />
+          <AnalysisTracePanel messages={analysisMessages} analyzing={isAnalyzing} dsl={plannedDsl} onDslChange={setPlannedDsl} />
         ) : (
           <div className="surface-panel empty-state">点击“分析”后显示 LLM 交互状态和 DSL 步骤预览</div>
         )}
@@ -798,6 +796,19 @@ function materializeDsl(
 
 function hydrateStep(step: TestCaseStep, context: { baseUrl: string; username: string; password: string }): TestCaseStep {
   const target = String(step.target || "");
+  if (isBrittleLoginSuccessStep(step)) {
+    return {
+      ...step,
+      action: "wait",
+      target: "登录后页面稳定",
+      ms: Number(step.ms || 1500),
+      description: "登录成功后可能返回门户首页，不固定等待“工作台”等页面文字。",
+      originalAction: step.originalAction || step.action,
+      originalTarget: step.originalTarget || step.target,
+      text: undefined,
+      selector: undefined
+    };
+  }
   if (step.action === "business_goal" && target.includes("登录")) {
     return {
       ...step,
@@ -842,9 +853,33 @@ function fallbackSteps(context: { baseUrl: string; username: string; password: s
     });
     steps.push({ action: "assert_url_contains", target: "/todo" });
   } else {
-    steps.push({ action: "assert_text_exists", target: "工作台" });
+    steps.push({ action: "wait", target: "登录后页面稳定", ms: 1500, description: "等待登录后跳转稳定。" });
   }
   return steps;
+}
+
+function isBrittleLoginSuccessStep(step: TestCaseStep): boolean {
+  if (!["wait_for_text", "assert_text_exists"].includes(step.action)) return false;
+  const target = String(step.target || "");
+  const text = String(step.text || target || "");
+  const context = [
+    target,
+    text,
+    step.description,
+    step.stepName,
+    step.step_name,
+    step.name
+  ].map((value) => String(value || "")).join(" ");
+  return mentionsLoginSuccess(context) && isGenericLoginHomeMarker(text);
+}
+
+function mentionsLoginSuccess(value: string): boolean {
+  return ["登录成功", "登陆成功", "登录成功标识", "登陆成功标识", "登录后", "登录完成"].some((token) => value.includes(token));
+}
+
+function isGenericLoginHomeMarker(value: string): boolean {
+  const normalized = value.replace(/[\s，,。；;：:"'“”‘’]+/g, "");
+  return ["工作台", "首页", "主页", "门户", "门户首页", "系统首页", "后台首页", "Home", "home"].includes(normalized);
 }
 
 function parseTestDataFromJson(value: string): Record<string, unknown> {

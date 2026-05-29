@@ -1,7 +1,7 @@
-import { AlertTriangle, Bot, CheckCircle2, Loader2 } from "lucide-react";
+import { AlertTriangle, Bot, CheckCircle2, Loader2, Plus, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useRef } from "react";
 
-import type { TestCaseDSL } from "../types/platform";
+import type { TestCaseDSL, TestCaseStep } from "../types/platform";
 import type { RuntimeMessage } from "../types/runtime";
 import { methodLabel, readableRuntimeTitle } from "../utils/runtimeDisplay";
 import { JsonCollapseBlock } from "./JsonCollapseBlock";
@@ -9,11 +9,13 @@ import { JsonCollapseBlock } from "./JsonCollapseBlock";
 export function AnalysisTracePanel({
   messages,
   analyzing,
-  dsl
+  dsl,
+  onDslChange
 }: {
   messages: RuntimeMessage[];
   analyzing: boolean;
   dsl: TestCaseDSL | null;
+  onDslChange?: (dsl: TestCaseDSL) => void;
 }) {
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const visibleMessages = messages.filter((message) => message.phase !== "llm_chunk");
@@ -25,6 +27,33 @@ export function AnalysisTracePanel({
 
   if (!analyzing && messages.length === 0 && !dsl) {
     return null;
+  }
+
+  function updateDslStep(index: number, patch: Partial<TestCaseStep>) {
+    if (!dsl || !onDslChange) return;
+    const steps = dsl.steps.map((step, itemIndex) => itemIndex === index ? { ...step, ...patch } : step);
+    onDslChange({ ...dsl, steps });
+  }
+
+  function deleteDslStep(index: number) {
+    if (!dsl || !onDslChange) return;
+    onDslChange({ ...dsl, steps: dsl.steps.filter((_, itemIndex) => itemIndex !== index) });
+  }
+
+  function addDslStep() {
+    if (!dsl || !onDslChange) return;
+    onDslChange({
+      ...dsl,
+      steps: [
+        ...dsl.steps,
+        {
+          action: "wait",
+          target: "登录后页面稳定",
+          ms: 1500,
+          description: "等待页面跳转或渲染稳定。"
+        }
+      ]
+    });
   }
 
   return (
@@ -79,30 +108,53 @@ export function AnalysisTracePanel({
 
         <aside className="dsl-preview-panel">
           <div className="dsl-preview-panel__heading">
-            <strong>DSL 步骤预览</strong>
-            {dsl ? <span>{dsl.steps.length} 步</span> : <span>等待生成</span>}
+            <div>
+              <strong>DSL 步骤预览</strong>
+              {dsl ? <span>{dsl.steps.length} 步</span> : <span>等待生成</span>}
+            </div>
+            {dsl && onDslChange ? (
+              <button className="ghost-button dsl-add-step-button" type="button" onClick={addDslStep}>
+                <Plus size={14} />
+                新增步骤
+              </button>
+            ) : null}
           </div>
           {dsl ? (
             <>
+              <datalist id="dsl-action-options">
+                {DSL_ACTION_OPTIONS.map((action) => (
+                  <option value={action} key={action} />
+                ))}
+              </datalist>
               <dl className="settings-list">
                 <dt>用例</dt>
                 <dd>{dsl.caseName || "-"}</dd>
                 <dt>入口</dt>
                 <dd>{dsl.baseUrl || "-"}</dd>
               </dl>
-              <ol className="dsl-step-list">
+              <ol className={onDslChange ? "dsl-step-list dsl-step-list--editable" : "dsl-step-list"}>
                 {dsl.steps.map((step, index) => (
-                  <li key={`${step.action}-${step.target || index}`}>
-                    <span>S{String(index + 1).padStart(3, "0")}</span>
-                    <strong>{readableDslStepType(step)}</strong>
-                    <em>{dslStepSummary(step)}</em>
-                    {step.action === "navigate_path" ? (
-                      <small>
-                        成功判断：{Array.isArray(step.successCriteria) ? step.successCriteria.map(String).join("；") : "页面出现目标菜单并完成导航"}
-                      </small>
-                    ) : null}
-                    {step.action === "business_goal" && step.intent ? <small>业务意图：{readableIntent(String(step.intent))}</small> : null}
-                  </li>
+                  onDslChange ? (
+                    <EditableDslStep
+                      step={step}
+                      index={index}
+                      key={`${index}-${step.action}-${step.target || ""}`}
+                      onUpdate={(patch) => updateDslStep(index, patch)}
+                      onDelete={() => deleteDslStep(index)}
+                    />
+                  ) : (
+                    <li key={`${step.action}-${step.target || index}`}>
+                      <span>S{String(index + 1).padStart(3, "0")}</span>
+                      <strong>{readableDslStepType(step)}</strong>
+                      <em>{dslStepSummary(step)}</em>
+                      {step.action === "navigate_path" ? (
+                        <small>
+                          成功判断：{Array.isArray(step.successCriteria) ? step.successCriteria.map(String).join("；") : "页面出现目标菜单并完成导航"}
+                        </small>
+                      ) : null}
+                      {step.action === "business_goal" && step.intent ? <small>业务意图：{readableIntent(String(step.intent))}</small> : null}
+                    </li>
+                  )
                 ))}
               </ol>
               {dsl.missingFields && dsl.missingFields.length > 0 ? (
@@ -134,6 +186,120 @@ export function AnalysisTracePanel({
       </div>
     </section>
   );
+}
+
+const DSL_ACTION_OPTIONS = [
+  "open_url",
+  "business_goal",
+  "navigate_path",
+  "click",
+  "input",
+  "select",
+  "wait",
+  "wait_for_text",
+  "assert_text_exists",
+  "assert_url_contains",
+  "query_table",
+  "query_table_count",
+  "open_table_row",
+  "process_table_rows",
+  "fill_form",
+  "auto_fill_form",
+  "upload_file",
+  "close_dialog_by_common_controls",
+  "confirm_dialog",
+  "summary_assert",
+  "assert_result"
+];
+
+function EditableDslStep({
+  step,
+  index,
+  onUpdate,
+  onDelete
+}: {
+  step: TestCaseStep;
+  index: number;
+  onUpdate: (patch: Partial<TestCaseStep>) => void;
+  onDelete: () => void;
+}) {
+  const valueKey = preferredStepValueKey(step);
+  const valueText = String((step[valueKey] as string | number | undefined) ?? "");
+  const pathSegments = Array.isArray(step.pathSegments) ? step.pathSegments.map(String).join("/") : "";
+
+  function updateAction(action: string) {
+    const patch: Partial<TestCaseStep> = { action };
+    if (action === "wait" && !step.ms) {
+      patch.ms = 1500;
+    }
+    if (action === "navigate_path" && !step.navigationType) {
+      patch.navigationType = "menu_path";
+    }
+    onUpdate(patch);
+  }
+
+  function updatePathSegments(value: string) {
+    const segments = value.split(/[/>→\\]+/).map((item) => item.trim()).filter(Boolean);
+    onUpdate({
+      pathSegments: segments,
+      navigationType: "menu_path",
+      target: segments.join("/")
+    });
+  }
+
+  return (
+    <li className="dsl-step-list__editable">
+      <div className="dsl-step-editor__title">
+        <span>S{String(index + 1).padStart(3, "0")}</span>
+        <strong>{readableDslStepType(step)}</strong>
+        <button className="icon-button" type="button" onClick={onDelete} title="删除步骤">
+          <Trash2 size={14} />
+        </button>
+      </div>
+      <div className="dsl-step-editor-grid">
+        <label>
+          <span>动作</span>
+          <input list="dsl-action-options" value={String(step.action || "")} onChange={(event) => updateAction(event.target.value)} />
+        </label>
+        <label>
+          <span>目标</span>
+          <input value={String(step.target || "")} onChange={(event) => onUpdate({ target: event.target.value })} />
+        </label>
+        <label>
+          <span>{valueKey === "text" ? "文本" : "值"}</span>
+          <input value={valueText} onChange={(event) => onUpdate({ [valueKey]: event.target.value })} />
+        </label>
+        {step.action === "wait" ? (
+          <label>
+            <span>等待 ms</span>
+            <input
+              min={100}
+              step={100}
+              type="number"
+              value={Number(step.ms || 1500)}
+              onChange={(event) => onUpdate({ ms: Number(event.target.value || 1500) })}
+            />
+          </label>
+        ) : null}
+        {step.action === "navigate_path" ? (
+          <label className="dsl-step-editor-grid__wide">
+            <span>菜单路径</span>
+            <input placeholder="工作台/我的待办" value={pathSegments} onChange={(event) => updatePathSegments(event.target.value)} />
+          </label>
+        ) : null}
+        <label className="dsl-step-editor-grid__wide">
+          <span>说明</span>
+          <input value={String(step.description || "")} onChange={(event) => onUpdate({ description: event.target.value })} />
+        </label>
+      </div>
+    </li>
+  );
+}
+
+function preferredStepValueKey(step: TestCaseStep): "text" | "value" {
+  if (["wait_for_text", "assert_text_exists", "assert_text_not_exists", "assert_url_contains"].includes(step.action)) return "text";
+  if (step.text !== undefined && step.value === undefined) return "text";
+  return "value";
 }
 
 function navigatePathSummary(step: Record<string, unknown>): string {

@@ -1049,7 +1049,7 @@ class CaseRunner:
             return None
 
     def _continue_security_interstitial(self, page: Any) -> bool:
-        if not _env_bool("PLAYWRIGHT_AUTO_CONTINUE_SECURITY_INTERSTITIAL", False):
+        if not _auto_continue_security_interstitial_enabled():
             return False
         try:
             if page.locator("#details-button").count() > 0:
@@ -1546,6 +1546,12 @@ def _env_bool(name: str, default: bool) -> bool:
     if value is None or value == "":
         return default
     return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _auto_continue_security_interstitial_enabled() -> bool:
+    return _env_bool("PLAYWRIGHT_AUTO_CONTINUE_SECURITY_INTERSTITIAL", False) or os.getenv(
+        "EXECUTOR_MODE", ""
+    ).strip().lower() == "cube"
 
 
 def _safe_env_url(name: str) -> str | None:

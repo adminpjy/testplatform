@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     llm_provider: str = Field(default="openai_compatible", alias="LLM_PROVIDER")
     test_llm_base_url: str = Field(default="", alias="TEST_LLM_BASE_URL")
     test_llm_api_key: SecretStr | None = Field(default=None, alias="TEST_LLM_API_KEY")
+    test_llm_profiles_json: str = Field(default="", alias="TEST_LLM_PROFILES_JSON")
     test_llm_model: str = Field(default="DeepSeek-V4", alias="TEST_LLM_MODEL")
     test_llm_stream: bool = Field(default=True, alias="TEST_LLM_STREAM")
     test_llm_timeout_seconds: int = Field(default=120, alias="TEST_LLM_TIMEOUT_SECONDS")

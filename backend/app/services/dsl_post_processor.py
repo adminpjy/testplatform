@@ -9,7 +9,8 @@ class DslPostProcessor:
     def normalize_dsl(self, dsl: dict[str, Any]) -> dict[str, Any]:
         normalized = dict(dsl)
         normalized["testData"] = dict(normalized.get("testData") or {})
-        normalized["steps"] = [self.normalize_step(step) for step in normalized.get("steps") or [] if isinstance(step, dict)]
+        normalized_steps = [self.normalize_step(step) for step in normalized.get("steps") or [] if isinstance(step, dict)]
+        normalized["steps"] = _relax_brittle_login_success_assertions(normalized_steps)
         for step in normalized["steps"]:
             _merge_step_test_data(normalized["testData"], step)
         missing_fields = list(normalized.get("missingFields") or [])
@@ -135,6 +136,98 @@ def _ensure_navigation_defaults(step: dict[str, Any], segments: list[str]) -> No
     )
 
 
+def _relax_brittle_login_success_assertions(steps: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    relaxed: list[dict[str, Any]] = []
+    recently_login_step = False
+    for step in steps:
+        current = dict(step)
+        if _is_login_step(current):
+            relaxed.append(current)
+            recently_login_step = True
+            continue
+        if _is_brittle_login_success_assertion(current, recently_login_step):
+            relaxed.append(_login_success_stabilization_wait(current))
+            recently_login_step = False
+            continue
+        relaxed.append(current)
+        if str(current.get("action") or "") not in {"wait", "wait_for_text", "assert_text_exists"}:
+            recently_login_step = False
+    return relaxed
+
+
+def _is_login_step(step: dict[str, Any]) -> bool:
+    action = str(step.get("action") or "").lower()
+    target = str(step.get("target") or "")
+    intent = str(step.get("intent") or (step.get("operationIntent") or {}).get("intent") or "").lower()
+    description = str(step.get("description") or step.get("readableDescription") or "")
+    combined = f"{target} {description}".lower()
+    if intent in {"login", "login_system", "username_password_login"}:
+        return True
+    if "登录" in combined or "登陆" in combined or "login" in combined or "sign in" in combined:
+        return action in {"business_goal", "click", "submit", "fill_form", "auto_fill_form"}
+    return False
+
+
+def _is_brittle_login_success_assertion(step: dict[str, Any], recently_login_step: bool) -> bool:
+    action = str(step.get("action") or "")
+    if action not in {"wait_for_text", "assert_text_exists"}:
+        return False
+    visible_text = _assertion_visible_text(step)
+    context_text = _flatten(
+        {
+            "target": step.get("target"),
+            "text": step.get("text"),
+            "description": step.get("description"),
+            "readableDescription": step.get("readableDescription"),
+            "stepName": step.get("stepName") or step.get("step_name") or step.get("name"),
+        }
+    )
+    if _mentions_login_success(context_text) and (_is_generic_login_home_marker(visible_text) or str(step.get("target") or "") in {"登录成功标识", "登录成功"}):
+        return True
+    return recently_login_step and _is_generic_login_home_marker(visible_text)
+
+
+def _assertion_visible_text(step: dict[str, Any]) -> str:
+    text = str(step.get("text") or "").strip()
+    if text:
+        return text
+    return str(step.get("target") or "").strip()
+
+
+def _mentions_login_success(value: str) -> bool:
+    return any(token in value for token in ["登录成功", "登陆成功", "登录成功标识", "登陆成功标识", "登录后", "登陆后", "登录完成"])
+
+
+def _is_generic_login_home_marker(value: str) -> bool:
+    normalized = re.sub(r"[\s，,。；;：:\"'“”‘’]+", "", str(value or ""))
+    if not normalized:
+        return False
+    return normalized in {"工作台", "首页", "主页", "门户", "门户首页", "系统首页", "后台首页", "Home", "home"}
+
+
+def _login_success_stabilization_wait(step: dict[str, Any]) -> dict[str, Any]:
+    next_step = dict(step)
+    next_step["action"] = "wait"
+    next_step["target"] = "登录后页面稳定"
+    next_step["ms"] = _coerce_wait_ms(step.get("ms"), default=1500)
+    next_step["description"] = "登录成功后可能进入门户首页、业务首页或中间页，不固定等待“工作台”等页面文字。"
+    next_step.setdefault("originalAction", step.get("action"))
+    next_step.setdefault("originalTarget", step.get("target"))
+    next_step["normalizedBy"] = "DslPostProcessor"
+    next_step["normalizationReason"] = "generic login success text assertion is relaxed to a stabilization wait"
+    next_step.pop("text", None)
+    next_step.pop("selector", None)
+    return next_step
+
+
+def _coerce_wait_ms(value: Any, *, default: int) -> int:
+    try:
+        wait_ms = int(float(str(value or default).strip()))
+    except (TypeError, ValueError):
+        wait_ms = default
+    return max(100, min(wait_ms, 60000))
+
+
 AUTH_REQUIRED_ACTIONS = {
     "navigate_path",
     "navigate_menu",
@@ -217,6 +310,8 @@ def _requires_auth(step: dict[str, Any]) -> bool:
     target = str(step.get("target") or "")
     intent = str(step.get("intent") or (step.get("operationIntent") or {}).get("intent") or "")
     if action == "open_url":
+        return False
+    if _is_login_step(step):
         return False
     if action == "business_goal" and ("登录" in target or intent in {"login", "login_system", "username_password_login"}):
         return False

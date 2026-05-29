@@ -1,10 +1,10 @@
 import { RefreshCw } from "lucide-react";
 import { useEffect, useState } from "react";
 
-import { getHealth, getPrompts, getSystemInfo, previewPrompt, reloadPrompts } from "../api/platform";
+import { getHealth, getLLMSettings, getPrompts, getSystemInfo, previewPrompt, reloadPrompts, updateLLMSettings } from "../api/platform";
 import { JsonCollapseBlock } from "../components/JsonCollapseBlock";
 import { StatusBadge } from "../components/StatusBadge";
-import type { HealthInfo, PromptInfo, PromptPreview, SystemInfo } from "../types/platform";
+import type { HealthInfo, LLMProfile, LLMSettings, PromptInfo, PromptPreview, SystemInfo } from "../types/platform";
 
 export function SystemSettingsPage() {
   const [health, setHealth] = useState<HealthInfo | null>(null);
@@ -14,9 +14,12 @@ export function SystemSettingsPage() {
   const [promptSearch, setPromptSearch] = useState("");
   const [promptFileFilter, setPromptFileFilter] = useState("");
   const [promptPreview, setPromptPreview] = useState<PromptPreview | null>(null);
+  const [llmSettings, setLlmSettings] = useState<LLMSettings | null>(null);
+  const [llmDraft, setLlmDraft] = useState<LLMSettings | null>(null);
+  const [llmMessage, setLlmMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [activeTab, setActiveTab] = useState<"runtime" | "prompts">("runtime");
+  const [activeTab, setActiveTab] = useState<"runtime" | "llm" | "prompts">("runtime");
 
   useEffect(() => {
     void loadSettings();
@@ -26,10 +29,12 @@ export function SystemSettingsPage() {
     setLoading(true);
     setError(null);
     try {
-      const [nextHealth, nextSystemInfo, promptList] = await Promise.all([getHealth(), getSystemInfo(), getPrompts()]);
+      const [nextHealth, nextSystemInfo, promptList, nextLlmSettings] = await Promise.all([getHealth(), getSystemInfo(), getPrompts(), getLLMSettings()]);
       setHealth(nextHealth);
       setSystemInfo(nextSystemInfo);
       setPrompts(promptList);
+      setLlmSettings(nextLlmSettings);
+      setLlmDraft(cloneLlmSettings(nextLlmSettings));
       if (!selectedPromptKey && promptList.length > 0) {
         setSelectedPromptKey(promptList[0].key);
       }
@@ -38,6 +43,65 @@ export function SystemSettingsPage() {
     } finally {
       setLoading(false);
     }
+  }
+
+  async function handleSaveLlmSettings() {
+    if (!llmDraft) return;
+    setLoading(true);
+    setError(null);
+    setLlmMessage(null);
+    try {
+      const saved = await updateLLMSettings(llmDraft);
+      setLlmSettings(saved);
+      setLlmDraft(cloneLlmSettings(saved));
+      setLlmMessage(`已切换到：${saved.effective?.name || saved.activeProfileId}`);
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : String(requestError));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function updateLlmProfile(profileId: string, patch: Partial<LLMProfile>) {
+    setLlmDraft((current) => {
+      if (!current) return current;
+      return {
+        ...current,
+        profiles: current.profiles.map((profile) => (profile.id === profileId ? { ...profile, ...patch } : profile)),
+      };
+    });
+  }
+
+  function addLlmProfile() {
+    setLlmDraft((current) => {
+      const base = current || { activeProfileId: "", profiles: [], effective: null };
+      const id = `llm-${Date.now()}`;
+      const profile: LLMProfile = {
+        id,
+        name: "新的 DeepSeek V4 服务",
+        provider: "openai_compatible",
+        baseUrl: "",
+        model: "DeepSeek",
+        stream: false,
+        verifySsl: true,
+        timeoutSeconds: 120,
+        maxTokens: 8192,
+        temperature: 0,
+        topP: 0.95,
+        caBundle: "",
+        apiKey: "",
+      };
+      return { ...base, activeProfileId: base.activeProfileId || id, profiles: [...base.profiles, profile] };
+    });
+  }
+
+  function removeLlmProfile(profileId: string) {
+    setLlmDraft((current) => {
+      if (!current || current.profiles.length <= 1) return current;
+      const profiles = current.profiles.filter((profile) => profile.id !== profileId);
+      const activeProfileId = current.activeProfileId === profileId ? profiles[0].id : current.activeProfileId;
+      return { ...current, activeProfileId, profiles };
+    });
   }
 
   async function handleReloadPrompts() {
@@ -86,6 +150,9 @@ export function SystemSettingsPage() {
         <div className="tab-strip">
           <button className={activeTab === "runtime" ? "tab-button tab-button--active" : "tab-button"} type="button" onClick={() => setActiveTab("runtime")}>
             运行设置
+          </button>
+          <button className={activeTab === "llm" ? "tab-button tab-button--active" : "tab-button"} type="button" onClick={() => setActiveTab("llm")}>
+            LLM 服务
           </button>
           <button className={activeTab === "prompts" ? "tab-button tab-button--active" : "tab-button"} type="button" onClick={() => setActiveTab("prompts")}>
             LLM 提示词
@@ -138,6 +205,106 @@ export function SystemSettingsPage() {
           </dl>
         </div>
       </section> : null}
+
+      {activeTab === "llm" ? (
+        <section className="surface-panel llm-settings-panel">
+          <div className="panel-heading">
+            <div>
+              <h2>LLM 服务</h2>
+              <span>选择自然语言分析、DSL 生成、失败分析和人工介入方案使用的模型服务。</span>
+            </div>
+            <div className="action-bar">
+              <button className="secondary-button" type="button" onClick={addLlmProfile}>新增服务</button>
+              <button className="primary-button" type="button" disabled={loading || !llmDraft} onClick={() => void handleSaveLlmSettings()}>
+                保存并生效
+              </button>
+            </div>
+          </div>
+          {llmMessage ? <div className="debug-feedback">{llmMessage}</div> : null}
+          {llmSettings?.effective ? (
+            <dl className="settings-list llm-effective-summary">
+              <dt>当前生效</dt>
+              <dd>{llmSettings.effective.name}</dd>
+              <dt>模型</dt>
+              <dd>{llmSettings.effective.model}</dd>
+              <dt>Endpoint</dt>
+              <dd>{llmSettings.effective.baseUrl}</dd>
+              <dt>流式</dt>
+              <dd>{llmSettings.effective.stream ? "开启" : "关闭"}</dd>
+            </dl>
+          ) : null}
+          <div className="llm-profile-list">
+            {(llmDraft?.profiles || []).map((profile) => (
+              <div className={llmDraft?.activeProfileId === profile.id ? "llm-profile-card llm-profile-card--active" : "llm-profile-card"} key={profile.id}>
+                <div className="llm-profile-card__header">
+                  <label className="switch-row">
+                    <input
+                      type="radio"
+                      checked={llmDraft?.activeProfileId === profile.id}
+                      onChange={() => setLlmDraft((current) => (current ? { ...current, activeProfileId: profile.id } : current))}
+                    />
+                    <span>设为当前服务</span>
+                  </label>
+                  <button className="ghost-button" type="button" disabled={(llmDraft?.profiles.length || 0) <= 1} onClick={() => removeLlmProfile(profile.id)}>
+                    删除
+                  </button>
+                </div>
+                <div className="form-grid">
+                  <label>
+                    <span>服务 ID</span>
+                    <input value={profile.id} readOnly />
+                  </label>
+                  <label>
+                    <span>名称</span>
+                    <input value={profile.name} onChange={(event) => updateLlmProfile(profile.id, { name: event.target.value })} />
+                  </label>
+                  <label className="form-grid__wide">
+                    <span>Base URL / Chat Completions URL</span>
+                    <input value={profile.baseUrl} onChange={(event) => updateLlmProfile(profile.id, { baseUrl: event.target.value })} />
+                  </label>
+                  <label>
+                    <span>API Key</span>
+                    <input
+                      type="password"
+                      value={profile.apiKey || ""}
+                      onChange={(event) => updateLlmProfile(profile.id, { apiKey: event.target.value })}
+                      placeholder={profile.apiKeyMasked ? `已保存：${profile.apiKeyMasked}` : "请输入 API Key"}
+                    />
+                  </label>
+                  <label>
+                    <span>模型</span>
+                    <input value={profile.model} onChange={(event) => updateLlmProfile(profile.id, { model: event.target.value })} />
+                  </label>
+                  <label>
+                    <span>最大 Token</span>
+                    <input type="number" value={profile.maxTokens} onChange={(event) => updateLlmProfile(profile.id, { maxTokens: Number(event.target.value) })} />
+                  </label>
+                  <label>
+                    <span>超时秒数</span>
+                    <input type="number" value={profile.timeoutSeconds} onChange={(event) => updateLlmProfile(profile.id, { timeoutSeconds: Number(event.target.value) })} />
+                  </label>
+                  <label>
+                    <span>Temperature</span>
+                    <input type="number" step="0.1" value={profile.temperature} onChange={(event) => updateLlmProfile(profile.id, { temperature: Number(event.target.value) })} />
+                  </label>
+                  <label>
+                    <span>Top P</span>
+                    <input type="number" step="0.01" value={profile.topP} onChange={(event) => updateLlmProfile(profile.id, { topP: Number(event.target.value) })} />
+                  </label>
+                  <label className="switch-row">
+                    <input type="checkbox" checked={profile.stream} onChange={(event) => updateLlmProfile(profile.id, { stream: event.target.checked })} />
+                    <span>启用 LLM 流式输出</span>
+                  </label>
+                  <label className="switch-row">
+                    <input type="checkbox" checked={profile.verifySsl} onChange={(event) => updateLlmProfile(profile.id, { verifySsl: event.target.checked })} />
+                    <span>校验 SSL 证书</span>
+                  </label>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      ) : null}
 
       {activeTab === "prompts" ? (
         <section className="surface-panel prompt-manager-panel">
@@ -200,6 +367,14 @@ export function SystemSettingsPage() {
       ) : null}
     </div>
   );
+}
+
+function cloneLlmSettings(value: LLMSettings): LLMSettings {
+  return {
+    activeProfileId: value.activeProfileId,
+    effective: value.effective ? { ...value.effective, apiKey: "" } : null,
+    profiles: value.profiles.map((profile) => ({ ...profile, apiKey: "" })),
+  };
 }
 
 function samplePromptVariable(name: string): unknown {

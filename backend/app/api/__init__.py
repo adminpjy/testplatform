@@ -9,6 +9,7 @@ from app.api.failure_samples import router as failure_samples_router
 from app.api.files import router as files_router
 from app.api.fix_applications import router as fix_applications_router
 from app.api.human_interventions import router as human_interventions_router
+from app.api.llm_settings import router as llm_settings_router
 from app.api.projects import router as projects_router
 from app.api.prompts import router as prompts_router
 from app.api.reports import router as reports_router
@@ -25,6 +26,7 @@ api_router.include_router(projects_router, prefix="/api/projects", tags=["projec
 api_router.include_router(accounts_router, prefix="/api/accounts", tags=["accounts"])
 api_router.include_router(cases_router, prefix="/api/cases", tags=["cases"])
 api_router.include_router(prompts_router, prefix="/api/prompts", tags=["prompts"])
+api_router.include_router(llm_settings_router, prefix="/api/llm-settings", tags=["llm-settings"])
 api_router.include_router(abilities_router, prefix="/api/abilities", tags=["abilities"])
 api_router.include_router(test_runs_router, prefix="/api/test-runs", tags=["test-runs"])
 api_router.include_router(failure_samples_router, prefix="/api/failure-samples", tags=["failure-samples"])

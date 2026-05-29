@@ -15,6 +15,7 @@ import type {
   HealthInfo,
   HumanIntervention,
   HumanInterventionCreate,
+  LLMSettings,
   NaturalLanguageTestRequest,
   ProjectAccount,
   ProjectAccountPayload,
@@ -59,6 +60,14 @@ export function reloadPrompts(): Promise<{ loaded: number; last_error: string | 
 
 export function previewPrompt(promptKey: string, variables: Record<string, unknown>): Promise<PromptPreview> {
   return postJson<PromptPreview>(`/api/prompts/${encodeURIComponent(promptKey)}/preview`, { variables });
+}
+
+export function getLLMSettings(): Promise<LLMSettings> {
+  return getJson<LLMSettings>("/api/llm-settings");
+}
+
+export function updateLLMSettings(payload: LLMSettings): Promise<LLMSettings> {
+  return putJson<LLMSettings>("/api/llm-settings", payload);
 }
 
 export function getProjects(): Promise<TestProject[]> {

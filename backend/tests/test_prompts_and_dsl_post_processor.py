@@ -211,14 +211,16 @@ def test_post_processor_adds_auth_precondition_to_business_steps() -> None:
         {
             "steps": [
                 {"action": "business_goal", "target": "登录系统", "intent": "login_system"},
+                {"action": "fill_form", "target": "登录表单"},
                 {"action": "query_table", "target": "用户列表"},
                 {"action": "fill_form", "target": "新增用户"},
             ],
         }
     )
     assert "preconditions" not in normalized["steps"][0]
-    assert normalized["steps"][1]["preconditions"] == {"authState": "logged_in"}
+    assert "preconditions" not in normalized["steps"][1]
     assert normalized["steps"][2]["preconditions"] == {"authState": "logged_in"}
+    assert normalized["steps"][3]["preconditions"] == {"authState": "logged_in"}
 
 
 def test_post_processor_never_requires_auth_for_open_url() -> None:
@@ -236,6 +238,36 @@ def test_post_processor_never_requires_auth_for_open_url() -> None:
     )
     assert normalized["steps"][0]["action"] == "open_url"
     assert "preconditions" not in normalized["steps"][0]
+
+
+def test_post_processor_relaxes_generic_login_success_marker() -> None:
+    normalized = DslPostProcessor().normalize_dsl(
+        {
+            "steps": [
+                {"action": "business_goal", "target": "登录系统", "intent": "login_system"},
+                {"action": "wait_for_text", "target": "登录成功标识", "text": "工作台"},
+                {"action": "navigate_path", "target": "门户首页/应用中心", "pathSegments": ["门户首页", "应用中心"]},
+            ],
+        }
+    )
+    marker_step = normalized["steps"][1]
+    assert marker_step["action"] == "wait"
+    assert marker_step["target"] == "登录后页面稳定"
+    assert marker_step["originalAction"] == "wait_for_text"
+    assert "text" not in marker_step
+
+
+def test_post_processor_keeps_explicit_post_login_assertion() -> None:
+    normalized = DslPostProcessor().normalize_dsl(
+        {
+            "steps": [
+                {"action": "click", "target": "Login"},
+                {"action": "assert_text_exists", "target": "退出", "description": "登录成功后验证退出入口出现"},
+            ],
+        }
+    )
+    assert normalized["steps"][1]["action"] == "assert_text_exists"
+    assert normalized["steps"][1]["target"] == "退出"
 
 
 def test_post_processor_collects_missing_critical_fields() -> None:

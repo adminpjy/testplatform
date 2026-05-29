@@ -133,6 +133,16 @@ class RecoveryPolicy:
             _strategy("use_default_data_rules", "使用默认测试数据规则"),
             _strategy("request_test_data", "请求补充必填字段", automatic=False),
         ],
+        "form_no_fields_detected": [
+            _strategy("open_expected_form_page", "确认已进入正确表单页面"),
+            _strategy("reobserve_page", "重新读取页面表单结构"),
+            _strategy("ask_human", "请求人工说明如何进入表单", automatic=False),
+        ],
+        "form_no_fields_filled": [
+            _strategy("request_test_data", "请求补充表单字段值", automatic=False),
+            _strategy("use_default_data_rules", "为低风险字段使用默认测试数据"),
+            _strategy("ask_human", "请求人工确认哪些字段可跳过", automatic=False),
+        ],
         "form_field_not_found": [
             _strategy("nearby_label_match", "尝试邻近标签匹配"),
             _strategy("page_semantic_extract", "重新提取表单语义"),
@@ -405,6 +415,8 @@ def _detect_from_text(text: str) -> str | None:
         ("table_no_action_found", ["table_no_action_found", "no clickable row entry", "没有可点击入口"]),
         ("table_row_loop_failed", ["table_row_loop_failed"]),
         ("form_required_field_missing", ["form_required_field_missing", "required field"]),
+        ("form_no_fields_detected", ["form_no_fields_detected", "未识别到可填写字段"]),
+        ("form_no_fields_filled", ["form_no_fields_filled", "没有填写任何值"]),
         ("form_field_not_found", ["form_field_not_found", "control_not_found", "field not found"]),
         ("form_validation_error", ["form_validation_error", "不能为空", "必填", "校验"]),
         ("dropdown_not_found", ["dropdown_not_found"]),
@@ -514,6 +526,8 @@ def _summary(failure_type: str, *, target: str | None, error_summary: str | None
         "table_no_data_rows": "表格没有可处理的数据行。",
         "org_value_missing": "组织机构是关键字段，需要用户补充。",
         "person_value_missing": "人员字段需要用户补充。",
+        "form_no_fields_detected": "当前页面没有识别到可填写字段，可能尚未进入目标表单页。",
+        "form_no_fields_filled": "表单字段已识别，但没有任何字段被填写。",
         "dropdown_option_not_found": "下拉选项不存在或不可见。",
         "approval_result_option_not_found": "未找到审批结果选项。",
     }

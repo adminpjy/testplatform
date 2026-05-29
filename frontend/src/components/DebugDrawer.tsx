@@ -19,6 +19,15 @@ export interface DebugDrawerProps {
   onClose: () => void;
 }
 
+const DEFAULT_INTERVENTION_INSTRUCTION = "请根据失败截图和错误提示生成恢复方案；如果需要人工完成验证码、扫码或安全确认，我已在页面上完成后继续检测。";
+
+const INTERVENTION_PRESETS = [
+  "已完成验证码/扫码认证，继续检测登录状态。",
+  "关闭当前弹窗后重试原失败步骤。",
+  "点击继续访问，等待页面稳定后重试。",
+  "等待主页面加载完成后再执行原步骤。"
+];
+
 export function DebugDrawer({
   open,
   title,
@@ -34,14 +43,14 @@ export function DebugDrawer({
   onConvertIntervention,
   onClose
 }: DebugDrawerProps) {
-  const [instruction, setInstruction] = useState("等待主页面加载完成后再执行原步骤。");
+  const [instruction, setInstruction] = useState(DEFAULT_INTERVENTION_INSTRUCTION);
   const [busy, setBusy] = useState(false);
   const [feedback, setFeedback] = useState<string | null>(null);
   const latestIntervention = interventions[0] || null;
 
   useEffect(() => {
     if (interventionMode) {
-      setInstruction("等待主页面加载完成后再执行原步骤。");
+      setInstruction(DEFAULT_INTERVENTION_INSTRUCTION);
       setFeedback(null);
     }
   }, [interventionMode, run?.id]);
@@ -75,12 +84,21 @@ export function DebugDrawer({
         {interventionMode ? (
           <section className="debug-section">
             <h3>人工介入</h3>
-            <p className="debug-section__hint">用于把人工判断沉淀为受控恢复动作。常见场景：等待主页面加载、关闭弹窗、重试原失败步骤。</p>
+            <p className="debug-section__hint">
+              先用 LLM 把人工判断生成受控方案，再一键执行。执行时会启动恢复运行；原失败运行的浏览器会话结束后不能在原页面继续。
+            </p>
+            <div className="intervention-presets" aria-label="常用介入说明">
+              {INTERVENTION_PRESETS.map((preset) => (
+                <button key={preset} className="intervention-preset" type="button" onClick={() => setInstruction(preset)}>
+                  {preset}
+                </button>
+              ))}
+            </div>
             <textarea
               aria-label="人工介入指令"
               value={instruction}
               onChange={(event) => setInstruction(event.target.value)}
-              placeholder="输入人工判断、修正步骤或复盘说明。"
+              placeholder="用普通话描述你看到的问题和希望系统怎么恢复，例如：已完成验证码，等待 2 秒后重试原步骤。"
               rows={6}
             />
             <div className="action-bar">
@@ -88,9 +106,9 @@ export function DebugDrawer({
                 className="primary-button"
                 type="button"
                 disabled={busy || !run || !onCreateIntervention}
-                onClick={() => onCreateIntervention && void runAction("生成介入方案", () => onCreateIntervention(instruction))}
+                onClick={() => onCreateIntervention && void runAction("用 LLM 生成方案", () => onCreateIntervention(instruction))}
               >
-                {busy ? "处理中" : "生成介入方案"}
+                {busy ? "处理中" : "用 LLM 生成方案"}
               </button>
               <button
                 className="secondary-button"
@@ -98,11 +116,11 @@ export function DebugDrawer({
                 disabled={busy || !latestIntervention || !onExecuteIntervention}
                 onClick={() =>
                   latestIntervention && onExecuteIntervention
-                    ? void runAction("执行介入方案", () => onExecuteIntervention(latestIntervention.id))
+                    ? void runAction("执行方案并启动恢复运行", () => onExecuteIntervention(latestIntervention.id))
                     : undefined
                 }
               >
-                执行介入方案
+                执行方案并重跑
               </button>
               <button
                 className="ghost-button"
@@ -136,7 +154,10 @@ export function DebugDrawer({
                   ))}
                 </ol>
                 {latestIntervention.execution_result_json ? (
-                  <pre>{JSON.stringify(latestIntervention.execution_result_json, null, 2)}</pre>
+                  <div className="intervention-result">
+                    <strong>{interventionResultTitle(latestIntervention)}</strong>
+                    <p>{interventionResultMessage(latestIntervention)}</p>
+                  </div>
                 ) : null}
               </div>
             ) : null}
@@ -179,4 +200,21 @@ export function DebugDrawer({
       </div>
     </aside>
   );
+}
+
+function interventionResultTitle(intervention: HumanIntervention): string {
+  const result = intervention.execution_result_json || {};
+  const status = String(result["status"] || intervention.status || "");
+  if (status === "recovery_run_started") return "恢复运行已启动";
+  if (status === "failed_to_start_recovery_run") return "恢复运行启动失败";
+  return "执行结果";
+}
+
+function interventionResultMessage(intervention: HumanIntervention): string {
+  const result = intervention.execution_result_json || {};
+  const message = result["message"] ? String(result["message"]) : "";
+  if (message) return message;
+  const recoveryRunCode = result["recoveryRunCode"] ? String(result["recoveryRunCode"]) : "";
+  if (recoveryRunCode) return `已启动恢复运行 ${recoveryRunCode}。`;
+  return "介入方案已完成安全校验。";
 }

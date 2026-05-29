@@ -13,10 +13,11 @@ class AssertionHandler(CommonOperationHandler):
         self.emit_rule_hits(ctx, self.resolve_rules(ctx, intent="assert_result", rule_types=self.rule_types))
         action = str(step.get("action") or "")
         target = str(step.get("target") or "")
-        self.emit(ctx, "progress", "assertion", "正在验证执行结果。", metadata={"action": action, "target": target})
+        assertion_text = str(step.get("text") or target)
+        self.emit(ctx, "progress", "assertion", "正在验证执行结果。", metadata={"action": action, "target": target, "text": assertion_text})
         if action in {"wait_for_text", "assert_text_exists"}:
-            page.get_by_text(target, exact=False).wait_for(state="visible")
-            return handler_outcome("text_visible", target, 1.0, "text visible")
+            page.get_by_text(assertion_text, exact=False).wait_for(state="visible")
+            return handler_outcome("text_visible", assertion_text, 1.0, "text visible")
         if action == "assert_text_not_exists":
             count = page.get_by_text(target, exact=False).count()
             if count > 0:

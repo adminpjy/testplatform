@@ -12,6 +12,7 @@ from app.llm.json_utils import parse_json_object, to_compact_json
 from app.llm.provider import LLMRequest, get_llm_provider
 from app.models import FailureAnalysis, FailureSample, TestCase, TestCaseVersion, TestProject, TestRun, TestStepRun
 from app.services.llm_call_logs import log_llm_call
+from app.services.llm_settings import get_active_llm_config
 from app.services.prompt_manager import get_prompt_manager
 
 
@@ -33,10 +34,11 @@ class FailureAnalysisService:
                 "evidence_package": to_compact_json(package),
             },
         )
+        llm_config = get_active_llm_config()
         request = LLMRequest(
             system_prompt=rendered.system,
             user_prompt=rendered.user,
-            stream=settings.test_llm_stream,
+            stream=llm_config.stream,
             temperature=rendered.metadata.get("temperature"),
             max_tokens=rendered.metadata.get("max_tokens"),
             prompt_key=rendered.prompt_key,
@@ -59,8 +61,8 @@ class FailureAnalysisService:
                 step_id=sample.step_id,
                 prompt_key=request.prompt_key,
                 prompt_version=request.prompt_version,
-                provider=settings.llm_provider,
-                model=settings.test_llm_model,
+                provider=llm_config.provider,
+                model=llm_config.model,
                 success=success,
                 elapsed_ms=_elapsed_ms(started),
                 error_summary=error_summary,
@@ -84,8 +86,8 @@ class FailureAnalysisService:
             requires_human_review=bool(result.get("requiresHumanReview", True)),
             llm_prompt_key=request.prompt_key,
             llm_prompt_version=request.prompt_version,
-            llm_model=settings.test_llm_model,
-            llm_provider=settings.llm_provider,
+            llm_model=llm_config.model,
+            llm_provider=llm_config.provider,
             elapsed_ms=_elapsed_ms(started),
             error_summary=error_summary,
         )

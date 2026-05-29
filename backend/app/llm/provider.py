@@ -30,6 +30,29 @@ class LLMProvider(Protocol):
 
 
 def get_llm_provider(config: Settings = settings) -> LLMProvider:
+    if config is settings:
+        try:
+            from app.services.llm_settings import get_active_llm_config
+
+            runtime = get_active_llm_config()
+            provider_name = runtime.provider.strip().lower()
+            if provider_name in {"openai", "openai-compatible", "openai_compatible"}:
+                from app.llm.openai_compatible import OpenAICompatibleProvider
+
+                return OpenAICompatibleProvider(
+                    base_url=runtime.base_url,
+                    api_key=runtime.api_key,
+                    model=runtime.model,
+                    timeout_seconds=runtime.timeout_seconds,
+                    max_tokens=runtime.max_tokens,
+                    temperature=runtime.temperature,
+                    top_p=runtime.top_p,
+                    verify_ssl=runtime.verify_ssl,
+                    ca_bundle=runtime.ca_bundle,
+                )
+        except Exception:
+            pass
+
     provider_name = config.llm_provider.strip().lower()
     if provider_name in {"openai", "openai-compatible", "openai_compatible"}:
         from app.llm.openai_compatible import OpenAICompatibleProvider

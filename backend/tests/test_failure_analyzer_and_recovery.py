@@ -102,6 +102,9 @@ def test_recovery_suggestions_for_common_mis_failures() -> None:
     approval = FailureAnalyzer().analyze_step_failure(
         {"action": "business_goal", "target": "审批通过", "error_summary": "approval_result_option_not_found"}
     )
+    no_fields = FailureAnalyzer().analyze_step_failure(
+        {"action": "fill_form", "target": "新增用户表单", "error_summary": "form_no_fields_detected: 当前页面未识别到可填写字段"}
+    )
     assert dropdown["failureType"] == "dropdown_option_not_found"
     assert any(item["code"] == "search_option_text" for item in dropdown["suggestedRecovery"])
     assert org["failureType"] == "org_value_missing"
@@ -110,6 +113,8 @@ def test_recovery_suggestions_for_common_mis_failures() -> None:
     assert any(item["code"] == "try_more_actions" for item in table["suggestedRecovery"])
     assert approval["failureType"] == "approval_result_option_not_found"
     assert any(item["code"] == "find_radio_option" for item in approval["suggestedRecovery"])
+    assert no_fields["failureType"] == "form_no_fields_detected"
+    assert any(item["code"] == "open_expected_form_page" for item in no_fields["suggestedRecovery"])
 
 
 def test_failure_sample_persists_artifact_paths_and_recovery_analysis() -> None:

@@ -38,6 +38,7 @@ from app.services.human_interventions import (
 from app.services.dsl_post_processor import parse_menu_path
 from app.services.ability_resolver import annotate_dsl_with_abilities
 from app.services.llm_call_logs import log_llm_call
+from app.services.llm_settings import llm_settings_metadata
 from app.services.natural_language_parser import NaturalLanguageParser
 from app.services.test_run_execution import (
     create_and_execute_run,
@@ -338,6 +339,7 @@ def _format_sse(message) -> str:
 
 def _analysis_events(payload: NaturalLanguageTestRequest) -> Iterator[str]:
     event_id = 0
+    llm_meta = llm_settings_metadata()
 
     def emit(message_type: str, phase: str, content: str, method: str, metadata: dict | None = None) -> str:
         nonlocal event_id
@@ -361,10 +363,12 @@ def _analysis_events(payload: NaturalLanguageTestRequest) -> Iterator[str]:
         "正在理解测试目标，并准备安全的 LLM 输入。",
         "natural_language_parser",
         {
-            "provider": settings.llm_provider,
-            "model": settings.test_llm_model,
-            "endpoint": _safe_llm_endpoint(),
-            "stream": payload.stream if payload.stream is not None else settings.test_llm_stream,
+            "provider": llm_meta.get("provider"),
+            "model": llm_meta.get("model"),
+            "profileId": llm_meta.get("profileId"),
+            "profileName": llm_meta.get("profileName"),
+            "endpoint": _safe_llm_endpoint(llm_meta),
+            "stream": payload.stream if payload.stream is not None else llm_meta.get("stream"),
             "password_policy": "credentials and password-like text are redacted before prompt construction",
         },
     )
@@ -382,14 +386,16 @@ def _analysis_events(payload: NaturalLanguageTestRequest) -> Iterator[str]:
         yield emit(
             "progress",
             "llm_request",
-            f"正在调用 {settings.test_llm_model} 分析测试目标。",
+            f"正在调用 {llm_meta.get('model') or settings.test_llm_model} 分析测试目标。",
             "llm_provider",
             {
                 "stage": "analyze",
-                "provider": settings.llm_provider,
-                "model": settings.test_llm_model,
-                "endpoint": _safe_llm_endpoint(),
-                "stream": payload.stream if payload.stream is not None else settings.test_llm_stream,
+                "provider": llm_meta.get("provider"),
+                "model": llm_meta.get("model"),
+                "profileId": llm_meta.get("profileId"),
+                "profileName": llm_meta.get("profileName"),
+                "endpoint": _safe_llm_endpoint(llm_meta),
+                "stream": payload.stream if payload.stream is not None else llm_meta.get("stream"),
                 "prompt_key": analyze_request.prompt_key,
                 "prompt_version": analyze_request.prompt_version,
                 "systemPrompt": analyze_request.system_prompt,
@@ -424,8 +430,10 @@ def _analysis_events(payload: NaturalLanguageTestRequest) -> Iterator[str]:
             "llm_provider",
             {
                 "stage": "analyze",
-                "provider": settings.llm_provider,
-                "model": settings.test_llm_model,
+                "provider": llm_meta.get("provider"),
+                "model": llm_meta.get("model"),
+                "profileId": llm_meta.get("profileId"),
+                "profileName": llm_meta.get("profileName"),
                 "prompt_key": analyze_request.prompt_key,
                 "prompt_version": analyze_request.prompt_version,
                 "chunkCount": chunk_index,
@@ -454,14 +462,16 @@ def _analysis_events(payload: NaturalLanguageTestRequest) -> Iterator[str]:
             yield emit(
                 "progress",
                 "llm_request",
-                f"正在调用 {settings.test_llm_model} 生成 DSL 步骤。",
+                f"正在调用 {llm_meta.get('model') or settings.test_llm_model} 生成 DSL 步骤。",
                 "llm_provider",
                 {
                     "stage": "plan",
-                    "provider": settings.llm_provider,
-                    "model": settings.test_llm_model,
-                    "endpoint": _safe_llm_endpoint(),
-                    "stream": payload.stream if payload.stream is not None else settings.test_llm_stream,
+                    "provider": llm_meta.get("provider"),
+                    "model": llm_meta.get("model"),
+                    "profileId": llm_meta.get("profileId"),
+                    "profileName": llm_meta.get("profileName"),
+                    "endpoint": _safe_llm_endpoint(llm_meta),
+                    "stream": payload.stream if payload.stream is not None else llm_meta.get("stream"),
                     "prompt_key": plan_request.prompt_key,
                     "prompt_version": plan_request.prompt_version,
                     "systemPrompt": plan_request.system_prompt,
@@ -495,8 +505,10 @@ def _analysis_events(payload: NaturalLanguageTestRequest) -> Iterator[str]:
                 "llm_provider",
                 {
                     "stage": "plan",
-                    "provider": settings.llm_provider,
-                    "model": settings.test_llm_model,
+                    "provider": llm_meta.get("provider"),
+                    "model": llm_meta.get("model"),
+                    "profileId": llm_meta.get("profileId"),
+                    "profileName": llm_meta.get("profileName"),
                     "prompt_key": plan_request.prompt_key,
                     "prompt_version": plan_request.prompt_version,
                     "chunkCount": chunk_index,
@@ -516,6 +528,14 @@ def _analysis_events(payload: NaturalLanguageTestRequest) -> Iterator[str]:
                     "success",
                     "dsl_post_process",
                     f"已自动规范化步骤：{normalized['originalAction']} → navigate_path，因为目标包含菜单路径。",
+                    "dsl_post_processor",
+                    normalized,
+                )
+            for normalized in _login_success_normalizations(dsl.model_dump()):
+                yield emit(
+                    "success",
+                    "dsl_post_process",
+                    f"已自动放宽登录成功标识：{normalized['originalAction']} → wait，避免固定等待“工作台”等首页文字。",
                     "dsl_post_processor",
                     normalized,
                 )
@@ -550,7 +570,7 @@ def _analysis_events(payload: NaturalLanguageTestRequest) -> Iterator[str]:
             "failed",
             str(exc),
             "natural_language_parser",
-            {"provider": settings.llm_provider, "model": settings.test_llm_model},
+            {"provider": llm_meta.get("provider"), "model": llm_meta.get("model"), "profileId": llm_meta.get("profileId")},
         )
 
 
@@ -568,10 +588,11 @@ def _is_terminal_status(status_value: str | None) -> bool:
     return status_value in {"passed", "failed", "cancelled", "aborted", "missing"}
 
 
-def _safe_llm_endpoint() -> str | None:
-    if not settings.test_llm_base_url:
+def _safe_llm_endpoint(metadata: dict | None = None) -> str | None:
+    endpoint = str((metadata or {}).get("endpoint") or settings.test_llm_base_url or "")
+    if not endpoint:
         return None
-    parsed = urlparse(settings.test_llm_base_url)
+    parsed = urlparse(endpoint)
     if not parsed.scheme or not parsed.netloc:
         return None
     return f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
@@ -609,6 +630,29 @@ def _navigation_normalizations(dsl: dict) -> list[dict]:
                     "normalizedBy": step.get("normalizedBy"),
                     "prompt_key": "dsl_post_process",
                     "prompt_version": "1.0.0",
+                }
+            )
+    return results
+
+
+def _login_success_normalizations(dsl: dict) -> list[dict]:
+    results = []
+    for step in dsl.get("steps") or []:
+        if (
+            isinstance(step, dict)
+            and step.get("normalizedBy") == "DslPostProcessor"
+            and step.get("normalizationReason")
+            == "generic login success text assertion is relaxed to a stabilization wait"
+        ):
+            results.append(
+                {
+                    "target": step.get("target"),
+                    "originalAction": step.get("originalAction") or "wait_for_text",
+                    "originalTarget": step.get("originalTarget"),
+                    "normalizedAction": step.get("action"),
+                    "prompt_key": "dsl_post_process",
+                    "prompt_version": "1.0.0",
+                    "reason": "登录后页面可能返回门户首页、业务首页或中间页，不应固定等待通用首页文字。",
                 }
             )
     return results

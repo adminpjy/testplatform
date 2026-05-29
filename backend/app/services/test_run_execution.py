@@ -1,4 +1,6 @@
 from datetime import datetime, timezone
+import os
+import re
 from threading import Thread
 from types import SimpleNamespace
 from uuid import uuid4
@@ -6,6 +8,7 @@ from uuid import uuid4
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.config import settings as app_settings
 from app.db.session import SessionLocal
 from app.models import (
     FailureSample,
@@ -129,6 +132,55 @@ def rerun_test_run(db: Session, run_id: int) -> TestRun:
     )
 
 
+def recover_test_run_from_intervention(
+    db: Session,
+    run_id: int,
+    *,
+    intervention_id: int,
+    step_run_id: int | None,
+    plan: dict,
+) -> TestRun:
+    source = db.get(TestRun, run_id)
+    if source is None:
+        raise ValueError("Test run not found.")
+    project = db.get(TestProject, source.project_id)
+    if project is None:
+        raise ValueError("Project not found.")
+    case = db.get(TestCase, source.case_id) if source.case_id else None
+    version = db.get(TestCaseVersion, source.case_version_id) if source.case_version_id else None
+    account = db.get(TestAccount, source.account_id) if source.account_id else None
+    system = db.get(TestSystem, source.system_id) if source.system_id else None
+    failed_step = db.get(TestStepRun, step_run_id) if step_run_id else None
+    dsl = normalize_dsl(source.dsl_snapshot or source.dsl_json or {})
+    recovery_steps = _intervention_plan_steps_to_dsl(plan)
+    if recovery_steps:
+        failed_index = _failed_step_index(db, run_id=run_id, failed_step=failed_step, dsl=dsl)
+        dsl = _insert_intervention_steps(dsl, recovery_steps, failed_index)
+    settings = dict(source.settings_snapshot or {})
+    settings["humanIntervention"] = {
+        "sourceRunId": run_id,
+        "sourceRunCode": source.run_code,
+        "interventionId": intervention_id,
+        "failedStepRunId": step_run_id,
+        "insertedStepCount": len(recovery_steps),
+        "plan": plan,
+    }
+    return _create_run_record_and_start(
+        db,
+        project=project,
+        system=system,
+        case=case,
+        version=version,
+        account=account,
+        dsl=dsl,
+        test_data=source.test_data_snapshot or {},
+        settings=settings,
+        instruction=source.instruction_snapshot or source.instruction,
+        base_url=source.base_url_snapshot or source.base_url,
+        run_name=f"recovery:{source.run_code}",
+    )
+
+
 def rerun_case_latest(db: Session, case_id: int, payload: CaseRunCreate | None = None) -> TestRun:
     return create_and_execute_case_run(db, case_id, payload or CaseRunCreate())
 
@@ -203,6 +255,7 @@ def _execute_run_background(run_id: int, dsl: dict) -> None:
         db.commit()
 
         try:
+            _apply_executor_runtime_env()
             execution_result = CaseRunner(event_sink=_runtime_sink(db, run.id)).run(run_code=run.run_code, dsl=dsl)
             _persist_execution_result(db, run, execution_result)
             run.status = "passed" if execution_result["status"] == "passed" else "failed"
@@ -221,6 +274,39 @@ def _execute_run_background(run_id: int, dsl: dict) -> None:
             db.add(run)
             db.commit()
             _update_case_run_stats(db, run)
+
+
+def _apply_executor_runtime_env() -> None:
+    values = {
+        "EXECUTOR_MODE": app_settings.executor_mode,
+        "CUBE_API_URL": app_settings.cube_api_url,
+        "CUBE_BROWSER_TEMPLATE_ID": app_settings.cube_browser_template_id,
+        "CUBE_TEMPLATE_ID": app_settings.cube_template_id,
+        "CUBE_CDP_PORT": str(app_settings.cube_cdp_port),
+        "CUBE_SANDBOX_TIMEOUT_SECONDS": str(app_settings.cube_sandbox_timeout_seconds),
+        "CUBE_SANDBOX_TTL_SECONDS": str(app_settings.cube_sandbox_ttl_seconds),
+        "KEEP_SANDBOX_ON_FAILURE": _bool_string(app_settings.keep_sandbox_on_failure),
+        "LOCAL_BROWSER": _bool_string(app_settings.local_browser),
+        "PLAYWRIGHT_IGNORE_HTTPS_ERRORS": _bool_string(app_settings.playwright_ignore_https_errors),
+        "PLAYWRIGHT_AUTO_CONTINUE_SECURITY_INTERSTITIAL": _bool_string(
+            app_settings.playwright_auto_continue_security_interstitial
+        ),
+        "PLAYWRIGHT_PROXY_SERVER": app_settings.playwright_proxy_server,
+        "PLAYWRIGHT_PROXY_BYPASS": app_settings.playwright_proxy_bypass,
+        "PLAYWRIGHT_PROXY_USERNAME": app_settings.playwright_proxy_username,
+        "PLAYWRIGHT_USER_AGENT": app_settings.playwright_user_agent,
+        "GOAL_MAX_ITERATIONS": str(app_settings.goal_max_iterations),
+        "GOAL_TOTAL_TIMEOUT_MS": str(app_settings.goal_total_timeout_ms),
+        "GOAL_SINGLE_ACTION_TIMEOUT_MS": str(app_settings.goal_single_action_timeout_ms),
+    }
+    if app_settings.playwright_proxy_password:
+        values["PLAYWRIGHT_PROXY_PASSWORD"] = app_settings.playwright_proxy_password.get_secret_value()
+    for key, value in values.items():
+        os.environ[key] = str(value or "")
+
+
+def _bool_string(value: bool) -> str:
+    return "true" if value else "false"
 
 
 def list_runs(db: Session) -> list[TestRun]:
@@ -427,6 +513,86 @@ def _create_run_record_and_start(
     return run
 
 
+def _intervention_plan_steps_to_dsl(plan: dict) -> list[dict]:
+    steps: list[dict] = []
+    for item in plan.get("steps") or []:
+        if not isinstance(item, dict):
+            continue
+        action = str(item.get("action") or "")
+        target = str(item.get("target") or "")
+        value = item.get("value")
+        reason = str(item.get("reason") or "")
+        base = {
+            "source": "human_intervention",
+            "sourceAction": action,
+            "reason": reason,
+        }
+        if action == "wait":
+            wait_ms = _coerce_wait_ms(value)
+            steps.append({**base, "action": "wait", "target": target or "等待页面稳定", "ms": wait_ms})
+        elif action == "click":
+            if target:
+                steps.append({**base, "action": "click", "target": target})
+        elif action == "input":
+            if target and value not in (None, ""):
+                steps.append({**base, "action": "input", "target": target, "value": str(value)})
+        elif action == "select":
+            if target and value not in (None, ""):
+                steps.append({**base, "action": "select", "target": target, "value": str(value)})
+        elif action == "choose_radio":
+            if target:
+                steps.append({**base, "action": "click", "target": target})
+        elif action == "close_dialog":
+            steps.append({**base, "action": "close_dialog_by_common_controls", "target": target or "当前弹窗"})
+        elif action == "confirm_dialog":
+            steps.append({**base, "action": "confirm_dialog", "target": target or "确定"})
+        elif action == "assert_text_exists":
+            if target:
+                steps.append({**base, "action": "assert_text_exists", "target": target, "text": target})
+        elif action == "assert_url_contains":
+            if target:
+                steps.append({**base, "action": "assert_url_contains", "target": target, "text": target})
+    return steps
+
+
+def _insert_intervention_steps(dsl: dict, recovery_steps: list[dict], failed_index: int | None) -> dict:
+    next_dsl = dict(dsl)
+    original_steps = [dict(step) for step in next_dsl.get("steps") or [] if isinstance(step, dict)]
+    if not original_steps:
+        next_dsl["steps"] = recovery_steps
+        return next_dsl
+    insert_at = failed_index if failed_index is not None else len(original_steps)
+    insert_at = max(0, min(insert_at, len(original_steps)))
+    next_dsl["steps"] = original_steps[:insert_at] + recovery_steps + original_steps[insert_at:]
+    return next_dsl
+
+
+def _failed_step_index(db: Session, *, run_id: int, failed_step: TestStepRun | None, dsl: dict) -> int | None:
+    if failed_step is not None and failed_step.step_id:
+        match = re.search(r"(\d+)", str(failed_step.step_id))
+        if match:
+            index = int(match.group(1)) - 1
+            if index >= 0:
+                return index
+    if failed_step is not None:
+        ordered = list(
+            db.scalars(select(TestStepRun).where(TestStepRun.run_id == run_id).order_by(TestStepRun.id)).all()
+        )
+        for index, item in enumerate(ordered):
+            if item.id == failed_step.id:
+                return index
+    steps = dsl.get("steps") or []
+    return len(steps) - 1 if steps else None
+
+
+def _coerce_wait_ms(value: object) -> int:
+    try:
+        wait_ms = int(float(str(value or "3000").strip()))
+    except (TypeError, ValueError):
+        wait_ms = 3000
+    return max(100, min(wait_ms, 60000))
+
+
 def _merge_dicts(*values: dict | None) -> dict:
     merged: dict = {}
     for value in values:
@@ -465,6 +631,12 @@ def _hydrate_login_steps(dsl: dict, account: TestAccount, password: str | None) 
                 if password:
                     step["credentials"]["password"] = password
                     step["password"] = password
+        elif step.get("action") in {"fill_form", "auto_fill_form"} and ("登录" in target or "login" in target.lower()):
+            step.setdefault("formData", {})
+            if isinstance(step["formData"], dict):
+                step["formData"]["username"] = account.username
+                if password:
+                    step["formData"]["password"] = password
         elif "用户名" in target or "username" in target.lower():
             step["value"] = account.username
         elif password and ("密码" in target or "password" in target.lower()):
@@ -478,7 +650,7 @@ def _redact_dsl_for_storage(dsl: dict) -> dict:
         credentials.pop("password")
         credentials["secret_ref"] = credentials.get("secret_ref", "redacted_password")
     redacted["credentials"] = credentials
-    redacted["testData"] = dict(redacted.get("testData") or {})
+    redacted["testData"] = _redact_sensitive_mapping(dict(redacted.get("testData") or {}))
 
     safe_steps = []
     for step in redacted.get("steps") or []:
@@ -487,14 +659,28 @@ def _redact_dsl_for_storage(dsl: dict) -> dict:
         if "password" in target or "密码" in target or "password" in safe_step:
             safe_step["value"] = "***REDACTED***"
             safe_step.pop("password", None)
-            if isinstance(safe_step.get("credentials"), dict):
-                safe_credentials = dict(safe_step["credentials"])
-                if "password" in safe_credentials:
-                    safe_credentials.pop("password")
-                    safe_credentials["secret_ref"] = safe_credentials.get("secret_ref", "redacted_password")
-                safe_step["credentials"] = safe_credentials
+        if isinstance(safe_step.get("credentials"), dict):
+            safe_credentials = dict(safe_step["credentials"])
+            if "password" in safe_credentials:
+                safe_credentials.pop("password")
+                safe_credentials["secret_ref"] = safe_credentials.get("secret_ref", "redacted_password")
+            safe_step["credentials"] = safe_credentials
+        if isinstance(safe_step.get("formData"), dict):
+            safe_step["formData"] = _redact_sensitive_mapping(dict(safe_step["formData"]))
+        if isinstance(safe_step.get("testData"), dict):
+            safe_step["testData"] = _redact_sensitive_mapping(dict(safe_step["testData"]))
         safe_steps.append(safe_step)
     redacted["steps"] = safe_steps
+    return redacted
+
+
+def _redact_sensitive_mapping(value: dict) -> dict:
+    redacted = {}
+    for key, item in value.items():
+        if "password" in str(key).lower() or "secret" in str(key).lower() or "密码" in str(key) or "口令" in str(key):
+            redacted[key] = "***REDACTED***"
+        else:
+            redacted[key] = item
     return redacted
 
 
@@ -643,15 +829,23 @@ def _stored_failure_type(analysis_failure_type: str, failure_details: dict, auth
     auth_state_value = str(auth_state.get("authState") or "")
     root_cause = str(failure_details.get("rootCause") or auth_state.get("failureType") or "")
     if (
-        auth_state_value in {"login_failed", "login_page"}
-        or root_cause in {"login_failed", "auth_state_not_logged_in"}
-        or analysis_failure_type in {"protected_step_blocked_by_login_failure", "auth_state_not_logged_in"}
+        auth_state_value == "login_captcha_required"
+        or root_cause == "authentication_challenge_required"
+        or analysis_failure_type in {"protected_step_blocked_by_auth_challenge", "login_captcha_required", "authentication_challenge_required"}
     ):
-        return "login_failed" if auth_state_value == "login_failed" or root_cause == "login_failed" else "auth_state_not_logged_in"
+        return "login_captcha_required"
+    if analysis_failure_type == "protected_step_blocked_by_login_failure":
+        return "protected_step_blocked_by_login_failure"
+    if auth_state_value == "login_failed" or root_cause == "login_failed":
+        return "login_failed"
+    if auth_state_value == "login_page" or root_cause == "auth_state_not_logged_in" or analysis_failure_type == "auth_state_not_logged_in":
+        return "auth_state_not_logged_in"
     return analysis_failure_type
 
 
 def _failure_sample_summary(failure_type_value: str, fallback: object) -> str:
+    if failure_type_value == "login_captcha_required":
+        return "登录失败后触发验证码或二次认证，当前未进入业务系统，已停止后续步骤。"
     if failure_type_value == "login_failed":
         return "登录未成功，当前未进入业务系统，已停止后续步骤。"
     return str(fallback or "Step failed without error summary.")
@@ -661,7 +855,10 @@ def _candidate_rule_type(failure_type_value: object) -> str:
     failure_type_text = str(failure_type_value or "")
     if failure_type_text in {
         "login_failed",
+        "login_captcha_required",
         "protected_step_blocked_by_login_failure",
+        "protected_step_blocked_by_auth_challenge",
+        "authentication_challenge_required",
         "auth_state_not_logged_in",
     }:
         return "login"

@@ -7,6 +7,7 @@ from app.llm.json_utils import parse_json_model, parse_json_object, to_compact_j
 from app.llm.provider import LLMProvider, LLMRequest, get_llm_provider
 from app.schemas.test_runs import ALLOWED_DSL_ACTIONS, AnalyzeResult, NaturalLanguageTestRequest, TestCaseDSL
 from app.services.dsl_post_processor import normalize_dsl
+from app.services.llm_settings import get_active_llm_config
 from app.services.llm_call_logs import log_llm_call
 from app.services.operation_intent_classifier import annotate_steps_with_operation_intents
 from app.services.prompt_manager import get_prompt_manager
@@ -128,7 +129,10 @@ class NaturalLanguageParser:
     def _stream_enabled(self, payload: NaturalLanguageTestRequest) -> bool:
         if payload.stream is not None:
             return payload.stream
-        return settings.test_llm_stream
+        try:
+            return get_active_llm_config().stream
+        except Exception:
+            return settings.test_llm_stream
 
     @staticmethod
     def _sanitize_credentials(credentials: dict[str, Any]) -> dict[str, Any]:

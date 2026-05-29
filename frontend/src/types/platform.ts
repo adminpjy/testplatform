@@ -236,6 +236,30 @@ export interface NaturalLanguageTestRequest {
   stream?: boolean;
 }
 
+export interface LLMProfile {
+  id: string;
+  name: string;
+  provider: string;
+  baseUrl: string;
+  model: string;
+  stream: boolean;
+  verifySsl: boolean;
+  timeoutSeconds: number;
+  maxTokens: number;
+  temperature: number;
+  topP: number;
+  caBundle: string;
+  hasApiKey?: boolean;
+  apiKeyMasked?: string | null;
+  apiKey?: string | null;
+}
+
+export interface LLMSettings {
+  activeProfileId: string;
+  profiles: LLMProfile[];
+  effective: LLMProfile | null;
+}
+
 export interface TestCaseDSL {
   caseName: string;
   baseUrl: string;

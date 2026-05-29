@@ -38,7 +38,6 @@ class OpenAICompatibleProvider:
         if not self.api_key:
             raise LLMProviderError("TEST_LLM_API_KEY is required for the OpenAI-compatible provider.")
 
-        payload = self._payload(request, stream=request.stream)
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
@@ -48,11 +47,12 @@ class OpenAICompatibleProvider:
         try:
             with httpx.Client(timeout=float(self.timeout_seconds), verify=self._verify_value()) as client:
                 if request.stream:
-                    return self._complete_streaming(client, url, payload, headers)
-                response = client.post(url, json=payload, headers=headers)
-                self._raise_for_status(response)
-                body = response.json()
-                return body["choices"][0]["message"]["content"]
+                    try:
+                        return self._complete_streaming(client, url, self._payload(request, stream=True), headers)
+                    except LLMProviderError as exc:
+                        if not _can_retry_without_stream(exc):
+                            raise
+                return self._complete_non_streaming(client, url, self._payload(request, stream=False), headers)
         except httpx.RequestError as exc:
             raise LLMProviderError(f"LLM provider request failed: {exc.__class__.__name__}.") from exc
 
@@ -68,7 +68,15 @@ class OpenAICompatibleProvider:
         }
         try:
             with httpx.Client(timeout=float(self.timeout_seconds), verify=self._verify_value()) as client:
-                yield from self._stream_chunks(client, self._completion_url(), self._payload(request, stream=True), headers)
+                url = self._completion_url()
+                if request.stream:
+                    try:
+                        yield from self._stream_chunks(client, url, self._payload(request, stream=True), headers)
+                        return
+                    except LLMProviderError as exc:
+                        if not _can_retry_without_stream(exc):
+                            raise
+                yield self._complete_non_streaming(client, url, self._payload(request, stream=False), headers)
         except httpx.RequestError as exc:
             raise LLMProviderError(f"LLM provider request failed: {exc.__class__.__name__}.") from exc
 
@@ -115,6 +123,12 @@ class OpenAICompatibleProvider:
     ) -> str:
         return "".join(self._stream_chunks(client, url, payload, headers))
 
+    def _complete_non_streaming(self, client: httpx.Client, url: str, payload: dict, headers: dict) -> str:
+        response = client.post(url, json=payload, headers=headers)
+        self._raise_for_status(response)
+        body = response.json()
+        return body["choices"][0]["message"]["content"]
+
     def _stream_chunks(
         self,
         client: httpx.Client,
@@ -149,3 +163,8 @@ class OpenAICompatibleProvider:
             response.raise_for_status()
         except httpx.HTTPStatusError as exc:
             raise LLMProviderError(f"LLM provider request failed with HTTP {exc.response.status_code}.") from exc
+
+
+def _can_retry_without_stream(exc: LLMProviderError) -> bool:
+    text = str(exc)
+    return "HTTP 400" in text or "HTTP 404" in text or "HTTP 405" in text

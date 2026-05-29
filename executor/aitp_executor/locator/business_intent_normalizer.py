@@ -76,7 +76,7 @@ class BusinessIntentNormalizer:
             return BusinessIntent(
                 name="login_system",
                 normalized_target="登录",
-                preferred_texts=["登录", "用户名", "密码"],
+                preferred_texts=["登录", "Login", "LOGIN", "Sign in", "Sign In", "用户名", "密码"],
                 negative_texts=["退出登录"],
                 preferred_roles=["button", "textbox"],
                 action_kind="click",
