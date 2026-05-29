@@ -4,6 +4,7 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import {
   checkSystemConnectivity,
   checkSystemLogin,
+  acceptExtractedDraft,
   copyCase,
   createProject,
   createProjectAccount,
@@ -12,11 +13,16 @@ import {
   deleteProject,
   deleteProjectAccount,
   disableCase,
+  extractDocumentTestCases,
+  getProjectDocuments,
+  getProjectExtractedDrafts,
   getProjectAccounts,
   getProjectCases,
   getProjects,
   getTestRuns,
+  rejectExtractedDraft,
   setProjectDefaultAccount,
+  uploadProjectDocument,
   updateProject,
   updateProjectAccount
 } from "../api/platform";
@@ -24,6 +30,8 @@ import { DataTable } from "../components/DataTable";
 import { StatusBadge } from "../components/StatusBadge";
 import type {
   FunctionalTestCase,
+  DocumentSource,
+  ExtractedCaseDraft,
   ProjectAccount,
   ProjectAccountPayload,
   ProjectCreatePayload,
@@ -31,7 +39,7 @@ import type {
   TestRun
 } from "../types/platform";
 
-type ProjectTab = "config" | "accounts" | "cases" | "runs" | "failures" | "knowledge";
+type ProjectTab = "config" | "accounts" | "cases" | "runs" | "failures" | "documents" | "knowledge";
 
 const PROJECT_TABS: Array<{ id: ProjectTab; label: string }> = [
   { id: "config", label: "项目配置" },
@@ -39,6 +47,7 @@ const PROJECT_TABS: Array<{ id: ProjectTab; label: string }> = [
   { id: "cases", label: "功能测试用例" },
   { id: "runs", label: "运行记录" },
   { id: "failures", label: "失败分析" },
+  { id: "documents", label: "文档与用例提取" },
   { id: "knowledge", label: "规则与知识" }
 ];
 
@@ -88,6 +97,8 @@ export function ProjectsPage({ initialProjectId }: { initialProjectId?: number |
   const [projects, setProjects] = useState<TestProject[]>([]);
   const [accounts, setAccounts] = useState<ProjectAccount[]>([]);
   const [cases, setCases] = useState<FunctionalTestCase[]>([]);
+  const [documents, setDocuments] = useState<DocumentSource[]>([]);
+  const [drafts, setDrafts] = useState<ExtractedCaseDraft[]>([]);
   const [runs, setRuns] = useState<TestRun[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<number | null>(initialProjectId || null);
   const [activeTab, setActiveTab] = useState<ProjectTab>("config");
@@ -95,6 +106,7 @@ export function ProjectsPage({ initialProjectId }: { initialProjectId?: number |
   const [accountForm, setAccountForm] = useState<ProjectAccountPayload>(emptyAccountForm);
   const [editingAccountId, setEditingAccountId] = useState<number | null>(null);
   const [caseForm, setCaseForm] = useState(emptyCaseForm);
+  const [documentFile, setDocumentFile] = useState<File | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -122,6 +134,8 @@ export function ProjectsPage({ initialProjectId }: { initialProjectId?: number |
       setProjectForm(emptyProjectForm);
       setAccounts([]);
       setCases([]);
+      setDocuments([]);
+      setDrafts([]);
     }
   }
 
@@ -131,9 +145,16 @@ export function ProjectsPage({ initialProjectId }: { initialProjectId?: number |
     setSelectedProjectId(projectId);
     setProjectForm(projectToForm(project));
     window.history.replaceState(null, "", `#projects/${projectId}`);
-    const [accountList, caseList] = await Promise.all([getProjectAccounts(projectId), getProjectCases(projectId)]);
+    const [accountList, caseList, documentList, draftList] = await Promise.all([
+      getProjectAccounts(projectId),
+      getProjectCases(projectId),
+      getProjectDocuments(projectId),
+      getProjectExtractedDrafts(projectId)
+    ]);
     setAccounts(accountList);
     setCases(caseList);
+    setDocuments(documentList);
+    setDrafts(draftList);
   }
 
   function startNewProject() {
@@ -263,6 +284,36 @@ export function ProjectsPage({ initialProjectId }: { initialProjectId?: number |
 
   async function pauseCase(caseId: number) {
     await disableCase(caseId);
+    if (selectedProjectId) await selectProject(selectedProjectId);
+  }
+
+  async function uploadDocument() {
+    if (!selectedProjectId || !documentFile) return;
+    const content = await documentFile.text().catch(() => "");
+    await uploadProjectDocument(selectedProjectId, {
+      file_name: documentFile.name,
+      doc_type: documentFile.name.split(".").pop() || "txt",
+      content
+    });
+    setDocumentFile(null);
+    await selectProject(selectedProjectId);
+    setMessage("文档已上传。");
+  }
+
+  async function extractDocument(documentId: number) {
+    await extractDocumentTestCases(documentId);
+    if (selectedProjectId) await selectProject(selectedProjectId);
+    setMessage("测试用例草案已生成。");
+  }
+
+  async function acceptDraft(draftId: number) {
+    await acceptExtractedDraft(draftId);
+    if (selectedProjectId) await selectProject(selectedProjectId);
+    setMessage("草案已转为正式功能测试用例。");
+  }
+
+  async function rejectDraft(draftId: number) {
+    await rejectExtractedDraft(draftId);
     if (selectedProjectId) await selectProject(selectedProjectId);
   }
 
@@ -412,6 +463,18 @@ export function ProjectsPage({ initialProjectId }: { initialProjectId?: number |
 
           {activeTab === "runs" ? <ProjectRuns runs={projectRuns} /> : null}
           {activeTab === "failures" ? <div className="empty-state">失败分析会在用例详情和失败样本中展示。</div> : null}
+          {activeTab === "documents" ? (
+            <DocumentExtractionPanel
+              documents={documents}
+              drafts={drafts}
+              selectedFile={documentFile}
+              onFileChange={setDocumentFile}
+              onUpload={() => void uploadDocument()}
+              onExtract={(documentId) => void extractDocument(documentId)}
+              onAccept={(draftId) => void acceptDraft(draftId)}
+              onReject={(draftId) => void rejectDraft(draftId)}
+            />
+          ) : null}
           {activeTab === "knowledge" ? <div className="empty-state">规则和页面知识可在能力中心继续维护。</div> : null}
         </section>
       </div>
@@ -527,6 +590,73 @@ function ProjectRuns({ runs }: { runs: TestRun[] }) {
         { key: "report", title: "报告", render: (run) => <a className="table-link-button" href={`#/reports?runId=${run.id}`}>查看</a> }
       ]}
     />
+  );
+}
+
+function DocumentExtractionPanel({
+  documents,
+  drafts,
+  selectedFile,
+  onFileChange,
+  onUpload,
+  onExtract,
+  onAccept,
+  onReject
+}: {
+  documents: DocumentSource[];
+  drafts: ExtractedCaseDraft[];
+  selectedFile: File | null;
+  onFileChange: (file: File | null) => void;
+  onUpload: () => void;
+  onExtract: (documentId: number) => void;
+  onAccept: (draftId: number) => void;
+  onReject: (draftId: number) => void;
+}) {
+  return (
+    <div className="project-tab-panel">
+      <section className="sub-panel">
+        <h3>上传文档</h3>
+        <div className="compact-form-grid">
+          <label className="compact-form-grid__wide">
+            <span>选择 txt / md / docx / pdf</span>
+            <input type="file" accept=".txt,.md,.docx,.pdf" onChange={(event) => onFileChange(event.target.files?.[0] || null)} />
+          </label>
+          <button className="primary-button" type="button" disabled={!selectedFile} onClick={onUpload}>
+            上传文档
+          </button>
+        </div>
+      </section>
+      <DataTable
+        rows={documents}
+        emptyText="暂无文档"
+        getRowKey={(document) => document.id}
+        columns={[
+          { key: "name", title: "文件名", render: (document) => document.file_name },
+          { key: "type", title: "类型", render: (document) => document.doc_type },
+          { key: "status", title: "状态", render: (document) => <StatusBadge value={document.status} /> },
+          { key: "created", title: "上传时间", render: (document) => document.created_at },
+          { key: "action", title: "操作", render: (document) => <button className="table-link-button" type="button" onClick={() => onExtract(document.id)}>提取测试用例</button> }
+        ]}
+      />
+      <DataTable
+        rows={drafts}
+        emptyText="暂无提取草案"
+        getRowKey={(draft) => draft.id}
+        columns={[
+          { key: "case", title: "草案名称", render: (draft) => draft.case_name },
+          { key: "goal", title: "测试目标", render: (draft) => draft.natural_language_goal || "-" },
+          { key: "menu", title: "菜单路径", render: (draft) => draft.menu_path || "-" },
+          { key: "confidence", title: "置信度", render: (draft) => draft.confidence == null ? "-" : `${Math.round(draft.confidence * 100)}%` },
+          { key: "status", title: "状态", render: (draft) => <StatusBadge value={draft.status} /> },
+          { key: "action", title: "操作", render: (draft) => (
+            <div className="table-actions">
+              <button className="table-link-button" type="button" onClick={() => onAccept(draft.id)} disabled={draft.status === "converted"}>接受为用例</button>
+              <button className="table-link-button" type="button" onClick={() => onReject(draft.id)} disabled={draft.status === "converted"}>拒绝</button>
+            </div>
+          ) }
+        ]}
+      />
+    </div>
   );
 }
 

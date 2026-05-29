@@ -187,6 +187,33 @@ export interface FixApplication {
   verified_at: string | null;
 }
 
+export interface DocumentSource {
+  id: number;
+  project_id: number;
+  file_name: string;
+  file_path: string;
+  doc_type: string;
+  status: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ExtractedCaseDraft {
+  id: number;
+  project_id: number;
+  document_id: number;
+  case_name: string;
+  natural_language_goal: string | null;
+  menu_path: string | null;
+  test_data_json: Record<string, unknown> | null;
+  suggested_account_role: string | null;
+  confidence: number | null;
+  status: string;
+  created_case_id: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface AnalyzeResult {
   readyToExecute: boolean;
   confidence: number;

@@ -5,6 +5,8 @@ import type {
   AbilityKnowledge,
   AnalyzeResult,
   DslValidationResult,
+  DocumentSource,
+  ExtractedCaseDraft,
   FailureSample,
   FailureAnalysis,
   FixApplication,
@@ -97,6 +99,34 @@ export function setProjectDefaultAccount(accountId: number): Promise<ProjectAcco
 
 export function getProjectCases(projectId: number): Promise<FunctionalTestCase[]> {
   return getJson<FunctionalTestCase[]>(`/api/projects/${projectId}/cases`);
+}
+
+export function getProjectDocuments(projectId: number): Promise<DocumentSource[]> {
+  return getJson<DocumentSource[]>(`/api/projects/${projectId}/documents`);
+}
+
+export function uploadProjectDocument(projectId: number, payload: { file_name: string; doc_type: string; content: string }): Promise<DocumentSource> {
+  return postJson<DocumentSource>(`/api/projects/${projectId}/documents`, payload);
+}
+
+export function extractDocumentTestCases(documentId: number): Promise<ExtractedCaseDraft[]> {
+  return postJson<ExtractedCaseDraft[]>(`/api/documents/${documentId}/extract-test-cases`, {});
+}
+
+export function getProjectExtractedDrafts(projectId: number): Promise<ExtractedCaseDraft[]> {
+  return getJson<ExtractedCaseDraft[]>(`/api/projects/${projectId}/extracted-case-drafts`);
+}
+
+export function updateExtractedDraft(draftId: number, payload: Partial<ExtractedCaseDraft>): Promise<ExtractedCaseDraft> {
+  return putJson<ExtractedCaseDraft>(`/api/extracted-case-drafts/${draftId}`, payload);
+}
+
+export function acceptExtractedDraft(draftId: number): Promise<FunctionalTestCase> {
+  return postJson<FunctionalTestCase>(`/api/extracted-case-drafts/${draftId}/accept`, {});
+}
+
+export function rejectExtractedDraft(draftId: number): Promise<ExtractedCaseDraft> {
+  return postJson<ExtractedCaseDraft>(`/api/extracted-case-drafts/${draftId}/reject`, {});
 }
 
 export function createProjectCase(projectId: number, payload: FunctionalTestCasePayload): Promise<FunctionalTestCase> {
