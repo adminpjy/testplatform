@@ -6,6 +6,7 @@ from app.api.cases import router as cases_router
 from app.api.failure_analyses import router as failure_analyses_router
 from app.api.failure_samples import router as failure_samples_router
 from app.api.files import router as files_router
+from app.api.fix_applications import router as fix_applications_router
 from app.api.human_interventions import router as human_interventions_router
 from app.api.projects import router as projects_router
 from app.api.prompts import router as prompts_router
@@ -26,6 +27,7 @@ api_router.include_router(abilities_router, prefix="/api/abilities", tags=["abil
 api_router.include_router(test_runs_router, prefix="/api/test-runs", tags=["test-runs"])
 api_router.include_router(failure_samples_router, prefix="/api/failure-samples", tags=["failure-samples"])
 api_router.include_router(failure_analyses_router, prefix="/api/failure-analyses", tags=["failure-analyses"])
+api_router.include_router(fix_applications_router, prefix="/api/fix-applications", tags=["fix-applications"])
 api_router.include_router(human_interventions_router, prefix="/api/human-interventions", tags=["human-interventions"])
 api_router.include_router(rule_drafts_router, prefix="/api/rule-drafts", tags=["rule-drafts"])
 api_router.include_router(reports_router, prefix="/api/reports", tags=["reports"])

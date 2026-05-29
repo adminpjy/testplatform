@@ -5,6 +5,7 @@ import {
   activateCaseVersion,
   analyzeFailureSample,
   analyzeCase,
+  applyFailureAnalysisSuggestion,
   formatCaseDsl,
   generateCaseDsl,
   getCase,
@@ -18,7 +19,8 @@ import {
   saveCaseDsl,
   saveGeneratedCaseDsl,
   updateCase,
-  validateCaseDsl
+  validateCaseDsl,
+  verifyFixApplication
 } from "../api/platform";
 import { DataTable } from "../components/DataTable";
 import { JsonCollapseBlock } from "../components/JsonCollapseBlock";
@@ -218,6 +220,20 @@ export function CaseDetailPage({ caseId }: { caseId: number | null }) {
     await load(caseId);
   }
 
+  async function applySuggestion(analysisId: number, suggestionIndex: number, action: string) {
+    if (!caseId) return;
+    const response = await applyFailureAnalysisSuggestion(analysisId, { suggestionIndex, action, confirm: true });
+    setMessage(`修复建议已应用：${response.message}`);
+    await load(caseId);
+  }
+
+  async function verifyFix(fixId: number) {
+    if (!caseId) return;
+    const run = await verifyFixApplication(fixId);
+    setMessage(`已创建修复验证运行：${run.run_code}`);
+    await load(caseId);
+  }
+
   function parseDsl(): TestCaseDSL {
     return parseObject(dslText) as unknown as TestCaseDSL;
   }
@@ -325,8 +341,8 @@ export function CaseDetailPage({ caseId }: { caseId: number | null }) {
         ) : null}
 
         {activeTab === "runs" ? <RunTable runs={runs} onRerun={rerun} /> : null}
-        {activeTab === "failures" ? <FailurePanel samples={samples} analyses={analyses} onAnalyze={runFailureAnalysis} /> : null}
-        {activeTab === "fixes" ? <FixPanel fixes={fixes} /> : null}
+        {activeTab === "failures" ? <FailurePanel samples={samples} analyses={analyses} onAnalyze={runFailureAnalysis} onApply={applySuggestion} /> : null}
+        {activeTab === "fixes" ? <FixPanel fixes={fixes} onVerify={verifyFix} /> : null}
         {activeTab === "knowledge" ? <div className="empty-state">该用例命中的规则和知识会在后续执行后持续沉淀。</div> : null}
       </section>
     </div>
@@ -410,11 +426,13 @@ function RunTable({ runs, onRerun }: { runs: TestRun[]; onRerun: (runId: number)
 function FailurePanel({
   samples,
   analyses,
-  onAnalyze
+  onAnalyze,
+  onApply
 }: {
   samples: FailureSample[];
   analyses: FailureAnalysis[];
   onAnalyze: (sampleId: number) => Promise<void>;
+  onApply: (analysisId: number, suggestionIndex: number, action: string) => Promise<void>;
 }) {
   return (
     <div className="case-json-grid">
@@ -447,7 +465,7 @@ function FailurePanel({
             <JsonCollapseBlock title="查看 suggestions" value={analysis.suggestions_json || {}} />
             <div className="suggestion-action-list">
               {suggestions(analysis).map((item, index) => (
-                <button className="secondary-button" type="button" key={`${item.type}-${index}`}>
+                <button className="secondary-button" type="button" key={`${item.type}-${index}`} onClick={() => void onApply(analysis.id, index, actionForSuggestion(item.type))}>
                   {suggestionActionLabel(item.type)}
                 </button>
               ))}
@@ -460,7 +478,7 @@ function FailurePanel({
   );
 }
 
-function FixPanel({ fixes }: { fixes: FixApplication[] }) {
+function FixPanel({ fixes, onVerify }: { fixes: FixApplication[]; onVerify: (fixId: number) => Promise<void> }) {
   return (
     <DataTable
       rows={fixes}
@@ -471,7 +489,8 @@ function FixPanel({ fixes }: { fixes: FixApplication[] }) {
         { key: "status", title: "状态", render: (fix) => <StatusBadge value={fix.status} /> },
         { key: "version", title: "新版本", render: (fix) => fix.created_case_version_id || "-" },
         { key: "verify", title: "验证运行", render: (fix) => fix.verify_run_id || "-" },
-        { key: "time", title: "时间", render: (fix) => fix.created_at }
+        { key: "time", title: "时间", render: (fix) => fix.created_at },
+        { key: "action", title: "操作", render: (fix) => <button className="table-link-button" type="button" onClick={() => void onVerify(fix.id)}>重新验证</button> }
       ]}
     />
   );
@@ -538,6 +557,22 @@ function suggestionActionLabel(type: string): string {
     defect_candidate: "标记为缺陷"
   };
   return mapping[type] || type || "查看建议";
+}
+
+function actionForSuggestion(type: string): string {
+  const mapping: Record<string, string> = {
+    modify_dsl: "apply_to_dsl",
+    add_rule: "create_rule_draft",
+    update_rule: "create_rule_draft",
+    modify_test_data: "modify_test_data",
+    modify_account: "mark_environment_issue",
+    add_precondition: "add_precondition",
+    modify_success_criteria: "modify_success_criteria",
+    human_intervention: "create_human_intervention",
+    environment_issue: "mark_environment_issue",
+    defect_candidate: "create_defect_candidate"
+  };
+  return mapping[type] || "create_human_intervention";
 }
 
 function formatError(error: unknown): string {

@@ -335,6 +335,25 @@ export function analyzeFailureSample(sampleId: number): Promise<FailureAnalysis>
   return postJson<FailureAnalysis>(`/api/failure-samples/${sampleId}/analyze`, {});
 }
 
+export function applyFailureAnalysisSuggestion(
+  analysisId: number,
+  payload: {
+    suggestionIndex: number;
+    action: string;
+    confirm: boolean;
+  }
+): Promise<{ fixApplicationId: number; status: string; createdCaseVersionId: number | null; createdRuleDraftId: number | null; message: string }> {
+  return postJson(`/api/failure-analyses/${analysisId}/apply`, payload);
+}
+
+export function getFixApplication(fixId: number): Promise<FixApplication> {
+  return getJson<FixApplication>(`/api/fix-applications/${fixId}`);
+}
+
+export function verifyFixApplication(fixId: number): Promise<TestRun> {
+  return postJson<TestRun>(`/api/fix-applications/${fixId}/verify-run`, {});
+}
+
 export function getRunFailureSamples(runId: number): Promise<FailureSample[]> {
   return getJson<FailureSample[]>(`/api/test-runs/${runId}/failure-samples`);
 }
