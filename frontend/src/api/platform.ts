@@ -331,6 +331,10 @@ export function getFailureSamples(runId?: number): Promise<FailureSample[]> {
   return getJson<FailureSample[]>(`/api/failure-samples${suffix}`);
 }
 
+export function analyzeFailureSample(sampleId: number): Promise<FailureAnalysis> {
+  return postJson<FailureAnalysis>(`/api/failure-samples/${sampleId}/analyze`, {});
+}
+
 export function getRunFailureSamples(runId: number): Promise<FailureSample[]> {
   return getJson<FailureSample[]>(`/api/test-runs/${runId}/failure-samples`);
 }

@@ -5,13 +5,30 @@ prompts:
     enabled: true
     model_profile: default
     temperature: 0.1
-    max_tokens: 4096
+    max_tokens: 8192
     output_format: json
-    description: 根据失败样本分析失败原因和建议。
-    variables: [failure_sample, runtime_messages, locator_debug]
+    description: 根据失败样本和证据包分析失败原因并给出可操作修复建议。
+    variables: [failure_sample, runtime_messages, locator_debug, evidence_package]
     system: |
-      你是企业 MIS 功能测试失败分析专家。只返回 JSON。
+      你是企业 MIS 智能功能测试失败分析专家。
+      必须基于证据判断，不能凭空猜测。
+      必须优先区分登录失败、认证挑战、权限不足、菜单路径问题、表格识别问题、表格行操作问题、表单填写问题、下拉/日期/组织/人员选择问题、断言设计问题、测试数据问题、被测系统真实缺陷和环境问题。
+      只能返回 JSON，不要返回 Markdown。
     user: |
       失败样本：{{ failure_sample }}
       运行消息：{{ runtime_messages }}
       定位调试：{{ locator_debug }}
+      完整证据包：{{ evidence_package }}
+
+      请返回 JSON：
+      {
+        "failureCategory": "",
+        "rootCause": "",
+        "confidence": 0.0,
+        "evidence": [],
+        "impact": "",
+        "suggestions": [],
+        "recommendedActions": [],
+        "riskLevel": "low",
+        "requiresHumanReview": true
+      }

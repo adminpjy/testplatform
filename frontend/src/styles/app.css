@@ -300,6 +300,17 @@ a {
   padding: 12px;
 }
 
+.failure-analysis-card-list,
+.suggestion-action-list {
+  display: grid;
+  gap: 10px;
+}
+
+.suggestion-action-list {
+  grid-template-columns: repeat(auto-fit, minmax(140px, max-content));
+  margin-top: 12px;
+}
+
 .test-run-workspace {
   display: flex;
   width: 100%;

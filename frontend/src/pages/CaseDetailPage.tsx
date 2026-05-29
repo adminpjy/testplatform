@@ -3,6 +3,7 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 
 import {
   activateCaseVersion,
+  analyzeFailureSample,
   analyzeCase,
   formatCaseDsl,
   generateCaseDsl,
@@ -210,6 +211,13 @@ export function CaseDetailPage({ caseId }: { caseId: number | null }) {
     await load(caseId);
   }
 
+  async function runFailureAnalysis(sampleId: number) {
+    if (!caseId) return;
+    const analysis = await analyzeFailureSample(sampleId);
+    setMessage(`AI 分析完成：${analysis.root_cause || analysis.failure_category}`);
+    await load(caseId);
+  }
+
   function parseDsl(): TestCaseDSL {
     return parseObject(dslText) as unknown as TestCaseDSL;
   }
@@ -317,7 +325,7 @@ export function CaseDetailPage({ caseId }: { caseId: number | null }) {
         ) : null}
 
         {activeTab === "runs" ? <RunTable runs={runs} onRerun={rerun} /> : null}
-        {activeTab === "failures" ? <FailurePanel samples={samples} analyses={analyses} /> : null}
+        {activeTab === "failures" ? <FailurePanel samples={samples} analyses={analyses} onAnalyze={runFailureAnalysis} /> : null}
         {activeTab === "fixes" ? <FixPanel fixes={fixes} /> : null}
         {activeTab === "knowledge" ? <div className="empty-state">该用例命中的规则和知识会在后续执行后持续沉淀。</div> : null}
       </section>
@@ -399,7 +407,15 @@ function RunTable({ runs, onRerun }: { runs: TestRun[]; onRerun: (runId: number)
   );
 }
 
-function FailurePanel({ samples, analyses }: { samples: FailureSample[]; analyses: FailureAnalysis[] }) {
+function FailurePanel({
+  samples,
+  analyses,
+  onAnalyze
+}: {
+  samples: FailureSample[];
+  analyses: FailureAnalysis[];
+  onAnalyze: (sampleId: number) => Promise<void>;
+}) {
   return (
     <div className="case-json-grid">
       <DataTable
@@ -409,10 +425,37 @@ function FailurePanel({ samples, analyses }: { samples: FailureSample[]; analyse
         columns={[
           { key: "type", title: "failureType", render: (sample) => sample.failure_type || "-" },
           { key: "summary", title: "摘要", render: (sample) => sample.failure_summary || "-" },
-          { key: "status", title: "状态", render: (sample) => <StatusBadge value={sample.status} /> }
+          { key: "status", title: "状态", render: (sample) => <StatusBadge value={sample.status} /> },
+          { key: "actions", title: "操作", render: (sample) => <button className="table-link-button" type="button" onClick={() => void onAnalyze(sample.id)}>AI 分析错误</button> }
         ]}
       />
-      <JsonCollapseBlock title="查看 FailureAnalysis JSON" value={analyses} />
+      <div className="failure-analysis-card-list">
+        {analyses.map((analysis) => (
+          <article className="surface-panel ability-stat-card" key={analysis.id}>
+            <span>FailureAnalysis #{analysis.id}</span>
+            <strong>{analysis.failure_category || "unknown"}</strong>
+            <p>{analysis.root_cause || analysis.error_summary || "暂无根因说明"}</p>
+            <dl className="settings-list">
+              <dt>置信度</dt>
+              <dd>{analysis.confidence == null ? "-" : `${Math.round(analysis.confidence * 100)}%`}</dd>
+              <dt>风险</dt>
+              <dd>{analysis.risk_level}</dd>
+              <dt>人工复核</dt>
+              <dd>{analysis.requires_human_review ? "需要" : "不需要"}</dd>
+            </dl>
+            <JsonCollapseBlock title="查看 evidence" value={analysis.evidence_json || {}} />
+            <JsonCollapseBlock title="查看 suggestions" value={analysis.suggestions_json || {}} />
+            <div className="suggestion-action-list">
+              {suggestions(analysis).map((item, index) => (
+                <button className="secondary-button" type="button" key={`${item.type}-${index}`}>
+                  {suggestionActionLabel(item.type)}
+                </button>
+              ))}
+            </div>
+          </article>
+        ))}
+        {analyses.length === 0 ? <div className="empty-state">暂无 AI 失败分析，选择失败样本后点击“AI 分析错误”。</div> : null}
+      </div>
     </div>
   );
 }
@@ -474,6 +517,27 @@ function readableAction(action: string): string {
     business_goal: "业务目标"
   };
   return mapping[action] || action;
+}
+
+function suggestions(analysis: FailureAnalysis): Array<{ type: string }> {
+  const items = analysis.suggestions_json?.items;
+  return Array.isArray(items) ? (items as Array<{ type: string }>) : [];
+}
+
+function suggestionActionLabel(type: string): string {
+  const mapping: Record<string, string> = {
+    modify_dsl: "应用到 DSL",
+    add_rule: "生成规则草案",
+    update_rule: "更新规则",
+    modify_test_data: "修改测试数据",
+    modify_account: "修改账号",
+    add_precondition: "更新前置条件",
+    modify_success_criteria: "修改成功判断",
+    human_intervention: "发起人工介入",
+    environment_issue: "标记为环境问题",
+    defect_candidate: "标记为缺陷"
+  };
+  return mapping[type] || type || "查看建议";
 }
 
 function formatError(error: unknown): string {
