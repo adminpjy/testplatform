@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { apiUrl, fileUrl } from "../api/client";
 import {
   convertInterventionToRule,
+  createRunFromCase,
   createTestRun,
   executeIntervention,
   getCase,
@@ -294,14 +295,20 @@ export function TestRunPage() {
     setActiveTab("steps");
     try {
       const executableDsl = materializeDsl(plannedDsl, { baseUrl, username, password, visionFallback, instruction, testData: parseTestData() });
-      const run = await createTestRun({
-        project_id: Number(selectedProjectId),
-        system_id: selectedSystemId ? Number(selectedSystemId) : null,
-        case_id: selectedCaseId ? Number(selectedCaseId) : null,
-        instruction,
-        base_url: baseUrl,
-        dsl_json: executableDsl
-      });
+      const run = selectedCaseId
+        ? await createRunFromCase(Number(selectedCaseId), {
+            testDataOverride: executableDsl.testData,
+            settingsOverride: executableDsl.settings,
+            runName: "case_run_from_test_run_page"
+          })
+        : await createTestRun({
+            project_id: Number(selectedProjectId),
+            system_id: selectedSystemId ? Number(selectedSystemId) : null,
+            case_id: null,
+            instruction,
+            base_url: baseUrl,
+            dsl_json: executableDsl
+          });
       const runList = await getTestRuns();
       setRuns(runList);
       await selectRun(run);

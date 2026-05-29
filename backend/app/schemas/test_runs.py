@@ -85,9 +85,13 @@ class TestRunCreate(BaseModel):
     project_id: int
     system_id: int | None = None
     case_id: int | None = None
+    case_version_id: int | None = None
+    account_id: int | None = None
     instruction: str | None = None
     base_url: str | None = None
     dsl_json: TestCaseDSL | None = None
+    testDataOverride: dict[str, Any] | None = None
+    settingsOverride: dict[str, Any] | None = None
 
 
 class TestRunRead(BaseModel):
@@ -96,11 +100,23 @@ class TestRunRead(BaseModel):
     project_id: int
     system_id: int | None = None
     case_id: int | None = None
+    case_version_id: int | None = None
+    account_id: int | None = None
     instruction: str | None = None
+    instruction_snapshot: str | None = None
     base_url: str | None = None
+    base_url_snapshot: str | None = None
+    login_url_snapshot: str | None = None
+    home_url_snapshot: str | None = None
     status: str
     current_phase: str | None = None
     dsl_json: dict[str, Any] | None = None
+    dsl_snapshot: dict[str, Any] | None = None
+    test_data_snapshot: dict[str, Any] | None = None
+    settings_snapshot: dict[str, Any] | None = None
+    account_snapshot: dict[str, Any] | None = None
+    error_summary: str | None = None
+    duration_ms: int | None = None
     summary_json: dict[str, Any] | None = None
     started_at: datetime | None = None
     ended_at: datetime | None = None

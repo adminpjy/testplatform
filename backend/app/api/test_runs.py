@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from app.db.session import SessionLocal, get_db
 from app.models import TestCase, TestProject
 from app.core.config import settings
+from app.schemas.cases import FunctionalTestCaseRead, SaveRunAsCaseRequest
 from app.schemas.test_runs import (
     ALLOWED_DSL_ACTIONS,
     AnalyzeResult,
@@ -46,6 +47,8 @@ from app.services.test_run_execution import (
     list_runs,
     list_runtime_messages,
     list_step_runs,
+    rerun_test_run,
+    save_run_as_case,
 )
 from app.services.trace_viewer_service import start_trace_viewer, stop_trace_viewer, trace_viewer_status
 
@@ -117,6 +120,22 @@ def plan_test_case(payload: NaturalLanguageTestRequest, db: Session = Depends(ge
         db.add(test_case)
         db.commit()
     return dsl
+
+
+@router.post("/save-as-case", response_model=FunctionalTestCaseRead, status_code=status.HTTP_201_CREATED)
+def save_temporary_run_as_case(payload: SaveRunAsCaseRequest, db: Session = Depends(get_db)) -> FunctionalTestCaseRead:
+    try:
+        return save_run_as_case(db, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.post("/{run_id}/rerun", response_model=TestRunRead, status_code=status.HTTP_201_CREATED)
+def rerun_existing_test_run(run_id: int, db: Session = Depends(get_db)) -> TestRunRead:
+    try:
+        return rerun_test_run(db, run_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
 
 @router.post("/{run_id}/steps/{step_id}/intervene", response_model=HumanInterventionRead)

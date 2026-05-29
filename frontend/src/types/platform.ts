@@ -233,9 +233,13 @@ export interface TestRunCreate {
   project_id: number;
   system_id?: number | null;
   case_id?: number | null;
+  case_version_id?: number | null;
+  account_id?: number | null;
   instruction?: string | null;
   base_url?: string | null;
   dsl_json?: TestCaseDSL | null;
+  testDataOverride?: Record<string, unknown> | null;
+  settingsOverride?: Record<string, unknown> | null;
 }
 
 export interface TestRun {
@@ -244,11 +248,23 @@ export interface TestRun {
   project_id: number;
   system_id: number | null;
   case_id: number | null;
+  case_version_id: number | null;
+  account_id: number | null;
   instruction: string | null;
+  instruction_snapshot?: string | null;
   base_url: string | null;
+  base_url_snapshot?: string | null;
+  login_url_snapshot?: string | null;
+  home_url_snapshot?: string | null;
   status: string;
   current_phase: string | null;
   dsl_json: Record<string, unknown> | null;
+  dsl_snapshot?: Record<string, unknown> | null;
+  test_data_snapshot?: Record<string, unknown> | null;
+  settings_snapshot?: Record<string, unknown> | null;
+  account_snapshot?: Record<string, unknown> | null;
+  error_summary?: string | null;
+  duration_ms?: number | null;
   summary_json: Record<string, unknown> | null;
   started_at: string | null;
   ended_at: string | null;

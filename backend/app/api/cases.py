@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.schemas.cases import (
     CaseAnalyzeRequest,
+    CaseRunCreate,
     DslPayload,
     DslValidationResult,
     FailureAnalysisRead,
@@ -39,6 +40,7 @@ from app.services.cases import (
     update_case_dsl,
     validate_dsl,
 )
+from app.services.test_run_execution import create_and_execute_case_run, rerun_case_latest, run_case_version
 
 router = APIRouter()
 
@@ -168,6 +170,38 @@ def save_generated_dsl_for_case(
 def read_case_runs(case_id: int, db: Session = Depends(get_db)) -> list[TestRunRead]:
     _case_or_404(db, case_id)
     return list_case_runs(db, case_id)
+
+
+@router.post("/{case_id}/runs", response_model=TestRunRead, status_code=status.HTTP_201_CREATED)
+def create_run_from_case(case_id: int, payload: CaseRunCreate, db: Session = Depends(get_db)) -> TestRunRead:
+    _case_or_404(db, case_id)
+    try:
+        return create_and_execute_case_run(db, case_id, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.post("/{case_id}/rerun-latest", response_model=TestRunRead, status_code=status.HTTP_201_CREATED)
+def rerun_latest_case(case_id: int, payload: CaseRunCreate | None = None, db: Session = Depends(get_db)) -> TestRunRead:
+    _case_or_404(db, case_id)
+    try:
+        return rerun_case_latest(db, case_id, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.post("/{case_id}/versions/{version_id}/run", response_model=TestRunRead, status_code=status.HTTP_201_CREATED)
+def run_specific_case_version(
+    case_id: int,
+    version_id: int,
+    payload: CaseRunCreate | None = None,
+    db: Session = Depends(get_db),
+) -> TestRunRead:
+    _case_or_404(db, case_id)
+    try:
+        return run_case_version(db, case_id, version_id, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
 
 @router.get("/{case_id}/failure-samples", response_model=list[FailureSampleRead])

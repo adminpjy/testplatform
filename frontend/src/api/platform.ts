@@ -260,6 +260,40 @@ export function createTestRun(payload: TestRunCreate): Promise<TestRun> {
   return postJson<TestRun>("/api/test-runs", payload);
 }
 
+export function createRunFromCase(
+  caseId: number,
+  payload: {
+    caseVersionId?: number | null;
+    accountId?: number | null;
+    testDataOverride?: Record<string, unknown>;
+    settingsOverride?: Record<string, unknown>;
+    runName?: string | null;
+  } = {}
+): Promise<TestRun> {
+  return postJson<TestRun>(`/api/cases/${caseId}/runs`, payload);
+}
+
+export function rerunLatestCase(caseId: number): Promise<TestRun> {
+  return postJson<TestRun>(`/api/cases/${caseId}/rerun-latest`, {});
+}
+
+export function runCaseVersion(caseId: number, versionId: number): Promise<TestRun> {
+  return postJson<TestRun>(`/api/cases/${caseId}/versions/${versionId}/run`, {});
+}
+
+export function rerunTestRun(runId: number): Promise<TestRun> {
+  return postJson<TestRun>(`/api/test-runs/${runId}/rerun`, {});
+}
+
+export function saveRunAsCase(payload: {
+  runId: number;
+  projectId: number;
+  caseName: string;
+  description?: string | null;
+}): Promise<FunctionalTestCase> {
+  return postJson<FunctionalTestCase>("/api/test-runs/save-as-case", payload);
+}
+
 export function getTestRuns(): Promise<TestRun[]> {
   return getJson<TestRun[]>("/api/test-runs");
 }

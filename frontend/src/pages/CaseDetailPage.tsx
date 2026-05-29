@@ -12,6 +12,8 @@ import {
   getCaseFixApplications,
   getCaseRuns,
   getCaseVersions,
+  rerunTestRun,
+  runCaseVersion,
   saveCaseDsl,
   saveGeneratedCaseDsl,
   updateCase,
@@ -194,6 +196,20 @@ export function CaseDetailPage({ caseId }: { caseId: number | null }) {
     setMessage("历史版本已激活。");
   }
 
+  async function executeVersion(versionId: number) {
+    if (!caseId) return;
+    const run = await runCaseVersion(caseId, versionId);
+    setMessage(`已按指定版本创建运行：${run.run_code}`);
+    await load(caseId);
+  }
+
+  async function rerun(runId: number) {
+    if (!caseId) return;
+    const run = await rerunTestRun(runId);
+    setMessage(`已重新运行：${run.run_code}`);
+    await load(caseId);
+  }
+
   function parseDsl(): TestCaseDSL {
     return parseObject(dslText) as unknown as TestCaseDSL;
   }
@@ -284,7 +300,7 @@ export function CaseDetailPage({ caseId }: { caseId: number | null }) {
               <DslStepPreview dslText={dslText} />
               <textarea className="case-json-editor" value={dslText} onChange={(event) => setDslText(event.target.value)} />
             </section>
-            <VersionHistory versions={versions} currentVersionId={testCase.current_version_id} onActivate={useVersion} />
+            <VersionHistory versions={versions} currentVersionId={testCase.current_version_id} onActivate={useVersion} onRun={executeVersion} />
           </div>
         ) : null}
 
@@ -300,7 +316,7 @@ export function CaseDetailPage({ caseId }: { caseId: number | null }) {
           </div>
         ) : null}
 
-        {activeTab === "runs" ? <RunTable runs={runs} /> : null}
+        {activeTab === "runs" ? <RunTable runs={runs} onRerun={rerun} /> : null}
         {activeTab === "failures" ? <FailurePanel samples={samples} analyses={analyses} /> : null}
         {activeTab === "fixes" ? <FixPanel fixes={fixes} /> : null}
         {activeTab === "knowledge" ? <div className="empty-state">该用例命中的规则和知识会在后续执行后持续沉淀。</div> : null}
@@ -328,7 +344,17 @@ function DslStepPreview({ dslText }: { dslText: string }) {
   }
 }
 
-function VersionHistory({ versions, currentVersionId, onActivate }: { versions: TestCaseVersion[]; currentVersionId: number | null; onActivate: (versionId: number) => Promise<void> }) {
+function VersionHistory({
+  versions,
+  currentVersionId,
+  onActivate,
+  onRun
+}: {
+  versions: TestCaseVersion[];
+  currentVersionId: number | null;
+  onActivate: (versionId: number) => Promise<void>;
+  onRun: (versionId: number) => Promise<void>;
+}) {
   return (
     <aside className="case-version-panel">
       <div className="panel-heading">
@@ -338,7 +364,10 @@ function VersionHistory({ versions, currentVersionId, onActivate }: { versions: 
         {versions.map((version) => (
           <div className="run-history__item" key={version.id}>
             <span>v{version.version_no} {version.change_type}</span>
-            {version.id === currentVersionId ? <StatusBadge value="active" /> : <button className="table-link-button" type="button" onClick={() => void onActivate(version.id)}>激活</button>}
+            <div className="table-actions">
+              {version.id === currentVersionId ? <StatusBadge value="active" /> : <button className="table-link-button" type="button" onClick={() => void onActivate(version.id)}>激活</button>}
+              <button className="table-link-button" type="button" onClick={() => void onRun(version.id)}>运行</button>
+            </div>
           </div>
         ))}
         {versions.length === 0 ? <div className="empty-state">暂无版本</div> : null}
@@ -347,7 +376,7 @@ function VersionHistory({ versions, currentVersionId, onActivate }: { versions: 
   );
 }
 
-function RunTable({ runs }: { runs: TestRun[] }) {
+function RunTable({ runs, onRerun }: { runs: TestRun[]; onRerun: (runId: number) => Promise<void> }) {
   return (
     <DataTable
       rows={runs}
@@ -358,7 +387,13 @@ function RunTable({ runs }: { runs: TestRun[] }) {
         { key: "status", title: "状态", render: (run) => <StatusBadge value={run.status} /> },
         { key: "start", title: "开始时间", render: (run) => run.started_at || run.created_at },
         { key: "duration", title: "耗时", render: (run) => run.ended_at && run.started_at ? `${Date.parse(run.ended_at) - Date.parse(run.started_at)} ms` : "-" },
-        { key: "report", title: "报告", render: (run) => <a className="table-link-button" href={`#/reports?runId=${run.id}`}>查看报告</a> }
+        { key: "account", title: "账号", render: (run) => String(run.account_snapshot?.username || "-") },
+        { key: "report", title: "操作", render: (run) => (
+          <div className="table-actions">
+            <a className="table-link-button" href={`#/reports?runId=${run.id}`}>查看报告</a>
+            <button className="table-link-button" type="button" onClick={() => void onRerun(run.id)}>重新运行</button>
+          </div>
+        ) }
       ]}
     />
   );
