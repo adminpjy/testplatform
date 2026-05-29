@@ -1,16 +1,14 @@
 import { Bot, Bug, ChevronDown, ChevronUp, Play, Search, UserRoundCheck } from "lucide-react";
 
-import type { AnalyzeResult, FunctionalTestCase, TestProject, TestSystem } from "../types/platform";
+import type { AnalyzeResult, FunctionalTestCase, TestProject } from "../types/platform";
 
 export function TestRunConfigCard({
   collapsed,
   testDataOpen,
   projects,
   cases,
-  systems,
   selectedProjectId,
   selectedCaseId,
-  selectedSystemId,
   baseUrl,
   username,
   password,
@@ -28,7 +26,6 @@ export function TestRunConfigCard({
   onToggleTestData,
   onProjectChange,
   onCaseChange,
-  onSystemChange,
   onBaseUrlChange,
   onUsernameChange,
   onPasswordChange,
@@ -44,10 +41,8 @@ export function TestRunConfigCard({
   testDataOpen: boolean;
   projects: TestProject[];
   cases: FunctionalTestCase[];
-  systems: TestSystem[];
   selectedProjectId: number | "";
   selectedCaseId: number | "";
-  selectedSystemId: number | "";
   baseUrl: string;
   username: string;
   password: string;
@@ -65,7 +60,6 @@ export function TestRunConfigCard({
   onToggleTestData: () => void;
   onProjectChange: (projectId: number) => void;
   onCaseChange: (caseId: number | "") => void;
-  onSystemChange: (systemId: number | "") => void;
   onBaseUrlChange: (value: string) => void;
   onUsernameChange: (value: string) => void;
   onPasswordChange: (value: string) => void;
@@ -82,7 +76,7 @@ export function TestRunConfigCard({
       <div className="panel-heading test-config-card__heading">
         <div>
           <h2>测试配置</h2>
-          <span>配置目标系统、测试账号和自然语言目标</span>
+          <span>配置项目、功能测试用例、测试账号和自然语言目标</span>
         </div>
         <button className="secondary-button" type="button" onClick={onToggleCollapsed}>
           {collapsed ? <ChevronDown size={16} /> : <ChevronUp size={16} />}
@@ -109,24 +103,12 @@ export function TestRunConfigCard({
                 value={selectedCaseId}
                 onChange={(event) => onCaseChange(event.target.value ? Number(event.target.value) : "")}
               >
-                <option value="">临时测试目标</option>
+                <option value="" disabled>
+                  {cases.length > 0 ? "请选择功能测试用例" : "当前项目暂无用例"}
+                </option>
                 {cases.map((item) => (
                   <option value={item.id} key={item.id}>
                     {item.case_name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              <span>被测系统</span>
-              <select
-                value={selectedSystemId}
-                onChange={(event) => onSystemChange(event.target.value ? Number(event.target.value) : "")}
-              >
-                <option value="">未选择</option>
-                {systems.map((system) => (
-                  <option value={system.id} key={system.id}>
-                    {system.system_name}
                   </option>
                 ))}
               </select>

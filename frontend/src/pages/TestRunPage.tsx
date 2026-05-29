@@ -10,7 +10,6 @@ import {
   getCase,
   getProjects,
   getProjectCases,
-  getSystems,
   getRunFailureSamples,
   getRunHumanInterventions,
   getTestRun,
@@ -42,8 +41,7 @@ import type {
   FunctionalTestCase,
   TestProject,
   TestRun,
-  TestStepRun,
-  TestSystem
+  TestStepRun
 } from "../types/platform";
 import type { RuntimeMessage } from "../types/runtime";
 import { normalizeRuntimeMessage } from "../types/runtime";
@@ -70,11 +68,9 @@ const TEST_RUN_TABS: Array<{ id: TestRunTab; label: string }> = [
 export function TestRunPage() {
   const [projects, setProjects] = useState<TestProject[]>([]);
   const [projectCases, setProjectCases] = useState<FunctionalTestCase[]>([]);
-  const [systems, setSystems] = useState<TestSystem[]>([]);
   const [runs, setRuns] = useState<TestRun[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<number | "">("");
   const [selectedCaseId, setSelectedCaseId] = useState<number | "">("");
-  const [selectedSystemId, setSelectedSystemId] = useState<number | "">("");
   const [baseUrl, setBaseUrl] = useState("");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -119,9 +115,8 @@ export function TestRunPage() {
 
   async function bootstrap() {
     try {
-      const [projectList, systemList, runList] = await Promise.all([getProjects(), getSystems(), getTestRuns()]);
+      const [projectList, runList] = await Promise.all([getProjects(), getTestRuns()]);
       setProjects(projectList);
-      setSystems(systemList);
       setRuns(runList);
       const hashCaseId = caseIdFromHash();
       if (hashCaseId) {
@@ -138,12 +133,6 @@ export function TestRunPage() {
         await loadCasesForProject(project.id);
         if (project.base_url) setBaseUrl(project.login_url || project.base_url);
         if (project.default_account?.username) setUsername(project.default_account.username);
-      }
-      if (systemList.length > 0) {
-        const system = systemList[0];
-        setSelectedSystemId(system.id);
-        setBaseUrl(resolveSystemUrl(system));
-        setUsername(system.accounts[0]?.username || "");
       }
     } catch (error) {
       setApiError(error instanceof Error ? error.message : String(error));
@@ -181,10 +170,6 @@ export function TestRunPage() {
     if (project) {
       setBaseUrl(project.login_url || project.base_url || baseUrl);
       setUsername(project.default_account?.username || username);
-      const system = systems.find((item) => item.id === project.system_id);
-      if (system) {
-        handleSystemChange(system.id);
-      }
     }
     await loadCasesForProject(projectId);
   }
@@ -230,15 +215,6 @@ export function TestRunPage() {
     });
   }
 
-  function handleSystemChange(systemId: number) {
-    setSelectedSystemId(systemId);
-    const system = systems.find((item) => item.id === systemId);
-    if (system) {
-      setBaseUrl(resolveSystemUrl(system));
-      setUsername(system.accounts[0]?.username || username);
-    }
-  }
-
   async function handleAnalyze() {
     setApiError(null);
     setIsAnalyzing(true);
@@ -249,7 +225,6 @@ export function TestRunPage() {
     try {
       await streamAnalyzeAndPlan({
         project_id: Number(selectedProjectId),
-        system_id: selectedSystemId ? Number(selectedSystemId) : undefined,
         instruction,
         base_url: baseUrl,
         credentials: { username, password },
@@ -303,7 +278,6 @@ export function TestRunPage() {
           })
         : await createTestRun({
             project_id: Number(selectedProjectId),
-            system_id: selectedSystemId ? Number(selectedSystemId) : null,
             case_id: null,
             instruction,
             base_url: baseUrl,
@@ -448,7 +422,7 @@ export function TestRunPage() {
         <div className="workspace-section__heading">
           <div>
             <h2>基础配置区</h2>
-            <p>选择被测系统、账号、测试数据和自然语言测试目标。</p>
+            <p>选择项目、功能测试用例、账号、测试数据和自然语言测试目标。</p>
           </div>
         </div>
         <TestRunConfigCard
@@ -456,10 +430,8 @@ export function TestRunPage() {
           testDataOpen={testDataOpen}
           projects={projects}
           cases={projectCases}
-          systems={systems}
           selectedProjectId={selectedProjectId}
           selectedCaseId={selectedCaseId}
-          selectedSystemId={selectedSystemId}
           baseUrl={baseUrl}
           username={username}
           password={password}
@@ -477,13 +449,6 @@ export function TestRunPage() {
           onToggleTestData={() => setTestDataOpen((value) => !value)}
           onProjectChange={(value) => void handleProjectChange(value)}
           onCaseChange={(value) => void handleCaseChange(value)}
-          onSystemChange={(value) => {
-            if (value === "") {
-              setSelectedSystemId("");
-              return;
-            }
-            handleSystemChange(value);
-          }}
           onBaseUrlChange={setBaseUrl}
           onUsernameChange={setUsername}
           onPasswordChange={setPassword}
@@ -884,10 +849,6 @@ function fallbackSteps(context: { baseUrl: string; username: string; password: s
     steps.push({ action: "assert_text_exists", target: "工作台" });
   }
   return steps;
-}
-
-function resolveSystemUrl(system: TestSystem): string {
-  return system.login_url || system.base_url || "";
 }
 
 function parseTestDataFromJson(value: string): Record<string, unknown> {
