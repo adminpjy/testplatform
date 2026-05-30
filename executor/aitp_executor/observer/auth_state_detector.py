@@ -71,12 +71,48 @@ LOW_RISK_INTERRUPTION_MARKERS = [
 
 APP_SUCCESS_MARKERS = [
     "工作台",
-    "首页",
     "我的待办",
     "用户信息",
     "退出登录",
+    "退出系统",
     "退出",
+    "系统导航",
+    "个人中心",
+    "用户中心",
+]
+
+WEAK_APP_SUCCESS_MARKERS = [
+    "首页",
     "主菜单",
+]
+
+APP_SHELL_SELECTORS = [
+    "aside",
+    "nav",
+    "[role='menu']",
+    ".ant-menu",
+    ".el-menu",
+    ".sidebar",
+    ".top-nav",
+    ".TopMenu",
+    ".topMenu",
+    ".top-menu",
+    ".home_header",
+    ".HeaderComponent",
+    ".HomeComponent",
+    "#layout_sider",
+    ".el-aside",
+]
+
+PORTAL_USER_SELECTORS = [
+    ".login1",
+    ".userName",
+    ".username",
+    ".user-info",
+    ".userInfo",
+    "[class*='userName']",
+    "[class*='user-info']",
+    "[class*='userInfo']",
 ]
 
 
@@ -186,6 +222,18 @@ class AuthStateDetector:
                 reason="login form is still visible",
             )
 
+        if login_form["login_entry_visible"]:
+            return AuthStateResult(
+                authState="login_page",
+                confidence=0.68,
+                failureType="auth_state_not_logged_in",
+                evidence=login_form["evidence"],
+                remainingRetries=remaining_retries,
+                shouldStopProtectedSteps=True,
+                shouldContinue=False,
+                reason="portal login entry is visible and authenticated portal evidence is absent",
+            )
+
         if success_evidence:
             return AuthStateResult(
                 authState="logged_in",
@@ -272,8 +320,9 @@ def _login_form_state(page: Any, lower_text: str) -> dict[str, Any]:
     )
     submit_visible = _login_submit_visible(page)
     authentication_center_visible = "authentication center" in lower_text or "用户认证中心" in lower_text
-    business_menu_visible = _any_visible(page, ["aside", "nav", "[role='menu']", ".ant-menu", ".el-menu", ".sidebar", ".top-nav", ".home_header", "#layout_sider", ".el-aside"])
-    login_context = authentication_center_visible or "login" in lower_text or "authn" in lower_text or "idp" in lower_text or (password_visible and submit_visible)
+    business_menu_visible = _any_visible(page, APP_SHELL_SELECTORS)
+    login_entry_visible = (not password_visible) and _login_entry_visible(page)
+    login_context = authentication_center_visible or "login" in lower_text or "authn" in lower_text or "idp" in lower_text or login_entry_visible or (password_visible and submit_visible)
     evidence: list[str] = []
     if username_visible:
         evidence.append("username input visible")
@@ -281,12 +330,15 @@ def _login_form_state(page: Any, lower_text: str) -> dict[str, Any]:
         evidence.append("password input visible")
     if submit_visible:
         evidence.append("login button visible")
+    if login_entry_visible:
+        evidence.append("portal login entry visible")
     if authentication_center_visible:
         evidence.append("Authentication Center visible")
     return {
         "username_visible": username_visible,
         "password_visible": password_visible,
         "submit_visible": submit_visible,
+        "login_entry_visible": login_entry_visible,
         "authentication_center_visible": authentication_center_visible,
         "business_menu_visible": business_menu_visible,
         "login_context": login_context,
@@ -304,6 +356,31 @@ def _login_submit_visible(page: Any) -> bool:
         except PlaywrightError:
             continue
     return _any_visible(page, ["button[type='submit']", "input[type='submit']", ".login-btn", ".login-button"])
+
+
+def _login_entry_visible(page: Any) -> bool:
+    selectors = [
+        ".notLogin .login",
+        ".not-login .login",
+        "a.login",
+        "button.login",
+        "a[href*='login' i]",
+    ]
+    if _any_visible(page, selectors):
+        return True
+    for selector in ["a", "button", "[role='button']", "[role='link']"]:
+        try:
+            locator = page.locator(selector)
+            for index in range(min(locator.count(), 20)):
+                candidate = locator.nth(index)
+                if not candidate.is_visible(timeout=300):
+                    continue
+                text = str(candidate.inner_text(timeout=300) or "").strip()
+                if re.fullmatch(r"(登录|用户登录|login|sign\s*in)", text, flags=re.IGNORECASE):
+                    return True
+        except PlaywrightError:
+            continue
+    return False
 
 
 def _auth_challenge_evidence(page: Any, lower_text: str) -> list[str]:
@@ -332,18 +409,81 @@ def _auth_challenge_evidence(page: Any, lower_text: str) -> list[str]:
 
 def _success_evidence(page: Any, lower_text: str, url: str, title: str, login_form: dict[str, Any]) -> list[str]:
     evidence: list[str] = []
-    has_app_shell = _any_visible(page, ["aside", "nav", "[role='menu']", ".ant-menu", ".el-menu", ".sidebar", ".top-nav"])
-    has_text_marker = False
+    has_app_shell = _any_visible(page, APP_SHELL_SELECTORS)
+    has_strong_marker = False
+    has_weak_marker = False
     if has_app_shell:
         evidence.append("main menu visible")
     for marker in APP_SUCCESS_MARKERS:
         if marker.lower() in lower_text:
             evidence.append(marker)
-            has_text_marker = True
+            has_strong_marker = True
             break
-    if "login" not in url and "登录" not in title and not login_form["form_visible"] and (has_app_shell or has_text_marker):
+    for marker in WEAK_APP_SUCCESS_MARKERS:
+        if marker.lower() in lower_text:
+            evidence.append(marker)
+            has_weak_marker = True
+            break
+    portal_evidence = _portal_logged_in_evidence(page, lower_text, login_form)
+    if portal_evidence:
+        evidence.extend(portal_evidence)
+        has_strong_marker = True
+    if login_form.get("login_entry_visible") and not has_strong_marker:
+        return []
+    if "login" not in url and "登录" not in title and not login_form["form_visible"] and (has_app_shell or has_strong_marker or has_weak_marker):
         evidence.append("url left login page")
     return list(dict.fromkeys(evidence))
+
+
+def _portal_logged_in_evidence(page: Any, lower_text: str, login_form: dict[str, Any]) -> list[str]:
+    if login_form.get("form_visible"):
+        return []
+    evidence: list[str] = []
+    if "系统导航" in lower_text:
+        evidence.append("portal system navigation visible")
+    if "系统导航" in lower_text and _any_visible(page, [".TopMenu", ".topMenu", ".top-menu", ".HomeComponent"]):
+        evidence.append("portal navigation shell visible")
+    if not login_form.get("login_entry_visible") and _portal_user_identity_visible(page):
+        evidence.append("portal user identity visible")
+    return evidence
+
+
+def _portal_user_identity_visible(page: Any) -> bool:
+    try:
+        for selector in PORTAL_USER_SELECTORS:
+            locator = page.locator(selector)
+            for index in range(min(locator.count(), 10)):
+                candidate = locator.nth(index)
+                if not candidate.is_visible(timeout=300):
+                    continue
+                text = str(candidate.inner_text(timeout=300) or "").strip()
+                if _looks_like_user_identity(text):
+                    return True
+    except PlaywrightError:
+        return False
+    return False
+
+
+def _looks_like_user_identity(text: str) -> bool:
+    compact = re.sub(r"\s+", "", text)
+    if not compact or len(compact) > 32:
+        return False
+    rejected = {
+        "登录",
+        "用户登录",
+        "退出",
+        "退出登录",
+        "退出系统",
+        "首页",
+        "系统导航",
+        "单位导航",
+        "新闻公告",
+        "移动应用中心",
+        "满意度调研",
+    }
+    if compact in rejected:
+        return False
+    return bool(re.search(r"[\u4e00-\u9fffA-Za-z]", compact))
 
 
 def _has_low_risk_continue_button(page: Any) -> bool:

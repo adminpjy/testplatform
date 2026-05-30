@@ -132,6 +132,49 @@ def test_auth_state_detects_login_success(page: Page) -> None:
     assert result.shouldContinue is True
 
 
+def test_auth_state_detects_logged_in_portal_home(page: Page) -> None:
+    page.set_content(
+        """
+        <header class="TopMenu">
+          <a>新闻公告</a>
+          <a>单位导航</a>
+          <a>系统导航</a>
+          <a class="login1">中燕信息</a>
+          <a class="login1">测试用户</a>
+        </header>
+        <main class="HomeComponent">
+          <section>系统导航</section>
+          <section>办公自动化</section>
+        </main>
+        """
+    )
+    result = AuthStateDetector().detect_auth_state(page)
+    assert result.authState == "logged_in"
+    assert result.failureType is None
+    assert any("portal system navigation" in item for item in result.evidence)
+
+
+def test_auth_state_does_not_treat_anonymous_portal_home_as_logged_in(page: Page) -> None:
+    page.set_content(
+        """
+        <header class="TopMenu">
+          <a>首页</a>
+          <a>新闻公告</a>
+          <a>单位导航</a>
+          <a class="login">登录</a>
+        </header>
+        <main class="HomeComponent">
+          <input class="ant-input" />
+          <button>搜一下</button>
+        </main>
+        """
+    )
+    result = AuthStateDetector().detect_auth_state(page)
+    assert result.authState == "login_page"
+    assert result.failureType == "auth_state_not_logged_in"
+    assert "portal login entry visible" in result.evidence
+
+
 def test_auth_state_does_not_treat_business_dashboard_canvas_as_captcha(page: Page) -> None:
     page.set_content(
         """

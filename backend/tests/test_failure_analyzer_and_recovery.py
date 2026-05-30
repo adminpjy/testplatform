@@ -9,7 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app.db.base import Base
 from app.models import FailureSample, TestProject as ProjectModel, TestRun as RunModel, TestStepRun as StepRunModel
 from app.services.failure_analyzer import FailureAnalyzer
-from app.services.test_run_execution import _add_failure_sample
+from app.services.test_run_execution import _add_failure_sample, get_run, list_runs
 
 
 def test_navigation_failure_does_not_use_vision_as_primary_type() -> None:
@@ -64,6 +64,27 @@ def test_protected_step_blocked_keeps_root_cause_login_failed() -> None:
     assert analysis["failureType"] == "protected_step_blocked_by_login_failure"
     assert analysis["rootCause"] == "login_failed"
     assert any(item["code"] == "rerun_login_check" for item in analysis["suggestedRecovery"])
+
+
+def test_login_state_unknown_is_not_reported_as_login_failed() -> None:
+    analysis = FailureAnalyzer().analyze_step_failure(
+        {
+            "action": "business_goal",
+            "target": "用户登录",
+            "error_summary": "login_state_unknown: auth state could not be determined confidently",
+            "failure_type": "login_state_unknown",
+            "failure_details": {
+                "auth_state": {
+                    "authState": "unknown",
+                    "failureType": "login_state_unknown",
+                    "reason": "auth state could not be determined confidently",
+                }
+            },
+        }
+    )
+    assert analysis["failureType"] == "login_state_unknown"
+    assert analysis["category"] == "authentication"
+    assert all(item["code"] != "check_test_account" for item in analysis["suggestedRecovery"])
 
 
 def test_auth_challenge_overrides_navigation_failure() -> None:
@@ -269,6 +290,59 @@ def test_failure_sample_records_login_captcha_as_primary_type() -> None:
     assert sample.ai_analysis_json["requiresHumanAction"] is True
     assert sample.ai_analysis_json["autoRetryDisabled"] is True
     assert sample.suggested_rule_json["candidateRuleType"] == "login"
+
+
+def test_running_run_reconciles_from_executor_summary(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("RUNS_ROOT", str(tmp_path))
+    session = _session()
+    project = ProjectModel(project_code="P4", name="Project 4", status="active")
+    session.add(project)
+    session.flush()
+    run = RunModel(run_code="RUN-RECONCILE", project_id=project.id, status="running", current_phase="executing")
+    session.add(run)
+    session.commit()
+
+    run_dir = tmp_path / "RUN-RECONCILE"
+    run_dir.mkdir()
+    (run_dir / "summary.json").write_text(
+        """
+        {
+          "runCode": "RUN-RECONCILE",
+          "status": "failed",
+          "startedAt": "2026-05-30T02:36:00+00:00",
+          "endedAt": "2026-05-30T02:37:00+00:00",
+          "durationMs": 60000,
+          "errorSummary": "login_state_unknown: 登录结果无法确认。"
+        }
+        """,
+        encoding="utf-8",
+    )
+
+    reconciled = get_run(session, run.id)
+    assert reconciled is not None
+    assert reconciled.status == "failed"
+    assert reconciled.current_phase == "failed"
+    assert reconciled.error_summary == "login_state_unknown: 登录结果无法确认。"
+    assert reconciled.duration_ms == 60000
+
+
+def test_list_runs_reconciles_running_runs_from_executor_summary(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("RUNS_ROOT", str(tmp_path))
+    session = _session()
+    project = ProjectModel(project_code="P5", name="Project 5", status="active")
+    session.add(project)
+    session.flush()
+    run = RunModel(run_code="RUN-LIST-RECONCILE", project_id=project.id, status="running", current_phase="executing")
+    session.add(run)
+    session.commit()
+
+    run_dir = tmp_path / "RUN-LIST-RECONCILE"
+    run_dir.mkdir()
+    (run_dir / "summary.json").write_text('{"status":"passed","endedAt":"2026-05-30T02:37:00Z","durationMs":1000}', encoding="utf-8")
+
+    runs = list_runs(session)
+    assert runs[0].status == "passed"
+    assert runs[0].current_phase == "completed"
 
 
 def _session() -> Session:

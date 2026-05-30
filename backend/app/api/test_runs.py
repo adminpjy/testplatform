@@ -585,7 +585,7 @@ def _resolve_start_after_id(after_id: int, last_event_id: str | None) -> int:
 
 
 def _is_terminal_status(status_value: str | None) -> bool:
-    return status_value in {"passed", "failed", "cancelled", "aborted", "missing"}
+    return status_value in {"passed", "failed", "stopped", "cancelled", "aborted", "missing"}
 
 
 def _safe_llm_endpoint(metadata: dict | None = None) -> str | None:

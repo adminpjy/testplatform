@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+import json
 import os
 import re
 from threading import Thread
@@ -30,6 +31,9 @@ from app.services.failure_analyzer import analyze_step_failure, failure_type
 from app.utils.url_policy import ensure_allowed_url
 from app.utils.secrets import decrypt_secret
 from executor.aitp_executor.runner.case_runner import CaseRunner
+
+
+TERMINAL_RUN_STATUSES = {"passed", "failed", "stopped", "cancelled", "aborted"}
 
 
 def create_and_execute_run(db: Session, payload: TestRunCreate) -> TestRun:
@@ -310,11 +314,104 @@ def _bool_string(value: bool) -> str:
 
 
 def list_runs(db: Session) -> list[TestRun]:
-    return list(db.scalars(select(TestRun).order_by(TestRun.id.desc())).all())
+    runs = list(db.scalars(select(TestRun).order_by(TestRun.id.desc())).all())
+    changed = False
+    for run in runs:
+        changed = _reconcile_run_lifecycle(db, run, commit=False) or changed
+    if changed:
+        db.commit()
+        for run in runs:
+            db.refresh(run)
+    return runs
 
 
 def get_run(db: Session, run_id: int) -> TestRun | None:
-    return db.get(TestRun, run_id)
+    run = db.get(TestRun, run_id)
+    if run is not None:
+        _reconcile_run_lifecycle(db, run)
+    return run
+
+
+def _reconcile_run_lifecycle(db: Session, run: TestRun, *, commit: bool = True) -> bool:
+    if run.status != "running":
+        return False
+
+    summary = _load_executor_summary(run.run_code)
+    if isinstance(summary, dict) and str(summary.get("status") or "") in TERMINAL_RUN_STATUSES:
+        status_value = str(summary.get("status"))
+        run.status = status_value
+        run.current_phase = "completed" if status_value == "passed" else status_value
+        run.summary_json = _merge_summary_json(run.summary_json, summary)
+        run.started_at = run.started_at or _parse_dt(summary.get("startedAt"))
+        run.ended_at = _parse_dt(summary.get("endedAt")) or run.ended_at or _utc_now()
+        run.duration_ms = _coerce_int(summary.get("durationMs")) or run.duration_ms
+        if status_value == "failed":
+            run.error_summary = _run_error_summary(run.summary_json)
+        db.add(run)
+        if commit:
+            db.commit()
+            db.refresh(run)
+        return True
+
+    if _running_run_timed_out(run):
+        timeout_seconds = _run_timeout_seconds()
+        summary_json = _merge_summary_json(
+            run.summary_json,
+            {
+                "status": "failed",
+                "errorSummary": f"execution_timeout: 运行超过 {timeout_seconds} 秒仍未结束，系统已自动收尾为失败。",
+            },
+        )
+        run.status = "failed"
+        run.current_phase = "failed"
+        run.summary_json = summary_json
+        run.error_summary = _run_error_summary(summary_json)
+        run.ended_at = _utc_now()
+        started = _as_aware_utc(run.started_at or run.created_at)
+        if started:
+            run.duration_ms = int((run.ended_at - started).total_seconds() * 1000)
+        db.add(run)
+        if commit:
+            db.commit()
+            db.refresh(run)
+        return True
+
+    return False
+
+
+def _load_executor_summary(run_code: str | None) -> dict | None:
+    if not run_code:
+        return None
+    try:
+        from executor.aitp_executor.utils.file_paths import runs_root, safe_name
+
+        path = runs_root() / safe_name(run_code) / "summary.json"
+        if not path.exists() or not path.is_file():
+            return None
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def _merge_summary_json(existing: dict | None, summary: dict) -> dict:
+    merged = dict(existing or {})
+    merged.update(summary)
+    return merged
+
+
+def _running_run_timed_out(run: TestRun) -> bool:
+    started = _as_aware_utc(run.started_at or run.created_at)
+    if started is None:
+        return False
+    return (_utc_now() - started).total_seconds() > _run_timeout_seconds()
+
+
+def _run_timeout_seconds() -> int:
+    candidates = [
+        int(app_settings.run_timeout_seconds or 0),
+        int(app_settings.cube_sandbox_timeout_seconds or 0),
+    ]
+    return max([value for value in candidates if value > 0] or [600]) + 60
 
 
 def list_step_runs(db: Session, run_id: int) -> list[TestStepRun]:
@@ -948,7 +1045,32 @@ def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def _parse_dt(value: str | None) -> datetime | None:
+def _coerce_int(value: object) -> int | None:
+    if value in (None, ""):
+        return None
+    try:
+        return int(float(str(value)))
+    except (TypeError, ValueError):
+        return None
+
+
+def _parse_dt(value: object) -> datetime | None:
     if not value:
         return None
-    return datetime.fromisoformat(value)
+    if isinstance(value, datetime):
+        return _as_aware_utc(value)
+    text = str(value).strip()
+    if text.endswith("Z"):
+        text = f"{text[:-1]}+00:00"
+    try:
+        return _as_aware_utc(datetime.fromisoformat(text))
+    except ValueError:
+        return None
+
+
+def _as_aware_utc(value: object) -> datetime | None:
+    if not isinstance(value, datetime):
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)

@@ -138,6 +138,8 @@ def _message_for(result: AuthStateResult) -> str:
         return "login_requires_manual_action: 登录后需要人工处理。"
     if result.authState == "login_page":
         return "auth_state_not_logged_in: 当前仍停留在登录页面。"
+    if (result.failureType or result.authState) == "login_state_unknown":
+        return "login_state_unknown: 已提交登录，但系统无法确认是否已经进入登录后的门户或业务系统。"
     return f"{result.failureType or result.authState}: {result.reason}"
 
 

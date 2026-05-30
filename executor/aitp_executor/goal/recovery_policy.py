@@ -63,9 +63,10 @@ class RecoveryPolicy:
             _strategy("update_test_account", "更换符合测试条件的账号", automatic=False),
         ],
         "login_state_unknown": [
-            _strategy("wait_and_reobserve", "等待后重新观察登录状态"),
+            _strategy("wait_and_reobserve", "等待后重新观察门户或业务首页"),
+            _strategy("check_portal_login_evidence", "检查是否已显示用户信息、系统导航或退出入口"),
             _strategy("check_global_interruption", "检查登录后中断提示"),
-            _strategy("ask_human", "请求人工确认登录结果", automatic=False),
+            _strategy("ask_human", "请求人工确认当前是否已登录", automatic=False),
         ],
         "menu_parent_not_found": [
             _strategy("reobserve_page", "重新读取页面菜单结构"),
