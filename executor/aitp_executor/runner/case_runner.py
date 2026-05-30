@@ -91,6 +91,7 @@ class CaseRunner:
             )
             session = self.provider.start()
             page = session.page
+            page_holder: dict[str, Any] = {"page": page}
             trace_started = self._start_playwright_trace(session, writer)
             sandbox_screenshot_path = self._write_sandbox_screenshot(page, writer)
             self._emit_runtime(
@@ -122,7 +123,9 @@ class CaseRunner:
                 self._wait_for_page_ready(writer, page, step_number=None, reason="open_system")
 
             for index, step in enumerate(steps, start=1):
-                result = self._run_step(page, writer, index, step, dsl)
+                page = _active_page(page_holder, page)
+                result = self._run_step(page, writer, index, step, dsl, page_holder=page_holder)
+                page = _active_page(page_holder, page)
                 results.append(result)
                 if result["status"] != "passed":
                     status = "failed"
@@ -213,7 +216,9 @@ class CaseRunner:
         step_number: int,
         step: dict[str, Any],
         dsl: dict[str, Any],
+        page_holder: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        page = _active_page(page_holder, page)
         started_at = _utc_now()
         action = str(step.get("action") or "")
         target = str(step.get("target") or step.get("selector") or "")
@@ -313,7 +318,8 @@ class CaseRunner:
         failure_analysis: dict[str, Any] | None = None
         candidates: list[dict[str, Any]] = []
         try:
-            outcome = self._execute_action(page, step, dsl, writer=writer, step_number=step_number)
+            outcome = self._execute_action(page, step, dsl, writer=writer, step_number=step_number, page_holder=page_holder)
+            page = _active_page(page_holder, page)
             page_ready = self._wait_for_page_ready(writer, page, step_number=step_number, reason="after_action")
             outcome["page_ready"] = page_ready
             if locatable_action:
@@ -370,6 +376,7 @@ class CaseRunner:
             fallback_reason = failure_type
             self._emit_failure_analysis_runtime(writer, step_number, action, target, failure_analysis)
         finally:
+            page = _active_page(page_holder, page)
             screenshot_path = self._write_screenshot(page, writer, step_number)
             dom_snapshot_path = self._write_dom_snapshot(page, writer, step_number)
             accessibility_snapshot_path = self._write_accessibility_snapshot(page, writer, step_number)
@@ -789,10 +796,11 @@ class CaseRunner:
         *,
         writer: ArtifactWriter | None = None,
         step_number: int | None = None,
+        page_holder: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         action = step.get("action")
         target = step.get("target") or step.get("selector") or ""
-        execution_context = self._handler_execution_context(writer, step_number, step, dsl)
+        execution_context = self._handler_execution_context(writer, step_number, step, dsl, page_holder=page_holder, current_page=page)
         operation_intent = str((step.get("operationIntent") or {}).get("intent") or "")
 
         if action == "open_url":
@@ -954,6 +962,9 @@ class CaseRunner:
         step_number: int | None,
         step: dict[str, Any],
         dsl: dict[str, Any],
+        *,
+        page_holder: dict[str, Any] | None = None,
+        current_page: Any | None = None,
     ) -> dict[str, Any]:
         execution_context: dict[str, Any] = {
             "step_number": step_number,
@@ -961,6 +972,31 @@ class CaseRunner:
             "vision_requested": bool((dsl.get("settings") or {}).get("visionFallbackEnabled")),
             "ability_resolution": step.get("abilityResolution") or {},
         }
+        if page_holder is not None:
+            execution_context["get_active_page"] = lambda: _active_page(page_holder, current_page)
+
+            def set_active_page(new_page: Any, metadata: dict[str, Any] | None = None) -> None:
+                page_holder["page"] = new_page
+                if writer is not None:
+                    page_info = _page_info(new_page)
+                    event = {
+                        "type": "active_page.changed",
+                        "step_number": step_number,
+                        "page": page_info,
+                        "metadata": metadata or {},
+                    }
+                    writer.append_jsonl("execution-trace.jsonl", event)
+                    self._emit_runtime(
+                        writer,
+                        "success",
+                        "active_page",
+                        "已切换到新打开的目标页面，后续截图和步骤将基于该页面。",
+                        "runner",
+                        {"step_number": step_number, "page": page_info},
+                    )
+
+            execution_context["set_active_page"] = set_active_page
+            execution_context["handle_security_interstitial"] = self._continue_security_interstitial
         if writer is not None:
             execution_context["emit_runtime"] = (
                 lambda message_type, phase, content, method, metadata: self._emit_runtime(
@@ -1304,6 +1340,31 @@ def _require_locator(result: Any) -> Any:
     if result.locator is None:
         raise RuntimeError(result.fallback_reason or result.reason)
     return result.locator
+
+
+def _active_page(page_holder: dict[str, Any] | None, fallback: Any) -> Any:
+    if isinstance(page_holder, dict):
+        page = page_holder.get("page")
+        if page is not None:
+            try:
+                if not page.is_closed():
+                    return page
+            except Exception:
+                return page
+    return fallback
+
+
+def _page_info(page: Any) -> dict[str, Any]:
+    info: dict[str, Any] = {}
+    try:
+        info["url"] = page.url
+    except PlaywrightError:
+        info["url"] = ""
+    try:
+        info["title"] = page.title()
+    except PlaywrightError:
+        info["title"] = ""
+    return info
 
 
 def _guard_error_summary(result: GuardResult, target: str) -> str:

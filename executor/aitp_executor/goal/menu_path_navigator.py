@@ -1,4 +1,5 @@
 import re
+import time
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -21,6 +22,7 @@ class NavigationResult:
     attemptedStrategies: list[dict[str, Any]] = field(default_factory=list)
     clickedElements: list[dict[str, Any]] = field(default_factory=list)
     successEvidence: list[str] = field(default_factory=list)
+    pageTransitions: list[dict[str, Any]] = field(default_factory=list)
     failureType: str | None = None
     reason: str = ""
     visionFallback: str | None = None
@@ -41,6 +43,7 @@ class NavigationResult:
                 "attemptedStrategies": self.attemptedStrategies,
                 "clickedElements": self.clickedElements,
                 "successEvidence": self.successEvidence,
+                "pageTransitions": self.pageTransitions,
                 "failureType": self.failureType,
                 "reason": self.reason,
                 "visionFallback": self.visionFallback,
@@ -122,11 +125,12 @@ class MenuPathNavigator:
             self._llm_disambiguation,
         ]:
             strategy_name = strategy.__name__.lstrip("_")
-            if strategy(page, path_segments, result, emit, debug, step_id):
-                if self._verify_goal(page, path_segments, result):
+            if strategy(page, path_segments, result, emit, debug, step_id, context):
+                active_page = _active_page(context, page)
+                if self._verify_goal(active_page, path_segments, result):
                     return self._pass(result, strategy_name, "菜单路径导航完成。", emit, step_id)
-                result.failureType = "navigation_goal_not_reached"
-                result.reason = f"已点击“{leaf}”，但没有检测到目标页面证据。"
+                result.failureType = "navigation_target_not_verified" if result.pageTransitions else "navigation_goal_not_reached"
+                result.reason = _target_not_verified_reason(active_page, leaf, result)
                 debug(
                     {
                         "stepId": step_id,
@@ -208,6 +212,7 @@ class MenuPathNavigator:
         emit: RuntimeEmitter,
         debug: DebugWriter,
         step_id: Any,
+        context: dict[str, Any],
     ) -> bool:
         if len(path_segments) < 3:
             return False
@@ -252,7 +257,7 @@ class MenuPathNavigator:
                 {"step_id": step_id, "segment": segment, "index": index},
             )
             before = _page_fingerprint(page)
-            page_count_before = _page_count(page)
+            pages_before = _context_pages(page)
             if not _click(locator):
                 failure_type = "menu_leaf_click_failed" if is_leaf else "menu_segment_click_failed"
                 result.failureType = failure_type
@@ -265,21 +270,24 @@ class MenuPathNavigator:
             wait_for_page_ready(page, settle_ms=500)
             after = _page_fingerprint(page)
             page_changed = before != after
-            page_count_after = _page_count(page)
+            new_page = _new_page_after_click(page, pages_before)
 
             if is_leaf:
-                evidence = _target_evidence(page, path_segments)
-                if page_count_after > page_count_before:
+                active_page = _prepare_navigation_target_page(new_page, page, path_segments, result, context, emit, step_id)
+                evidence = _target_evidence(active_page, path_segments)
+                if new_page is not None:
                     evidence.append("new_page_opened_after_leaf_click")
                 if page_changed:
                     evidence.append("page_changed_after_leaf_click")
-                if evidence:
+                target_verified = bool([item for item in evidence if item not in {"new_page_opened_after_leaf_click", "page_changed_after_leaf_click"}])
+                if target_verified:
                     result.successEvidence.extend(item for item in evidence if item not in result.successEvidence)
                     attempt["segmentResults"].append({"index": index, "segment": segment, "status": "clicked", "evidence": evidence})
                     debug({"stepId": step_id, "phase": "menu_path_attempt", **attempt})
                     return True
-                result.failureType = "navigation_goal_not_reached"
-                result.reason = f"已点击最终目标“{leaf}”，但没有检测到页面跳转、弹窗、新页面或目标页面特征。"
+                result.successEvidence.extend(item for item in evidence if item not in result.successEvidence)
+                result.failureType = "navigation_target_not_verified" if new_page is not None else "navigation_goal_not_reached"
+                result.reason = _target_not_verified_reason(active_page, leaf, result)
                 attempt["segmentResults"].append({"index": index, "segment": segment, "status": "clicked_without_goal_evidence"})
                 debug({"stepId": step_id, "phase": "menu_path_attempt", **attempt})
                 return False
@@ -307,6 +315,7 @@ class MenuPathNavigator:
         emit: RuntimeEmitter,
         debug: DebugWriter,
         step_id: Any,
+        context: dict[str, Any],
     ) -> bool:
         parent, leaf = path_segments[0], path_segments[-1]
         emit("progress", "navigation_path", f"正在查找一级菜单“{parent}”。", "menu_path_navigator", {"step_id": step_id})
@@ -353,19 +362,31 @@ class MenuPathNavigator:
         debug({"stepId": step_id, "phase": "menu_path_attempt", **attempt})
         emit("progress", "navigation_path", f"正在点击“{leaf}”。", "menu_path_navigator", {"step_id": step_id})
         before = _page_fingerprint(page)
+        pages_before = _context_pages(page)
         if not _click(child_locator):
             result.failureType = "menu_click_no_effect"
             result.reason = f"找到“{leaf}”，但点击失败。"
             return False
         result.clickedElements.append({"strategy": "left_menu_path", "text": leaf, "role": "child"})
         wait_for_page_ready(page)
-        if before == _page_fingerprint(page) and not _target_evidence(page, path_segments):
+        new_page = _new_page_after_click(page, pages_before)
+        active_page = _prepare_navigation_target_page(new_page, page, path_segments, result, context, emit, step_id)
+        if new_page is None and before == _page_fingerprint(page) and not _target_evidence(active_page, path_segments):
             result.failureType = "menu_click_no_effect"
             result.reason = f"点击“{leaf}”后页面没有明显变化。"
             return False
         return True
 
-    def _top_nav_path(self, page: Any, path_segments: list[str], result: NavigationResult, emit: RuntimeEmitter, debug: DebugWriter, step_id: Any) -> bool:
+    def _top_nav_path(
+        self,
+        page: Any,
+        path_segments: list[str],
+        result: NavigationResult,
+        emit: RuntimeEmitter,
+        debug: DebugWriter,
+        step_id: Any,
+        context: dict[str, Any],
+    ) -> bool:
         parent, leaf = path_segments[0], path_segments[-1]
         scope = _first_visible(page, ["header", ".top-nav", ".navbar", "nav", ".ant-menu-horizontal"])
         attempt = {"strategy": "top_nav_path", "parent": parent, "child": leaf, "parentFound": False, "childFound": False}
@@ -389,12 +410,23 @@ class MenuPathNavigator:
         attempt["childFound"] = True
         result.attemptedStrategies.append(attempt)
         debug({"stepId": step_id, "phase": "menu_path_attempt", **attempt})
+        pages_before = _context_pages(page)
         _click(child_locator)
         wait_for_page_ready(page)
+        _prepare_navigation_target_page(_new_page_after_click(page, pages_before), page, path_segments, result, context, emit, step_id)
         result.clickedElements.append({"strategy": "top_nav_path", "text": leaf, "role": "child"})
         return True
 
-    def _dashboard_card(self, page: Any, path_segments: list[str], result: NavigationResult, emit: RuntimeEmitter, debug: DebugWriter, step_id: Any) -> bool:
+    def _dashboard_card(
+        self,
+        page: Any,
+        path_segments: list[str],
+        result: NavigationResult,
+        emit: RuntimeEmitter,
+        debug: DebugWriter,
+        step_id: Any,
+        context: dict[str, Any],
+    ) -> bool:
         leaf = path_segments[-1]
         emit("progress", "navigation_path", f"正在查找“{leaf}”首页卡片或快捷入口。", "menu_path_navigator", {"step_id": step_id})
         scope = _first_visible(page, ["main", ".dashboard", ".workbench", ".content", ".ant-layout-content", ".el-main", "body"])
@@ -410,12 +442,23 @@ class MenuPathNavigator:
         attempt["found"] = True
         result.attemptedStrategies.append(attempt)
         debug({"stepId": step_id, "phase": "menu_path_attempt", **attempt})
+        pages_before = _context_pages(page)
         _click(locator)
         wait_for_page_ready(page)
+        _prepare_navigation_target_page(_new_page_after_click(page, pages_before), page, path_segments, result, context, emit, step_id)
         result.clickedElements.append({"strategy": "dashboard_card", "text": leaf})
         return True
 
-    def _menu_search(self, page: Any, path_segments: list[str], result: NavigationResult, emit: RuntimeEmitter, debug: DebugWriter, step_id: Any) -> bool:
+    def _menu_search(
+        self,
+        page: Any,
+        path_segments: list[str],
+        result: NavigationResult,
+        emit: RuntimeEmitter,
+        debug: DebugWriter,
+        step_id: Any,
+        context: dict[str, Any],
+    ) -> bool:
         leaf = path_segments[-1]
         attempt = {"strategy": "menu_search", "leaf": leaf, "searchFound": False, "resultFound": False}
         search = _first_visible(
@@ -452,12 +495,23 @@ class MenuPathNavigator:
         attempt["resultFound"] = True
         result.attemptedStrategies.append(attempt)
         debug({"stepId": step_id, "phase": "menu_path_attempt", **attempt})
+        pages_before = _context_pages(page)
         _click(result_locator)
         wait_for_page_ready(page)
+        _prepare_navigation_target_page(_new_page_after_click(page, pages_before), page, path_segments, result, context, emit, step_id)
         result.clickedElements.append({"strategy": "menu_search", "text": leaf})
         return True
 
-    def _iframe_menu(self, page: Any, path_segments: list[str], result: NavigationResult, emit: RuntimeEmitter, debug: DebugWriter, step_id: Any) -> bool:
+    def _iframe_menu(
+        self,
+        page: Any,
+        path_segments: list[str],
+        result: NavigationResult,
+        emit: RuntimeEmitter,
+        debug: DebugWriter,
+        step_id: Any,
+        context: dict[str, Any],
+    ) -> bool:
         parent, leaf = path_segments[0], path_segments[-1]
         for frame_index, frame in enumerate(page.frames):
             if frame == page.main_frame:
@@ -483,15 +537,26 @@ class MenuPathNavigator:
                 attempt["childFound"] = True
                 result.attemptedStrategies.append(attempt)
                 debug({"stepId": step_id, "phase": "menu_path_attempt", **attempt})
+                pages_before = _context_pages(page)
                 _click(child_locator)
                 wait_for_page_ready(page)
+                _prepare_navigation_target_page(_new_page_after_click(page, pages_before), page, path_segments, result, context, emit, step_id)
                 result.clickedElements.append({"strategy": "iframe_menu", "text": leaf, "frameIndex": frame_index})
                 return True
             except PlaywrightError:
                 result.attemptedStrategies.append(attempt)
         return False
 
-    def _llm_disambiguation(self, page: Any, path_segments: list[str], result: NavigationResult, emit: RuntimeEmitter, debug: DebugWriter, step_id: Any) -> bool:
+    def _llm_disambiguation(
+        self,
+        page: Any,
+        path_segments: list[str],
+        result: NavigationResult,
+        emit: RuntimeEmitter,
+        debug: DebugWriter,
+        step_id: Any,
+        context: dict[str, Any],
+    ) -> bool:
         leaf = path_segments[-1]
         observation = self.observer.observe(page)
         candidates = [
@@ -528,8 +593,10 @@ class MenuPathNavigator:
         locator = page.locator(llm_result.selector)
         if locator.count() == 0:
             return False
+        pages_before = _context_pages(page)
         _click(locator.first)
         wait_for_page_ready(page)
+        _prepare_navigation_target_page(_new_page_after_click(page, pages_before), page, path_segments, result, context, emit, step_id)
         result.clickedElements.append({"strategy": "llm_disambiguation", "selector": llm_result.selector})
         return True
 
@@ -537,8 +604,6 @@ class MenuPathNavigator:
         evidence = _target_evidence(page, path_segments)
         if evidence:
             result.successEvidence.extend(item for item in evidence if item not in result.successEvidence)
-            return True
-        if any(item in result.successEvidence for item in ["new_page_opened_after_leaf_click", "page_changed_after_leaf_click"]):
             return True
         return False
 
@@ -572,10 +637,11 @@ class MenuPathNavigator:
 def _target_evidence(page: Any, path_segments: list[str]) -> list[str]:
     leaf = path_segments[-1]
     parents = path_segments[:-1]
+    leaf_aliases = _leaf_aliases(leaf)
     evidence: list[str] = []
     try:
         title = page.title()
-        if leaf and leaf in title:
+        if any(alias and alias in title for alias in leaf_aliases):
             evidence.append("title_contains_leaf")
     except PlaywrightError:
         pass
@@ -591,7 +657,7 @@ def _target_evidence(page: Any, path_segments: list[str]) -> list[str]:
             locator = page.locator(selector)
             for index in range(min(locator.count(), 12)):
                 text = locator.nth(index).inner_text(timeout=800)
-                leaf_matches = _text_matches_segment(text, leaf)
+                leaf_matches = any(_text_matches_segment(text, alias) for alias in leaf_aliases)
                 parent_matches = all(parent in text or _text_matches_segment(text, parent) for parent in parents)
                 if leaf_matches and (label != "breadcrumb_contains_path" or parent_matches):
                     evidence.append(label)
@@ -614,6 +680,138 @@ def _target_evidence(page: Any, path_segments: list[str]) -> list[str]:
     if strong:
         return evidence
     return evidence if len(evidence) >= 2 else []
+
+
+def _prepare_navigation_target_page(
+    new_page: Any | None,
+    source_page: Any,
+    path_segments: list[str],
+    result: NavigationResult,
+    context: dict[str, Any],
+    emit: RuntimeEmitter,
+    step_id: Any,
+) -> Any:
+    if new_page is None:
+        return source_page
+
+    leaf = path_segments[-1] if path_segments else ""
+    transition: dict[str, Any] = {
+        "type": "new_page",
+        "reason": "leaf_click_opened_new_page",
+        "target": leaf,
+        "sourcePage": _page_snapshot(source_page),
+        "targetPageBeforeWait": _page_snapshot(new_page),
+    }
+    try:
+        new_page.bring_to_front()
+    except PlaywrightError:
+        transition["bringToFrontFailed"] = True
+
+    security_handler = context.get("handle_security_interstitial")
+    if callable(security_handler):
+        try:
+            if security_handler(new_page):
+                transition["securityInterstitialContinued"] = True
+        except Exception as exc:
+            transition["securityInterstitialError"] = str(exc)
+
+    try:
+        wait_for_page_ready(new_page, settle_ms=500)
+    except PlaywrightError as exc:
+        transition["waitError"] = str(exc)
+
+    transition["targetPage"] = _page_snapshot(new_page)
+    transition["targetEvidence"] = _target_evidence(new_page, path_segments)
+    result.pageTransitions.append(transition)
+    _set_active_page(context, new_page, transition)
+    emit(
+        "success" if transition["targetEvidence"] else "warning",
+        "navigation_page",
+        "检测到目标系统打开了新页面，已切换到新页面继续验证。"
+        if transition["targetEvidence"]
+        else "检测到目标系统打开了新页面，但尚未确认新页面已进入目标系统。",
+        "menu_path_navigator",
+        {"step_id": step_id, "pageTransition": transition},
+    )
+    return new_page
+
+
+def _active_page(context: dict[str, Any], fallback: Any) -> Any:
+    getter = context.get("get_active_page")
+    if callable(getter):
+        try:
+            page = getter()
+            if page is not None:
+                return page
+        except Exception:
+            return fallback
+    return fallback
+
+
+def _set_active_page(context: dict[str, Any], page: Any, transition: dict[str, Any]) -> None:
+    setter = context.get("set_active_page")
+    if callable(setter):
+        try:
+            setter(page, transition)
+        except Exception:
+            return
+
+
+def _target_not_verified_reason(page: Any, leaf: str, result: NavigationResult) -> str:
+    snapshot = _page_snapshot(page)
+    page_hint = f"当前页标题：{snapshot.get('title') or '-'}，URL：{snapshot.get('url') or '-'}。"
+    if result.pageTransitions:
+        return f"已点击最终目标“{leaf}”并检测到新页面，但新页面未出现目标系统证据。{page_hint}"
+    return f"已点击最终目标“{leaf}”，但没有检测到目标页面证据。{page_hint}"
+
+
+def _context_pages(page: Any) -> list[Any]:
+    try:
+        return list(page.context.pages)
+    except Exception:
+        return []
+
+
+def _new_page_after_click(page: Any, pages_before: list[Any], *, timeout_ms: int = 2_500) -> Any | None:
+    deadline = time.monotonic() + max(timeout_ms, 0) / 1000
+    before_ids = {id(item) for item in pages_before}
+    while True:
+        try:
+            for candidate in reversed(list(page.context.pages)):
+                if id(candidate) in before_ids:
+                    continue
+                try:
+                    if candidate.is_closed():
+                        continue
+                except PlaywrightError:
+                    continue
+                return candidate
+        except Exception:
+            return None
+        if time.monotonic() >= deadline:
+            return None
+        try:
+            page.wait_for_timeout(100)
+        except PlaywrightError:
+            return None
+    return None
+
+
+def _page_snapshot(page: Any) -> dict[str, Any]:
+    snapshot: dict[str, Any] = {}
+    try:
+        snapshot["url"] = page.url
+    except PlaywrightError:
+        snapshot["url"] = ""
+    try:
+        snapshot["title"] = page.title()
+    except PlaywrightError:
+        snapshot["title"] = ""
+    try:
+        snapshot["textLength"] = len(page.locator("body").inner_text(timeout=800))
+    except PlaywrightError:
+        snapshot["textLength"] = 0
+    return snapshot
 
 
 def _segment_transition_evidence(page: Any, segment: str, next_segment: str) -> list[str]:
@@ -727,6 +925,15 @@ def _page_count(page: Any) -> int:
         return len(page.context.pages)
     except Exception:
         return 1
+
+
+def _leaf_aliases(leaf: str) -> list[str]:
+    normalized = _normalize_label(leaf)
+    aliases = [leaf, normalized]
+    for prefix in ["中国石化", "中石化", "燕山石化", "燕山"]:
+        if normalized.startswith(prefix):
+            aliases.append(normalized.removeprefix(prefix))
+    return [item for item in dict.fromkeys(aliases) if item]
 
 
 def _normalize_label(value: str) -> str:

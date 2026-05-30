@@ -392,6 +392,48 @@ def test_login_goal_opens_portal_login_entry_before_resolving_form(page: Page, m
     assert outcome["auth_state"]["authState"] == "logged_in"
 
 
+def test_case_runner_uses_popup_page_for_navigation_evidence(page: Page, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PLAYWRIGHT_WAIT_NETWORK_IDLE", "false")
+    monkeypatch.setenv("PAGE_READY_TIMEOUT_MS", "1000")
+    page.set_content(
+        """
+        <header class="TopMenu">
+          <a>系统导航</a>
+          <a class="login1">测试用户</a>
+        </header>
+        <main class="HomeComponent">
+          <button role="tab" aria-selected="true">办公自动化(14)</button>
+          <button onclick="const w=window.open('about:blank', '_blank'); w.document.write('<!doctype html><title>中国石化公文管理系统</title><h1>中国石化公文管理系统</h1><main>业务首页 操作</main>'); w.document.close();">中国石化公文管理系统</button>
+        </main>
+        """
+    )
+    holder = {"page": page}
+    writer = ArtifactWriter("TEST-POPUP-NAVIGATION")
+
+    try:
+        result = CaseRunner()._run_step(
+            page,
+            writer,
+            3,
+            {
+                "id": "3",
+                "action": "navigate_path",
+                "target": "系统导航/办公自动化/中国石化公文管理系统",
+                "pathSegments": ["系统导航", "办公自动化", "中国石化公文管理系统"],
+                "preconditions": {"authState": "logged_in"},
+            },
+            {"settings": {}},
+            page_holder=holder,
+        )
+        assert result["status"] == "passed"
+        assert holder["page"] is not page
+        assert "中国石化公文管理系统" in writer.dom_snapshot_path(3).read_text(encoding="utf-8")
+        assert "active_page.changed" in writer.path("execution-trace.jsonl").read_text(encoding="utf-8")
+    finally:
+        if holder["page"] is not page:
+            holder["page"].close()
+
+
 def test_login_form_resolver_does_not_treat_portal_search_as_username(page: Page) -> None:
     page.set_content(
         """

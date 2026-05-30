@@ -124,6 +124,74 @@ def test_adaptive_portal_path_clicks_category_then_app(page: Page) -> None:
     assert any(item["text"] == "中国石化公文管理系统" for item in result.clickedElements)
 
 
+def test_adaptive_portal_path_switches_to_popup_target_page(page: Page) -> None:
+    page.set_content(
+        """
+        <header>
+          <button>系统导航</button>
+        </header>
+        <main>
+          <button role="tab" aria-selected="true">办公自动化(14)</button>
+          <button onclick="const w=window.open('about:blank', '_blank'); w.document.write('<!doctype html><title>中国石化公文管理系统</title><h1>中国石化公文管理系统</h1><main>业务首页 操作</main>'); w.document.close();">中国石化公文管理系统</button>
+        </main>
+        """
+    )
+    holder = {"page": page}
+
+    try:
+        result = MenuPathNavigator().navigate_path(
+            page,
+            "系统导航/办公自动化/中国石化公文管理系统",
+            ["系统导航", "办公自动化", "中国石化公文管理系统"],
+            {
+                "get_active_page": lambda: holder["page"],
+                "set_active_page": lambda new_page, _metadata: holder.__setitem__("page", new_page),
+            },
+        )
+        assert result.status == "passed"
+        assert holder["page"] is not page
+        assert result.pageTransitions
+        assert "new_page_opened_after_leaf_click" in result.successEvidence
+        assert any(item in result.successEvidence for item in ["title_contains_leaf", "page_heading_contains_leaf"])
+        assert holder["page"].locator("h1").inner_text() == "中国石化公文管理系统"
+    finally:
+        if holder["page"] is not page:
+            holder["page"].close()
+
+
+def test_adaptive_portal_path_fails_when_popup_target_is_not_verified(page: Page) -> None:
+    page.set_content(
+        """
+        <header>
+          <button>系统导航</button>
+        </header>
+        <main>
+          <button role="tab" aria-selected="true">办公自动化(14)</button>
+          <button onclick="const w=window.open('about:blank', '_blank'); w.document.write('<!doctype html><title>空白页</title><h1>加载中</h1>'); w.document.close();">中国石化公文管理系统</button>
+        </main>
+        """
+    )
+    holder = {"page": page}
+
+    try:
+        result = MenuPathNavigator().navigate_path(
+            page,
+            "系统导航/办公自动化/中国石化公文管理系统",
+            ["系统导航", "办公自动化", "中国石化公文管理系统"],
+            {
+                "get_active_page": lambda: holder["page"],
+                "set_active_page": lambda new_page, _metadata: holder.__setitem__("page", new_page),
+            },
+        )
+        assert result.status == "failed"
+        assert result.failureType == "navigation_target_not_verified"
+        assert holder["page"] is not page
+        assert result.pageTransitions
+    finally:
+        if holder["page"] is not page:
+            holder["page"].close()
+
+
 def test_missing_child_does_not_fail_as_vision_not_configured(page: Page) -> None:
     page.set_content(
         """
