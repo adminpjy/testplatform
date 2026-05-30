@@ -35,15 +35,13 @@ class OperationIntentClassifier:
         if action_text == "navigate_path" or parse_menu_path(target_text):
             return _result("navigate_path", "navigation", 0.96, "目标包含菜单路径或 action=navigate_path。", [target_text])
 
+        login_hit = _login_expression(target_text) or _login_expression(str(stepName or ""))
+        if login_hit and action_text in {"", "business_goal", "click", "confirm_dialog", "submit", "navigate_menu"}:
+            return _result("login", "authentication", 0.94, "目标明确指向登录系统或登录提交。", [login_hit])
+
         action_intent = _intent_from_action(action_text, target_text)
         if action_intent is not None:
             return action_intent
-
-        login_hit = _login_expression(target_text) or _login_expression(str(stepName or ""))
-        if action_text == "business_goal" and login_hit:
-            return _result("login", "authentication", 0.94, "目标明确指向登录系统。", [login_hit])
-        if not action_text and login_hit:
-            return _result("login", "authentication", 0.9, "自然语言目标明确指向登录系统。", [login_hit])
 
         expression_rules = [
             ("view_flow", "approval", 0.9, ["查看审批流程", "审批流程", "流程图", "审批记录"]),

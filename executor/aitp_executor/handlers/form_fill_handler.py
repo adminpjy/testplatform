@@ -5,6 +5,7 @@ from executor.aitp_executor.handlers.base import CommonOperationHandler, handler
 from executor.aitp_executor.goal.login_form_resolver import LoginFormResolver
 from executor.aitp_executor.locator.auto_form_filler import AutoFormFiller
 from executor.aitp_executor.locator.element_locator import ElementLocator
+from executor.aitp_executor.observer.auth_state_detector import AuthStateDetector
 from executor.aitp_executor.runner.page_waiter import wait_for_page_ready
 
 
@@ -19,11 +20,13 @@ class FormFillHandler(CommonOperationHandler):
         locator: ElementLocator | None = None,
         form_filler: AutoFormFiller | None = None,
         login_resolver: LoginFormResolver | None = None,
+        auth_detector: AuthStateDetector | None = None,
     ) -> None:
         super().__init__()
         self.locator = locator or ElementLocator()
         self.form_filler = form_filler or AutoFormFiller()
         self.login_resolver = login_resolver or LoginFormResolver()
+        self.auth_detector = auth_detector or AuthStateDetector()
 
     def fill_form(self, page: Any, *, step: dict[str, Any], dsl: dict[str, Any] | None = None, execution_context: dict[str, Any] | None = None) -> dict[str, Any]:
         ctx = self.context(step, dsl, execution_context)
@@ -81,6 +84,15 @@ class FormFillHandler(CommonOperationHandler):
 
     def _fill_login_form(self, page: Any, *, step: dict[str, Any], test_data: dict[str, Any], ctx: Any) -> dict[str, Any]:
         opened_login_entry = False
+        auth_result = self.auth_detector.detect_auth_state(page)
+        if auth_result.authState == "logged_in":
+            return {
+                "filled": [],
+                "defaults_used": {},
+                "skipped": [{"label": "login_form", "reason": "already_authenticated"}],
+                "opened_login_entry": False,
+                "strategy": "already_authenticated",
+            }
         form = self.login_resolver.resolve(page)
         if form.username_locator is None or form.password_locator is None:
             opened_login_entry = self._open_login_entry(page, ctx)

@@ -2,7 +2,28 @@ import re
 from typing import Any
 
 
-PATH_SEPARATORS_PATTERN = r"\s*(?:/|>|-|→|\\)\s*"
+NON_HYPHEN_PATH_SEPARATORS_PATTERN = r"\s*(?:/|>|→|\\)\s*"
+PORTAL_ROOTS = {"系统导航"}
+PORTAL_CATEGORY_HINTS = {
+    "我的应用",
+    "办公自动化",
+    "财务",
+    "财务管理",
+    "生产",
+    "生产经营",
+    "设备",
+    "设备管理",
+    "采购",
+    "采购管理",
+    "销售",
+    "销售管理",
+    "安环",
+    "安全环保",
+    "综合",
+    "综合管理",
+    "人力资源",
+    "信息化",
+}
 
 
 class DslPostProcessor:
@@ -28,6 +49,10 @@ class DslPostProcessor:
         target = str(current.get("target") or "")
 
         if action == "open_url":
+            _remove_auth_precondition(current)
+            return current
+
+        if _is_login_transition_wait(current):
             _remove_auth_precondition(current)
             return current
 
@@ -61,7 +86,7 @@ class DslPostProcessor:
             segments = _path_segments(current.get("pathSegments") or current.get("path_segments") or target)
             if len(segments) >= 2:
                 current["pathSegments"] = segments
-                current["navigationType"] = current.get("navigationType") or "menu_path"
+                current["navigationType"] = current.get("navigationType") or _navigation_type_for_segments(segments)
                 _ensure_navigation_defaults(current, segments)
             _ensure_auth_precondition(current)
             return current
@@ -72,7 +97,7 @@ class DslPostProcessor:
                 _remember_original(current, action, target, "target contains menu path separator")
                 current["action"] = "navigate_path"
                 current["pathSegments"] = segments
-                current["navigationType"] = "menu_path"
+                current["navigationType"] = _navigation_type_for_segments(segments)
                 current["readableDescription"] = f"菜单路径导航：{' → '.join(segments)}"
                 _ensure_navigation_defaults(current, segments)
         _ensure_auth_precondition(current)
@@ -89,17 +114,71 @@ def parse_menu_path(target: str) -> list[str]:
 
 def _path_segments(value: Any) -> list[str]:
     if isinstance(value, list):
-        return [_clean_segment(str(item), index) for index, item in enumerate(value) if _clean_segment(str(item), index)]
+        cleaned_items = [_clean_segment(str(item), index) for index, item in enumerate(value) if _clean_segment(str(item), index)]
+        if len(cleaned_items) == 1:
+            return _path_segments_from_text(cleaned_items[0]) or cleaned_items
+        flattened: list[str] = []
+        for item in cleaned_items:
+            nested = _path_segments_from_text(item)
+            flattened.extend(nested or [item])
+        return _normalize_portal_segments(flattened)
+    return _path_segments_from_text(str(value or ""))
+
+
+def _path_segments_from_text(value: str) -> list[str]:
     text = str(value or "").strip()
     if not text or "://" in text:
         return []
     if not re.search(r"[/>\-→\\]", text):
         return []
-    return [
+    if re.search(r"[/>\u2192\\]", text):
+        return _normalize_portal_segments(
+            [
+                cleaned
+                for index, segment in enumerate(re.split(NON_HYPHEN_PATH_SEPARATORS_PATTERN, text))
+                if (cleaned := _clean_segment(segment, index))
+            ]
+        )
+    if "-" in text:
+        return _split_hyphen_path(text)
+    return []
+
+
+def _split_hyphen_path(text: str) -> list[str]:
+    parts = [
         cleaned
-        for index, segment in enumerate(re.split(PATH_SEPARATORS_PATTERN, text))
+        for index, segment in enumerate(re.split(r"\s*-\s*", text))
         if (cleaned := _clean_segment(segment, index))
     ]
+    if len(parts) < 2:
+        return []
+    return _normalize_portal_segments(parts)
+
+
+def _normalize_portal_segments(segments: list[str]) -> list[str]:
+    if len(segments) < 3 or segments[0] not in PORTAL_ROOTS:
+        return segments
+    category_index = 1
+    for index, segment in enumerate(segments[1:4], start=1):
+        if _segment_base(segment) in PORTAL_CATEGORY_HINTS:
+            category_index = index
+            break
+    root = segments[0]
+    category = segments[category_index]
+    app_name = "-".join(segments[category_index + 1 :]).strip()
+    if not app_name:
+        return segments
+    return [root, category, app_name]
+
+
+def _segment_base(segment: str) -> str:
+    return re.sub(r"\s*[（(]\d+[）)]\s*$", "", segment).strip()
+
+
+def _navigation_type_for_segments(segments: list[str]) -> str:
+    if len(segments) >= 3 and segments[0] in PORTAL_ROOTS:
+        return "portal_app_path"
+    return "menu_path"
 
 
 def _clean_segment(segment: str, index: int) -> str:
@@ -161,11 +240,28 @@ def _is_login_step(step: dict[str, Any]) -> bool:
     intent = str(step.get("intent") or (step.get("operationIntent") or {}).get("intent") or "").lower()
     description = str(step.get("description") or step.get("readableDescription") or "")
     combined = f"{target} {description}".lower()
+    if any(token in target for token in ["退出登录", "注销登录", "登出"]):
+        return False
     if intent in {"login", "login_system", "username_password_login"}:
         return True
     if "登录" in combined or "登陆" in combined or "login" in combined or "sign in" in combined:
         return action in {"business_goal", "click", "submit", "fill_form", "auto_fill_form"}
     return False
+
+
+def _is_login_transition_wait(step: dict[str, Any]) -> bool:
+    if str(step.get("action") or "") != "wait":
+        return False
+    context_text = _flatten(
+        {
+            "target": step.get("target"),
+            "description": step.get("description"),
+            "readableDescription": step.get("readableDescription"),
+            "stepName": step.get("stepName") or step.get("step_name") or step.get("name"),
+        }
+    )
+    compact = re.sub(r"\s+", "", context_text)
+    return any(token in compact for token in ["登录后页面稳定", "登陆后页面稳定", "登录后", "登陆后", "登录完成", "登陆完成"])
 
 
 def _is_brittle_login_success_assertion(step: dict[str, Any], recently_login_step: bool) -> bool:
@@ -310,6 +406,8 @@ def _requires_auth(step: dict[str, Any]) -> bool:
     target = str(step.get("target") or "")
     intent = str(step.get("intent") or (step.get("operationIntent") or {}).get("intent") or "")
     if action == "open_url":
+        return False
+    if _is_login_transition_wait(step):
         return False
     if _is_login_step(step):
         return False

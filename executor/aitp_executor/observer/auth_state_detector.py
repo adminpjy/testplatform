@@ -96,6 +96,7 @@ class AuthStateDetector:
         login_form = _login_form_state(page, lower)
         failure_evidence = _matching_markers(lower, LOGIN_FAILURE_MARKERS)
         manual_evidence = _matching_markers(lower, MANUAL_ACTION_MARKERS)
+        challenge_evidence = _auth_challenge_evidence(page, lower)
         interruption_evidence = _matching_markers(lower, LOW_RISK_INTERRUPTION_MARKERS)
         success_evidence = _success_evidence(page, lower, url, title, login_form)
         remaining_retries = _extract_remaining_retries(text)
@@ -107,6 +108,20 @@ class AuthStateDetector:
                 evidence=success_evidence,
                 shouldContinue=True,
                 reason="main application evidence is visible and login form disappeared",
+            )
+
+        if challenge_evidence:
+            evidence = [*challenge_evidence, *failure_evidence, *login_form["evidence"]]
+            return AuthStateResult(
+                authState="login_requires_manual_action",
+                confidence=0.9,
+                failureType="login_captcha_required",
+                evidence=list(dict.fromkeys(evidence)),
+                remainingRetries=remaining_retries,
+                shouldStopProtectedSteps=True,
+                requiresHumanAction=True,
+                shouldContinue=False,
+                reason="visible captcha, OTP, SMS code, or MFA field requires human action",
             )
 
         if failure_evidence and login_form["password_visible"] and login_form["submit_visible"]:
@@ -289,6 +304,30 @@ def _login_submit_visible(page: Any) -> bool:
         except PlaywrightError:
             continue
     return _any_visible(page, ["button[type='submit']", "input[type='submit']", ".login-btn", ".login-button"])
+
+
+def _auth_challenge_evidence(page: Any, lower_text: str) -> list[str]:
+    evidence: list[str] = []
+    selectors = [
+        "input[name*='captcha' i]",
+        "input[id*='captcha' i]",
+        "input[placeholder*='captcha' i]",
+        "input[placeholder*='验证码']",
+        "input[name*='otp' i]",
+        "input[id*='otp' i]",
+        "input[placeholder*='otp' i]",
+        "input[name*='sms' i]",
+        "input[id*='sms' i]",
+        "input[placeholder*='短信']",
+        "input[placeholder*='动态码']",
+        "input[placeholder*='一次性密码']",
+        "input[placeholder*='one-time' i]",
+    ]
+    if _any_visible(page, selectors):
+        evidence.append("visible captcha/otp/sms input")
+    if evidence and any(token in lower_text for token in ["验证码", "captcha", "otp", "one-time password", "短信", "动态码", "二次认证", "mfa"]):
+        return evidence
+    return evidence
 
 
 def _success_evidence(page: Any, lower_text: str, url: str, title: str, login_form: dict[str, Any]) -> list[str]:

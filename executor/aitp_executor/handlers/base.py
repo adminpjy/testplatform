@@ -185,15 +185,71 @@ def locator_outcome(result: Any, **extra: Any) -> dict[str, Any]:
 
 def path_segments(value: Any) -> list[str]:
     if isinstance(value, list):
-        return [clean_segment(str(item), index) for index, item in enumerate(value) if clean_segment(str(item), index)]
+        cleaned_items = [clean_segment(str(item), index) for index, item in enumerate(value) if clean_segment(str(item), index)]
+        if len(cleaned_items) == 1:
+            return _path_segments_from_text(cleaned_items[0]) or cleaned_items
+        flattened: list[str] = []
+        for item in cleaned_items:
+            nested = _path_segments_from_text(item)
+            flattened.extend(nested or [item])
+        return _normalize_portal_path_segments(flattened)
+    return _path_segments_from_text(str(value or ""))
+
+
+def _path_segments_from_text(value: str) -> list[str]:
     text = str(value or "").strip()
     if not text or "://" in text or not re.search(r"[/>\-→\\]", text):
         return []
-    return [
-        cleaned
-        for index, segment in enumerate(re.split(r"\s*(?:/|>|-|→|\\)\s*", text))
-        if (cleaned := clean_segment(segment, index))
-    ]
+    if re.search(r"[/>\u2192\\]", text):
+        return _normalize_portal_path_segments(
+            [
+                cleaned
+                for index, segment in enumerate(re.split(r"\s*(?:/|>|→|\\)\s*", text))
+                if (cleaned := clean_segment(segment, index))
+            ]
+        )
+    if "-" in text:
+        return _normalize_portal_path_segments(
+            [
+                cleaned
+                for index, segment in enumerate(re.split(r"\s*-\s*", text))
+                if (cleaned := clean_segment(segment, index))
+            ]
+        )
+    return []
+
+
+def _normalize_portal_path_segments(segments: list[str]) -> list[str]:
+    if len(segments) < 3 or segments[0] != "系统导航":
+        return segments
+    category_index = 1
+    for index, segment in enumerate(segments[1:4], start=1):
+        if re.sub(r"\s*[（(]\d+[）)]\s*$", "", segment).strip() in {
+            "我的应用",
+            "办公自动化",
+            "财务",
+            "财务管理",
+            "生产",
+            "生产经营",
+            "设备",
+            "设备管理",
+            "采购",
+            "采购管理",
+            "销售",
+            "销售管理",
+            "安环",
+            "安全环保",
+            "综合",
+            "综合管理",
+            "人力资源",
+            "信息化",
+        }:
+            category_index = index
+            break
+    app_name = "-".join(segments[category_index + 1 :]).strip()
+    if not app_name:
+        return segments
+    return [segments[0], segments[category_index], app_name]
 
 
 def clean_segment(segment: str, index: int) -> str:

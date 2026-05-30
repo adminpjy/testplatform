@@ -31,6 +31,10 @@ def test_business_intent_recognizes_navigation_path() -> None:
     assert BusinessIntentNormalizer().normalize(action="business_goal", target="工作台 > 我的待办").path_segments == ["工作台", "我的待办"]
     assert BusinessIntentNormalizer().normalize(action="navigate_menu", target="工作台 → 我的待办").path_segments == ["工作台", "我的待办"]
     assert BusinessIntentNormalizer().normalize(action="business_goal", target="工作台 - 我的待办").path_segments == ["工作台", "我的待办"]
+    assert BusinessIntentNormalizer().normalize(
+        action="business_goal",
+        target="系统导航-办公自动化-燕山业务流程管理系统-BPM",
+    ).path_segments == ["系统导航", "办公自动化", "燕山业务流程管理系统-BPM"]
 
 
 def test_left_menu_path_success(page: Page) -> None:
@@ -90,6 +94,34 @@ def test_dashboard_card_fallback_success(page: Page) -> None:
     result = MenuPathNavigator().navigate_path(page, "工作台/我的待办", ["工作台", "我的待办"])
     assert result.status == "passed"
     assert any(item["strategy"] == "dashboard_card" and item["found"] for item in result.attemptedStrategies)
+
+
+def test_adaptive_portal_path_clicks_category_then_app(page: Page) -> None:
+    page.set_content(
+        """
+        <header>
+          <button onclick="document.querySelector('#categories').hidden=false">系统导航</button>
+        </header>
+        <main>
+          <aside id="categories" hidden>
+            <button
+              role="tab"
+              onclick="this.setAttribute('aria-selected', 'true'); document.querySelector('#apps').innerHTML='<button class=app-card onclick=&quot;document.querySelector(\\'main\\').innerHTML=\\'<h1>中国石化公文管理系统</h1><p>操作</p>\\'&quot;>中国石化公文管理系统</button>'"
+            >办公自动化(14)</button>
+          </aside>
+          <section id="apps"></section>
+        </main>
+        """
+    )
+    result = MenuPathNavigator().navigate_path(
+        page,
+        "系统导航-办公自动化-中国石化公文管理系统",
+        ["系统导航", "办公自动化", "中国石化公文管理系统"],
+    )
+    assert result.status == "passed"
+    assert any(item["strategy"] == "adaptive_segment_path" and item.get("status") == "passed" for item in result.attemptedStrategies)
+    assert any(item["text"] == "办公自动化" for item in result.clickedElements)
+    assert any(item["text"] == "中国石化公文管理系统" for item in result.clickedElements)
 
 
 def test_missing_child_does_not_fail_as_vision_not_configured(page: Page) -> None:

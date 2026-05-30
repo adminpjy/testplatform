@@ -77,6 +77,13 @@ class ProtectedStepGuard:
             )
 
         if auth_result.authState == "login_requires_manual_action":
+            if auth_result.failureType == "login_captcha_required":
+                return _blocked(
+                    auth_result,
+                    failure_type="protected_step_blocked_by_auth_challenge",
+                    root_cause="login_captcha_required",
+                    reason="登录流程出现验证码、OTP、短信验证码或二次认证，受保护业务步骤已阻断。",
+                )
             return _blocked(
                 auth_result,
                 failure_type="login_requires_manual_action",
@@ -153,6 +160,8 @@ def step_requires_auth(step: dict[str, Any]) -> bool:
     action = str(step.get("action") or "")
     if action == "open_url":
         return False
+    if _is_login_flow_step(step):
+        return False
 
     preconditions = step.get("preconditions")
     if isinstance(preconditions, dict) and preconditions.get("authState") == "logged_in":
@@ -162,8 +171,6 @@ def step_requires_auth(step: dict[str, Any]) -> bool:
 
     target = str(step.get("target") or "")
     intent = str(step.get("intent") or (step.get("operationIntent") or {}).get("intent") or "")
-    if action == "business_goal" and _is_login_target(target, intent):
-        return False
     if action in AUTH_REQUIRED_ACTIONS:
         return True
     if action == "business_goal":
@@ -171,9 +178,37 @@ def step_requires_auth(step: dict[str, Any]) -> bool:
     return intent in AUTH_REQUIRED_INTENTS
 
 
+def _is_login_flow_step(step: dict[str, Any]) -> bool:
+    action = str(step.get("action") or "")
+    target = str(step.get("target") or "")
+    intent = str(step.get("intent") or (step.get("operationIntent") or {}).get("intent") or "")
+    description = str(step.get("description") or step.get("readableDescription") or step.get("name") or step.get("step_name") or "")
+    if _is_login_transition_wait(action, target, description):
+        return True
+    if _is_login_target(f"{target} {description}", intent):
+        return action in {"business_goal", "click", "confirm_dialog", "submit", "fill_form", "auto_fill_form", "wait"}
+    return False
+
+
+def _is_login_transition_wait(action: str, target: str, description: str) -> bool:
+    if action != "wait":
+        return False
+    compact = f"{target}{description}".replace(" ", "")
+    return any(token in compact for token in ["登录后页面稳定", "登陆后页面稳定", "登录后", "登陆后", "登录完成", "登陆完成"])
+
+
 def _is_login_target(target: str, intent: str) -> bool:
     lower = target.strip().lower().replace(" ", "")
-    return "登录" in target or lower in {"login", "signin"} or intent in {"login", "login_system", "username_password_login"}
+    if any(token in target for token in ["退出登录", "注销登录", "登出"]):
+        return False
+    return (
+        "登录" in target
+        or "登陆" in target
+        or "login" in lower
+        or "signin" in lower
+        or "sign-in" in lower
+        or intent in {"login", "login_system", "username_password_login"}
+    )
 
 
 def _blocked(auth_result: AuthStateResult, *, failure_type: str, root_cause: str, reason: str) -> GuardResult:

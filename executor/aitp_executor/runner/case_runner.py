@@ -801,6 +801,9 @@ class CaseRunner:
             self._continue_security_interstitial(page)
             return _outcome("url", str(url), 1.0, "url opened")
 
+        if _is_login_submit_step(step):
+            return self._execute_login_submit(page, step, dsl, execution_context=execution_context)
+
         if action == "input":
             if operation_intent in {"select_date", "select_date_range"}:
                 return self.date_picker_handler.select_date(page, step=step, dsl=dsl, execution_context=execution_context)
@@ -875,12 +878,55 @@ class CaseRunner:
                 return self.navigation_handler.execute(page, step=step, dsl=dsl, execution_context=execution_context)
             goal_step = dict(step)
             credentials = dict(dsl.get("credentials") or {})
+            test_data = dsl.get("testData") or {}
+            if isinstance(test_data, dict):
+                credentials.update({key: value for key, value in test_data.items() if key in {"username", "用户名", "账号", "登录名", "password", "密码", "口令"} and value not in (None, "")})
             credentials.update(dict(step.get("credentials") or {}))
             if credentials:
                 goal_step["credentials"] = credentials
             return self.goal_executor.execute(page, target=str(target), step=goal_step, execution_context=execution_context)
 
         raise ValueError(f"Unsupported DSL action: {action}")
+
+    def _execute_login_submit(
+        self,
+        page: Any,
+        step: dict[str, Any],
+        dsl: dict[str, Any],
+        *,
+        execution_context: dict[str, Any],
+    ) -> dict[str, Any]:
+        auth_before = self.goal_executor.login_verifier.detector.detect_auth_state(page, execution_context=execution_context)
+        if auth_before.authState == "logged_in":
+            outcome = _outcome("already_authenticated", "logged_in", auth_before.confidence, "当前已经处于登录后的系统页面。")
+            outcome["auth_state"] = auth_before.as_dict()
+            outcome["verified"] = True
+            return outcome
+
+        target = str(step.get("target") or "登录")
+        form = self.goal_executor.login_resolver.resolve(page)
+        clicked_ref = "login_submit"
+        candidates = form.candidates
+        if form.submit_locator is not None:
+            form.submit_locator.click()
+            clicked_ref = "login_form_submit"
+        else:
+            locator_result = self.element_locator.locate(page, action="click", target=target, step=step)
+            _require_locator(locator_result).click()
+            clicked_ref = locator_result.element_ref
+            candidates = locator_result.candidates
+
+        auth_result = self.goal_executor.login_verifier.verify_after_submit(page, execution_context)
+        outcome = _outcome(
+            "login_submit",
+            clicked_ref,
+            max(auth_result.confidence, 0.86),
+            f"登录提交已执行；login_result:{auth_result.authState}:{auth_result.reason}",
+        )
+        outcome["auth_state"] = auth_result.as_dict()
+        outcome["verified"] = auth_result.authState == "logged_in"
+        outcome["candidates"] = candidates
+        return outcome
 
     def _execute_navigation_path(
         self,
@@ -1351,12 +1397,44 @@ def _skipped_step_result(step_number: int, step: dict[str, Any], *, reason: str)
 
 def _is_login_goal_step(step: dict[str, Any]) -> bool:
     action = str(step.get("action") or "")
-    if action != "business_goal":
+    target = str(step.get("target") or step.get("name") or step.get("step_name") or "")
+    intent = str((step.get("operationIntent") or {}).get("intent") or step.get("intent") or "")
+    description = str(step.get("description") or step.get("readableDescription") or "")
+    if action == "wait" and _is_login_transition_wait(target, description):
+        return True
+    return action in {"business_goal", "click", "confirm_dialog", "submit", "fill_form", "auto_fill_form"} and _is_login_target_text(
+        f"{target} {description}",
+        intent,
+    )
+
+
+def _is_login_submit_step(step: dict[str, Any]) -> bool:
+    action = str(step.get("action") or "")
+    if action not in {"click", "confirm_dialog", "submit"}:
         return False
     target = str(step.get("target") or step.get("name") or step.get("step_name") or "")
     intent = str((step.get("operationIntent") or {}).get("intent") or step.get("intent") or "")
-    compact = target.strip().lower().replace(" ", "")
-    return "登录" in target or compact in {"login", "signin", "sign-in"} or intent in {"login", "login_system", "username_password_login"}
+    description = str(step.get("description") or step.get("readableDescription") or "")
+    return _is_login_target_text(f"{target} {description}", intent)
+
+
+def _is_login_transition_wait(target: str, description: str) -> bool:
+    compact = f"{target}{description}".replace(" ", "")
+    return any(token in compact for token in ["登录后页面稳定", "登陆后页面稳定", "登录后", "登陆后", "登录完成", "登陆完成"])
+
+
+def _is_login_target_text(text: str, intent: str) -> bool:
+    compact = text.strip().lower().replace(" ", "")
+    if any(token in text for token in ["退出登录", "注销登录", "登出"]):
+        return False
+    return (
+        "登录" in text
+        or "登陆" in text
+        or "login" in compact
+        or "signin" in compact
+        or "sign-in" in compact
+        or intent in {"login", "login_system", "username_password_login"}
+    )
 
 
 def _redact_step(step: dict[str, Any]) -> dict[str, Any]:
@@ -1386,15 +1464,17 @@ def _normalize_runtime_dsl(dsl: dict[str, Any]) -> dict[str, Any]:
         segments = _runtime_path_segments(current.get("pathSegments") or target)
         if action == "navigate_path" and len(segments) >= 2:
             current["pathSegments"] = segments
-            current["navigationType"] = current.get("navigationType") or "menu_path"
+            current["navigationType"] = current.get("navigationType") or ("portal_app_path" if len(segments) >= 3 and segments[0] == "系统导航" else "menu_path")
         elif action in {"business_goal", "navigate_menu", "click"} and len(segments) >= 2:
             current["originalAction"] = action
             current["originalTarget"] = target
             current["action"] = "navigate_path"
             current["pathSegments"] = segments
-            current["navigationType"] = "menu_path"
+            current["navigationType"] = "portal_app_path" if len(segments) >= 3 and segments[0] == "系统导航" else "menu_path"
             current["normalizedBy"] = "executor_runtime"
-        if step_requires_auth(current):
+        if _is_login_goal_step(current):
+            current.pop("preconditions", None)
+        elif step_requires_auth(current):
             current["preconditions"] = {"authState": "logged_in"}
         steps.append(current)
     normalized["steps"] = steps
@@ -1403,15 +1483,79 @@ def _normalize_runtime_dsl(dsl: dict[str, Any]) -> dict[str, Any]:
 
 def _runtime_path_segments(value: Any) -> list[str]:
     if isinstance(value, list):
-        return [_clean_runtime_segment(str(item), index) for index, item in enumerate(value) if _clean_runtime_segment(str(item), index)]
+        cleaned_items = [
+            _clean_runtime_segment(str(item), index)
+            for index, item in enumerate(value)
+            if _clean_runtime_segment(str(item), index)
+        ]
+        if len(cleaned_items) == 1:
+            return _runtime_path_segments_from_text(cleaned_items[0]) or cleaned_items
+        flattened: list[str] = []
+        for item in cleaned_items:
+            nested = _runtime_path_segments_from_text(item)
+            flattened.extend(nested or [item])
+        return _normalize_runtime_portal_segments(flattened)
+    return _runtime_path_segments_from_text(str(value or ""))
+
+
+def _runtime_path_segments_from_text(value: str) -> list[str]:
     text = str(value or "").strip()
     if not text or "://" in text or not re.search(r"[/>\-→\\]", text):
         return []
-    return [
-        cleaned
-        for index, segment in enumerate(re.split(r"\s*(?:/|>|-|→|\\)\s*", text))
-        if (cleaned := _clean_runtime_segment(segment, index))
-    ]
+    if re.search(r"[/>\u2192\\]", text):
+        return _normalize_runtime_portal_segments(
+            [
+                cleaned
+                for index, segment in enumerate(re.split(r"\s*(?:/|>|→|\\)\s*", text))
+                if (cleaned := _clean_runtime_segment(segment, index))
+            ]
+        )
+    if "-" in text:
+        return _normalize_runtime_portal_segments(
+            [
+                cleaned
+                for index, segment in enumerate(re.split(r"\s*-\s*", text))
+                if (cleaned := _clean_runtime_segment(segment, index))
+            ]
+        )
+    return []
+
+
+def _normalize_runtime_portal_segments(segments: list[str]) -> list[str]:
+    if len(segments) < 3 or segments[0] != "系统导航":
+        return segments
+    category_index = 1
+    for index, segment in enumerate(segments[1:4], start=1):
+        if _runtime_segment_base(segment) in {
+            "我的应用",
+            "办公自动化",
+            "财务",
+            "财务管理",
+            "生产",
+            "生产经营",
+            "设备",
+            "设备管理",
+            "采购",
+            "采购管理",
+            "销售",
+            "销售管理",
+            "安环",
+            "安全环保",
+            "综合",
+            "综合管理",
+            "人力资源",
+            "信息化",
+        }:
+            category_index = index
+            break
+    app_name = "-".join(segments[category_index + 1 :]).strip()
+    if not app_name:
+        return segments
+    return [segments[0], segments[category_index], app_name]
+
+
+def _runtime_segment_base(segment: str) -> str:
+    return re.sub(r"\s*[（(]\d+[）)]\s*$", "", segment).strip()
 
 
 def _clean_runtime_segment(segment: str, index: int) -> str:

@@ -113,6 +113,7 @@ class MenuPathNavigator:
             return self._pass(result, "already_on_target_page", "当前页面已经是目标页面。", emit, step_id)
 
         for strategy in [
+            self._adaptive_segment_path,
             self._left_menu_path,
             self._top_nav_path,
             self._dashboard_card,
@@ -197,6 +198,105 @@ class MenuPathNavigator:
         if evidence:
             result.successEvidence.extend(evidence)
             return True
+        return False
+
+    def _adaptive_segment_path(
+        self,
+        page: Any,
+        path_segments: list[str],
+        result: NavigationResult,
+        emit: RuntimeEmitter,
+        debug: DebugWriter,
+        step_id: Any,
+    ) -> bool:
+        if len(path_segments) < 3:
+            return False
+
+        leaf = path_segments[-1]
+        attempt: dict[str, Any] = {"strategy": "adaptive_segment_path", "segments": path_segments, "segmentResults": []}
+        result.attemptedStrategies.append(attempt)
+        emit(
+            "progress",
+            "navigation_path",
+            f"正在按路径逐级导航：{' → '.join(path_segments)}。",
+            "menu_path_navigator",
+            {"step_id": step_id, "pathSegments": path_segments},
+        )
+
+        for index, segment in enumerate(path_segments):
+            next_segment = path_segments[index + 1] if index + 1 < len(path_segments) else ""
+            is_leaf = index == len(path_segments) - 1
+            if not is_leaf:
+                ready_evidence = _segment_transition_evidence(page, segment, next_segment)
+                if _segment_transition_reached(ready_evidence, page_changed=False):
+                    attempt["segmentResults"].append(
+                        {"index": index, "segment": segment, "status": "already_ready", "evidence": ready_evidence}
+                    )
+                    result.successEvidence.extend(item for item in ready_evidence if item not in result.successEvidence)
+                    continue
+
+            locator = _find_text(page.locator("body"), segment)
+            if locator is None:
+                failure_type = "menu_leaf_not_found" if is_leaf else "menu_segment_not_found"
+                result.failureType = result.failureType or failure_type
+                result.reason = result.reason or f"未找到路径第 {index + 1} 段“{segment}”。请确认页面是否已进入正确入口，或菜单名称是否有别名。"
+                attempt["segmentResults"].append({"index": index, "segment": segment, "status": "not_found"})
+                debug({"stepId": step_id, "phase": "menu_path_attempt", **attempt})
+                return False
+
+            emit(
+                "progress",
+                "navigation_path",
+                f"正在点击路径第 {index + 1} 段“{segment}”。",
+                "menu_path_navigator",
+                {"step_id": step_id, "segment": segment, "index": index},
+            )
+            before = _page_fingerprint(page)
+            page_count_before = _page_count(page)
+            if not _click(locator):
+                failure_type = "menu_leaf_click_failed" if is_leaf else "menu_segment_click_failed"
+                result.failureType = failure_type
+                result.reason = f"找到路径第 {index + 1} 段“{segment}”，但点击失败。"
+                attempt["segmentResults"].append({"index": index, "segment": segment, "status": "click_failed"})
+                debug({"stepId": step_id, "phase": "menu_path_attempt", **attempt})
+                return False
+
+            result.clickedElements.append({"strategy": "adaptive_segment_path", "text": segment, "index": index, "role": "leaf" if is_leaf else "segment"})
+            wait_for_page_ready(page, settle_ms=500)
+            after = _page_fingerprint(page)
+            page_changed = before != after
+            page_count_after = _page_count(page)
+
+            if is_leaf:
+                evidence = _target_evidence(page, path_segments)
+                if page_count_after > page_count_before:
+                    evidence.append("new_page_opened_after_leaf_click")
+                if page_changed:
+                    evidence.append("page_changed_after_leaf_click")
+                if evidence:
+                    result.successEvidence.extend(item for item in evidence if item not in result.successEvidence)
+                    attempt["segmentResults"].append({"index": index, "segment": segment, "status": "clicked", "evidence": evidence})
+                    debug({"stepId": step_id, "phase": "menu_path_attempt", **attempt})
+                    return True
+                result.failureType = "navigation_goal_not_reached"
+                result.reason = f"已点击最终目标“{leaf}”，但没有检测到页面跳转、弹窗、新页面或目标页面特征。"
+                attempt["segmentResults"].append({"index": index, "segment": segment, "status": "clicked_without_goal_evidence"})
+                debug({"stepId": step_id, "phase": "menu_path_attempt", **attempt})
+                return False
+
+            transition_evidence = _segment_transition_evidence(page, segment, next_segment)
+            if _segment_transition_reached(transition_evidence, page_changed=page_changed):
+                evidence = transition_evidence or ["page_changed_after_segment_click"]
+                result.successEvidence.extend(item for item in evidence if item not in result.successEvidence)
+                attempt["segmentResults"].append({"index": index, "segment": segment, "status": "clicked", "evidence": evidence})
+                continue
+
+            result.failureType = "menu_segment_not_reached"
+            result.reason = f"已点击路径第 {index + 1} 段“{segment}”，但未看到下一段“{next_segment}”，页面也没有明显变化。"
+            attempt["segmentResults"].append({"index": index, "segment": segment, "status": "clicked_without_transition", "nextSegment": next_segment})
+            debug({"stepId": step_id, "phase": "menu_path_attempt", **attempt})
+            return False
+
         return False
 
     def _left_menu_path(
@@ -438,6 +538,8 @@ class MenuPathNavigator:
         if evidence:
             result.successEvidence.extend(item for item in evidence if item not in result.successEvidence)
             return True
+        if any(item in result.successEvidence for item in ["new_page_opened_after_leaf_click", "page_changed_after_leaf_click"]):
+            return True
         return False
 
     def _pass(self, result: NavigationResult, strategy: str, reason: str, emit: RuntimeEmitter, step_id: Any) -> NavigationResult:
@@ -480,13 +582,18 @@ def _target_evidence(page: Any, path_segments: list[str]) -> list[str]:
     for selector, label in [
         ("h1, h2, h3, .page-title, .header-title, .ant-page-header-heading-title, .el-page-header__content", "page_heading_contains_leaf"),
         (".ant-breadcrumb, .el-breadcrumb, .breadcrumb, [aria-label*='breadcrumb' i]", "breadcrumb_contains_path"),
-        (".ant-menu-item-selected, .el-menu-item.is-active, .active, [aria-current='page']", "active_menu_contains_leaf"),
+        (
+            "[role='tab'][aria-selected='true'], [aria-selected='true'], .ant-tabs-tab-active, .ant-menu-item-selected, .el-menu-item.is-active, .active, .selected, [aria-current='page']",
+            "active_menu_contains_leaf",
+        ),
     ]:
         try:
             locator = page.locator(selector)
-            for index in range(min(locator.count(), 8)):
+            for index in range(min(locator.count(), 12)):
                 text = locator.nth(index).inner_text(timeout=800)
-                if leaf in text and (label != "breadcrumb_contains_path" or all(parent in text for parent in parents)):
+                leaf_matches = _text_matches_segment(text, leaf)
+                parent_matches = all(parent in text or _text_matches_segment(text, parent) for parent in parents)
+                if leaf_matches and (label != "breadcrumb_contains_path" or parent_matches):
                     evidence.append(label)
                     break
         except PlaywrightError:
@@ -509,6 +616,47 @@ def _target_evidence(page: Any, path_segments: list[str]) -> list[str]:
     return evidence if len(evidence) >= 2 else []
 
 
+def _segment_transition_evidence(page: Any, segment: str, next_segment: str) -> list[str]:
+    evidence: list[str] = []
+    selected = _selected_segment_evidence(page, segment)
+    if selected:
+        evidence.append(selected)
+    if next_segment and _text_visible(page, next_segment):
+        evidence.append(f"next_segment_visible:{next_segment}")
+    return evidence
+
+
+def _segment_transition_reached(evidence: list[str], *, page_changed: bool) -> bool:
+    return page_changed or any(item.startswith("next_segment_visible:") for item in evidence)
+
+
+def _selected_segment_evidence(page: Any, segment: str) -> str | None:
+    selectors = [
+        "[role='tab'][aria-selected='true']",
+        "[aria-selected='true']",
+        ".ant-tabs-tab-active",
+        ".ant-menu-item-selected",
+        ".el-menu-item.is-active",
+        "[aria-current='page']",
+        ".active",
+        ".selected",
+    ]
+    for selector in selectors:
+        try:
+            locator = page.locator(selector)
+            for index in range(min(locator.count(), 20)):
+                text = locator.nth(index).inner_text(timeout=500)
+                if _text_matches_segment(text, segment):
+                    return f"segment_selected:{segment}"
+        except PlaywrightError:
+            continue
+    return None
+
+
+def _text_visible(page: Any, text: str) -> bool:
+    return _find_text(page.locator("body"), text) is not None
+
+
 def _first_visible(root: Any, selectors: list[str]) -> Any | None:
     for selector in selectors:
         try:
@@ -525,12 +673,20 @@ def _first_visible(root: Any, selectors: list[str]) -> Any | None:
 
 def _find_text(scope: Any, text: str) -> Any | None:
     escaped = re.escape(text)
+    normalized = _normalize_label(text)
+    normalized_escaped = re.escape(normalized)
+    exact_with_count = re.compile(rf"^\s*{normalized_escaped}\s*(?:[（(]\d+[）)])?\s*$")
     patterns = [
         lambda: scope.get_by_role("menuitem", name=re.compile(f"^{escaped}$")),
+        lambda: scope.get_by_role("menuitem", name=exact_with_count),
         lambda: scope.get_by_role("button", name=re.compile(f"^{escaped}$")),
+        lambda: scope.get_by_role("button", name=exact_with_count),
         lambda: scope.get_by_role("link", name=re.compile(f"^{escaped}$")),
+        lambda: scope.get_by_role("link", name=exact_with_count),
         lambda: scope.get_by_role("tab", name=re.compile(f"^{escaped}$")),
+        lambda: scope.get_by_role("tab", name=exact_with_count),
         lambda: scope.get_by_text(text, exact=True),
+        lambda: scope.get_by_text(exact_with_count),
         lambda: scope.get_by_text(text, exact=False),
     ]
     for factory in patterns:
@@ -560,10 +716,34 @@ def _click(locator: Any) -> bool:
 
 def _page_fingerprint(page: Any) -> str:
     try:
-        body = page.locator("body").inner_text(timeout=1000)[:500]
+        body = re.sub(r"\s+", " ", page.locator("body").inner_text(timeout=1000))[:4000]
     except PlaywrightError:
         body = ""
     return f"{page.url}|{body}"
+
+
+def _page_count(page: Any) -> int:
+    try:
+        return len(page.context.pages)
+    except Exception:
+        return 1
+
+
+def _normalize_label(value: str) -> str:
+    text = re.sub(r"\s+", "", str(value or ""))
+    return re.sub(r"[（(]\d+[）)]$", "", text)
+
+
+def _text_matches_segment(candidate: str, segment: str) -> bool:
+    normalized_candidate = _normalize_label(candidate)
+    normalized_segment = _normalize_label(segment)
+    if not normalized_candidate or not normalized_segment:
+        return False
+    return (
+        normalized_candidate == normalized_segment
+        or normalized_candidate.startswith(normalized_segment)
+        or normalized_segment in normalized_candidate
+    )
 
 
 def _prefer_failure_type(result: NavigationResult) -> str:

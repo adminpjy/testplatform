@@ -151,6 +151,55 @@ def parse_navigation_path(*, action: str, target: str) -> list[str]:
         return []
     if not re.search(r"[/>\-→\\]", text):
         return []
-    normalized = re.sub(r"\s*(?:/|>|-|→|\\)\s*", "/", text)
-    segments = [segment.strip() for segment in normalized.split("/") if segment.strip()]
+    if re.search(r"[/>\u2192\\]", text):
+        segments = [_clean_path_segment(segment, index) for index, segment in enumerate(re.split(r"\s*(?:/|>|→|\\)\s*", text))]
+        segments = [segment for segment in segments if segment]
+    else:
+        segments = [_clean_path_segment(segment, index) for index, segment in enumerate(re.split(r"\s*-\s*", text))]
+        segments = [segment for segment in segments if segment]
+    segments = _normalize_portal_segments(segments)
     return segments if len(segments) >= 2 else []
+
+
+def _clean_path_segment(segment: str, index: int) -> str:
+    cleaned = segment.strip().strip("“”\"'，,。；;：:")
+    if index == 0:
+        cleaned = re.sub(r"^(进入|打开|点击|导航到|访问|前往|切换到|跳转到)", "", cleaned).strip()
+    return cleaned
+
+
+def _normalize_portal_segments(segments: list[str]) -> list[str]:
+    if len(segments) < 3 or segments[0] != "系统导航":
+        return segments
+    category_index = 1
+    for index, segment in enumerate(segments[1:4], start=1):
+        if _segment_base(segment) in {
+            "我的应用",
+            "办公自动化",
+            "财务",
+            "财务管理",
+            "生产",
+            "生产经营",
+            "设备",
+            "设备管理",
+            "采购",
+            "采购管理",
+            "销售",
+            "销售管理",
+            "安环",
+            "安全环保",
+            "综合",
+            "综合管理",
+            "人力资源",
+            "信息化",
+        }:
+            category_index = index
+            break
+    app_name = "-".join(segments[category_index + 1 :]).strip()
+    if not app_name:
+        return segments
+    return [segments[0], segments[category_index], app_name]
+
+
+def _segment_base(segment: str) -> str:
+    return re.sub(r"\s*[（(]\d+[）)]\s*$", "", segment).strip()

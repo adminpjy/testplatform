@@ -8,6 +8,7 @@ from app.llm.provider import LLMRequest
 from app.schemas.test_runs import NaturalLanguageTestRequest
 from app.services.dsl_post_processor import DslPostProcessor
 from app.services.natural_language_parser import NaturalLanguageParser
+from app.services.operation_intent_classifier import OperationIntentClassifier
 from app.services.prompt_manager import PromptManager
 
 
@@ -257,6 +258,29 @@ def test_post_processor_relaxes_generic_login_success_marker() -> None:
     assert "text" not in marker_step
 
 
+def test_post_processor_does_not_require_auth_for_login_stabilization_wait() -> None:
+    step = DslPostProcessor().normalize_step(
+        {
+            "action": "wait",
+            "target": "登录后页面稳定",
+            "preconditions": {"authState": "logged_in"},
+            "operationIntent": {"intent": "enter_page"},
+        }
+    )
+    assert step["action"] == "wait"
+    assert "preconditions" not in step
+
+
+def test_operation_intent_classifies_login_button_before_enter_page_context() -> None:
+    result = OperationIntentClassifier().classify(
+        action="click",
+        target="登录按钮",
+        instruction="1、进入门户\n2、用户登录\n3、进入：系统导航/办公自动化/中国石化公文管理系统",
+    )
+    assert result.intent == "login"
+    assert result.intentType == "authentication"
+
+
 def test_post_processor_keeps_explicit_post_login_assertion() -> None:
     normalized = DslPostProcessor().normalize_dsl(
         {
@@ -301,6 +325,27 @@ def test_post_processor_supports_three_segment_path() -> None:
     step = DslPostProcessor().normalize_step({"action": "navigate_menu", "target": "审批管理/待审批/出差审批"})
     assert step["action"] == "navigate_path"
     assert step["pathSegments"] == ["审批管理", "待审批", "出差审批"]
+
+
+def test_post_processor_parses_portal_app_path_with_hyphen() -> None:
+    step = DslPostProcessor().normalize_step({"action": "business_goal", "target": "进入系统导航-办公自动化-中国石化公文管理系统"})
+    assert step["action"] == "navigate_path"
+    assert step["pathSegments"] == ["系统导航", "办公自动化", "中国石化公文管理系统"]
+    assert step["navigationType"] == "portal_app_path"
+
+
+def test_post_processor_splits_single_path_segment_list() -> None:
+    step = DslPostProcessor().normalize_step(
+        {"action": "navigate_path", "target": "系统导航", "pathSegments": ["系统导航-办公自动化-中国石化公文管理系统"]}
+    )
+    assert step["pathSegments"] == ["系统导航", "办公自动化", "中国石化公文管理系统"]
+    assert step["navigationType"] == "portal_app_path"
+
+
+def test_post_processor_keeps_portal_app_name_hyphen_suffix() -> None:
+    step = DslPostProcessor().normalize_step({"action": "navigate_menu", "target": "系统导航-办公自动化-燕山业务流程管理系统-BPM"})
+    assert step["action"] == "navigate_path"
+    assert step["pathSegments"] == ["系统导航", "办公自动化", "燕山业务流程管理系统-BPM"]
 
 
 def test_prompt_reload_picks_up_yaml_change(tmp_path: Path) -> None:

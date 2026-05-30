@@ -60,10 +60,11 @@ def test_auth_state_detects_login_captcha_required(page: Page) -> None:
         """
     )
     result = AuthStateDetector().detect_auth_state(page)
-    assert result.authState == "login_failed"
-    assert result.failureType == "login_failed"
+    assert result.authState == "login_requires_manual_action"
+    assert result.failureType == "login_captcha_required"
     assert result.remainingRetries == 3
     assert result.shouldStopProtectedSteps is True
+    assert result.requiresHumanAction is True
 
 
 def test_auth_state_does_not_treat_alternate_auth_links_as_challenge(page: Page) -> None:
@@ -97,8 +98,9 @@ def test_auth_state_detects_visible_otp_challenge(page: Page) -> None:
         """
     )
     result = AuthStateDetector().detect_auth_state(page)
-    assert result.authState == "login_page"
-    assert result.failureType == "auth_state_not_logged_in"
+    assert result.authState == "login_requires_manual_action"
+    assert result.failureType == "login_captcha_required"
+    assert result.requiresHumanAction is True
 
 
 def test_auth_state_detects_login_page_without_error(page: Page) -> None:
@@ -244,8 +246,8 @@ def test_business_step_is_blocked_after_login_captcha(page: Page, monkeypatch: p
         {"settings": {}},
     )
     assert result["status"] == "failed"
-    assert result["failure_type"] == "protected_step_blocked_by_login_failure"
-    assert result["failure_details"]["rootCause"] == "login_failed"
+    assert result["failure_type"] == "protected_step_blocked_by_auth_challenge"
+    assert result["failure_details"]["rootCause"] == "login_captcha_required"
     assert result["locator_strategy"] == "protected_step_guard"
     runtime_text = writer.path("runtime-stream.jsonl").read_text(encoding="utf-8")
     assert "后续业务步骤" in runtime_text
@@ -277,6 +279,91 @@ def test_open_url_is_not_blocked_by_auth_guard_even_with_auth_precondition(page:
     assert result.allowed is True
 
 
+def test_login_submit_step_is_not_blocked_on_login_page(page: Page) -> None:
+    page.set_content(
+        """
+        <main>
+          <input name="username" value="tester" />
+          <input type="password" value="secret" />
+          <button>Login</button>
+        </main>
+        """
+    )
+    result = ProtectedStepGuard().check_before_step(
+        {
+            "action": "click",
+            "target": "登录按钮",
+            "operationIntent": {"intent": "enter_page"},
+        },
+        page,
+    )
+    assert result.allowed is True
+    assert result.reason == "step does not require authenticated business page"
+
+
+def test_case_runner_login_submit_clicks_login_and_verifies(page: Page, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PLAYWRIGHT_WAIT_NETWORK_IDLE", "false")
+    monkeypatch.setenv("PAGE_READY_TIMEOUT_MS", "1000")
+    monkeypatch.setenv("LOGIN_RESULT_WAIT_MS", "200")
+    monkeypatch.setenv("LOGIN_RESULT_RECHECK_TIMES", "0")
+    page.set_content(
+        """
+        <main>
+          <input name="username" value="tester" />
+          <input type="password" value="secret" />
+          <button onclick="document.body.innerHTML='<header><button>退出登录</button></header><aside role=menu><button>系统导航</button></aside><main><h1>首页</h1></main>'">Login</button>
+        </main>
+        """
+    )
+    writer = ArtifactWriter("TEST-LOGIN-SUBMIT")
+    result = CaseRunner()._run_step(
+        page,
+        writer,
+        3,
+        {"id": "3", "action": "click", "target": "登录按钮", "operationIntent": {"intent": "enter_page"}},
+        {"settings": {}},
+    )
+    assert result["status"] == "passed"
+    assert result["locator_strategy"] == "login_submit"
+    assert result["failure_type"] is None
+
+
+def test_login_goal_opens_portal_login_entry_before_resolving_form(page: Page, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("LOGIN_RESULT_WAIT_MS", "200")
+    monkeypatch.setenv("LOGIN_RESULT_RECHECK_TIMES", "0")
+    page.set_content(
+        """
+        <header>
+          <input class="ant-input" />
+          <button>搜一下</button>
+          <a class="login" onclick="document.body.innerHTML='<main><input name=&quot;j_username&quot; /><input type=&quot;password&quot; name=&quot;j_password&quot; /><button onclick=&quot;document.body.innerHTML=\\'<header><button>退出登录</button></header><aside role=menu><button>系统导航</button></aside><main><h1>首页</h1></main>\\'&quot;>Login</button></main>'">登录</a>
+        </header>
+        """
+    )
+    outcome = LoginGoalExecutor().execute_login_goal(
+        page,
+        {"action": "business_goal", "target": "用户登录", "credentials": {"username": "tester", "password": "secret"}},
+        {},
+    )
+    assert outcome["locator_strategy"] == "generic_login_form"
+    assert outcome["auth_state"]["authState"] == "logged_in"
+
+
+def test_login_form_resolver_does_not_treat_portal_search_as_username(page: Page) -> None:
+    page.set_content(
+        """
+        <header>
+          <input class="ant-input" />
+          <button>搜一下</button>
+          <a class="login">登录</a>
+        </header>
+        """
+    )
+    result = LoginGoalExecutor().login_resolver.resolve(page)
+    assert result.username_locator is None
+    assert result.password_locator is None
+
+
 def test_login_goal_fails_when_submit_returns_error(page: Page, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("LOGIN_RESULT_WAIT_MS", "200")
     monkeypatch.setenv("LOGIN_RESULT_RECHECK_TIMES", "0")
@@ -291,7 +378,11 @@ def test_login_goal_fails_when_submit_returns_error(page: Page, monkeypatch: pyt
         """
     )
     with pytest.raises(RuntimeError) as exc_info:
-        LoginGoalExecutor().execute_login_goal(page, {"action": "business_goal", "target": "登录系统"}, {})
+        LoginGoalExecutor().execute_login_goal(
+            page,
+            {"action": "business_goal", "target": "登录系统", "credentials": {"username": "tester", "password": "secret"}},
+            {},
+        )
     assert getattr(exc_info.value, "failure_type") == "login_failed"
     assert getattr(exc_info.value, "details")["auth_state"]["remainingRetries"] == 3
 
@@ -314,10 +405,14 @@ def test_login_goal_stops_when_captcha_is_required(page: Page, monkeypatch: pyte
         """
     )
     with pytest.raises(RuntimeError) as exc_info:
-        LoginGoalExecutor().execute_login_goal(page, {"action": "business_goal", "target": "登录系统"}, {})
-    assert getattr(exc_info.value, "failure_type") == "login_failed"
+        LoginGoalExecutor().execute_login_goal(
+            page,
+            {"action": "business_goal", "target": "登录系统", "credentials": {"username": "tester", "password": "secret"}},
+            {},
+        )
+    assert getattr(exc_info.value, "failure_type") == "login_captcha_required"
     auth_state = getattr(exc_info.value, "details")["auth_state"]
-    assert auth_state["authState"] == "login_failed"
+    assert auth_state["authState"] == "login_requires_manual_action"
 
 
 def test_protected_guard_allows_business_page_without_menu_target(page: Page) -> None:

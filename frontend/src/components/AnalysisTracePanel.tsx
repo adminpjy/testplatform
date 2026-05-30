@@ -1,5 +1,5 @@
-import { AlertTriangle, Bot, CheckCircle2, Loader2, Plus, Trash2 } from "lucide-react";
-import { useEffect, useMemo, useRef } from "react";
+import { AlertTriangle, Bot, CheckCircle2, Edit3, Loader2, Plus, Trash2, X } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { TestCaseDSL, TestCaseStep } from "../types/platform";
 import type { RuntimeMessage } from "../types/runtime";
@@ -18,6 +18,7 @@ export function AnalysisTracePanel({
   onDslChange?: (dsl: TestCaseDSL) => void;
 }) {
   const bottomRef = useRef<HTMLDivElement | null>(null);
+  const [editorDraft, setEditorDraft] = useState<TestCaseDSL | null>(null);
   const visibleMessages = messages.filter((message) => message.phase !== "llm_chunk");
   const status = useMemo(() => buildAnalysisStatus(visibleMessages, dsl, analyzing), [visibleMessages, dsl, analyzing]);
 
@@ -29,31 +30,20 @@ export function AnalysisTracePanel({
     return null;
   }
 
-  function updateDslStep(index: number, patch: Partial<TestCaseStep>) {
+  function openDslEditor(mode: "edit" | "add" = "edit") {
     if (!dsl || !onDslChange) return;
-    const steps = dsl.steps.map((step, itemIndex) => itemIndex === index ? { ...step, ...patch } : step);
-    onDslChange({ ...dsl, steps });
+    const draft = cloneDsl(dsl);
+    if (mode === "add") {
+      draft.steps.push(defaultDslStep());
+    }
+    setEditorDraft(draft);
   }
 
-  function deleteDslStep(index: number) {
-    if (!dsl || !onDslChange) return;
-    onDslChange({ ...dsl, steps: dsl.steps.filter((_, itemIndex) => itemIndex !== index) });
-  }
-
-  function addDslStep() {
-    if (!dsl || !onDslChange) return;
-    onDslChange({
-      ...dsl,
-      steps: [
-        ...dsl.steps,
-        {
-          action: "wait",
-          target: "登录后页面稳定",
-          ms: 1500,
-          description: "等待页面跳转或渲染稳定。"
-        }
-      ]
-    });
+  function saveDslEditor() {
+    if (editorDraft && onDslChange) {
+      onDslChange(editorDraft);
+    }
+    setEditorDraft(null);
   }
 
   return (
@@ -113,10 +103,16 @@ export function AnalysisTracePanel({
               {dsl ? <span>{dsl.steps.length} 步</span> : <span>等待生成</span>}
             </div>
             {dsl && onDslChange ? (
-              <button className="ghost-button dsl-add-step-button" type="button" onClick={addDslStep}>
-                <Plus size={14} />
-                新增步骤
-              </button>
+              <div className="dsl-preview-panel__actions">
+                <button className="ghost-button dsl-add-step-button" type="button" onClick={() => openDslEditor("edit")}>
+                  <Edit3 size={14} />
+                  编辑 DSL
+                </button>
+                <button className="ghost-button dsl-add-step-button" type="button" onClick={() => openDslEditor("add")}>
+                  <Plus size={14} />
+                  新增步骤
+                </button>
+              </div>
             ) : null}
           </div>
           {dsl ? (
@@ -132,29 +128,19 @@ export function AnalysisTracePanel({
                 <dt>入口</dt>
                 <dd>{dsl.baseUrl || "-"}</dd>
               </dl>
-              <ol className={onDslChange ? "dsl-step-list dsl-step-list--editable" : "dsl-step-list"}>
+              <ol className="dsl-step-list">
                 {dsl.steps.map((step, index) => (
-                  onDslChange ? (
-                    <EditableDslStep
-                      step={step}
-                      index={index}
-                      key={`${index}-${step.action}-${step.target || ""}`}
-                      onUpdate={(patch) => updateDslStep(index, patch)}
-                      onDelete={() => deleteDslStep(index)}
-                    />
-                  ) : (
-                    <li key={`${step.action}-${step.target || index}`}>
-                      <span>S{String(index + 1).padStart(3, "0")}</span>
-                      <strong>{readableDslStepType(step)}</strong>
-                      <em>{dslStepSummary(step)}</em>
-                      {step.action === "navigate_path" ? (
-                        <small>
-                          成功判断：{Array.isArray(step.successCriteria) ? step.successCriteria.map(String).join("；") : "页面出现目标菜单并完成导航"}
-                        </small>
-                      ) : null}
-                      {step.action === "business_goal" && step.intent ? <small>业务意图：{readableIntent(String(step.intent))}</small> : null}
-                    </li>
-                  )
+                  <li key={`${step.action}-${step.target || index}`}>
+                    <span>S{String(index + 1).padStart(3, "0")}</span>
+                    <strong>{readableDslStepType(step)}</strong>
+                    <em>{dslStepSummary(step)}</em>
+                    {step.action === "navigate_path" ? (
+                      <small>
+                        成功判断：{Array.isArray(step.successCriteria) ? step.successCriteria.map(String).join("；") : "页面出现目标菜单并完成导航"}
+                      </small>
+                    ) : null}
+                    {step.action === "business_goal" && step.intent ? <small>业务意图：{readableIntent(String(step.intent))}</small> : null}
+                  </li>
                 ))}
               </ol>
               {dsl.missingFields && dsl.missingFields.length > 0 ? (
@@ -184,6 +170,14 @@ export function AnalysisTracePanel({
           )}
         </aside>
       </div>
+      {editorDraft && onDslChange ? (
+        <DslEditorModal
+          draft={editorDraft}
+          onCancel={() => setEditorDraft(null)}
+          onChange={setEditorDraft}
+          onSave={saveDslEditor}
+        />
+      ) : null}
     </section>
   );
 }
@@ -212,6 +206,87 @@ const DSL_ACTION_OPTIONS = [
   "assert_result"
 ];
 
+function DslEditorModal({
+  draft,
+  onCancel,
+  onChange,
+  onSave
+}: {
+  draft: TestCaseDSL;
+  onCancel: () => void;
+  onChange: (dsl: TestCaseDSL) => void;
+  onSave: () => void;
+}) {
+  function updateStep(index: number, patch: Partial<TestCaseStep>) {
+    onChange({
+      ...draft,
+      steps: draft.steps.map((step, itemIndex) => (itemIndex === index ? { ...step, ...patch } : step))
+    });
+  }
+
+  function deleteStep(index: number) {
+    onChange({ ...draft, steps: draft.steps.filter((_, itemIndex) => itemIndex !== index) });
+  }
+
+  function addStep() {
+    onChange({ ...draft, steps: [...draft.steps, defaultDslStep()] });
+  }
+
+  return (
+    <div className="dsl-editor-backdrop">
+      <div className="dsl-editor-modal" role="dialog" aria-modal="true" aria-labelledby="dsl-editor-title">
+        <div className="dsl-editor-modal__header">
+          <div>
+            <h3 id="dsl-editor-title">编辑 DSL</h3>
+            <span>{draft.steps.length} 步</span>
+          </div>
+          <button className="icon-button" type="button" onClick={onCancel} title="关闭">
+            <X size={16} />
+          </button>
+        </div>
+        <div className="dsl-editor-modal__body">
+          <div className="dsl-editor-meta-grid">
+            <label>
+              <span>用例</span>
+              <input value={draft.caseName || ""} onChange={(event) => onChange({ ...draft, caseName: event.target.value })} />
+            </label>
+            <label>
+              <span>入口</span>
+              <input value={draft.baseUrl || ""} onChange={(event) => onChange({ ...draft, baseUrl: event.target.value })} />
+            </label>
+          </div>
+          <ol className="dsl-step-list dsl-step-list--editable">
+            {draft.steps.map((step, index) => (
+              <EditableDslStep
+                step={step}
+                index={index}
+                key={index}
+                onDelete={() => deleteStep(index)}
+                onUpdate={(patch) => updateStep(index, patch)}
+              />
+            ))}
+          </ol>
+        </div>
+        <div className="dsl-editor-modal__footer">
+          <button className="ghost-button" type="button" onClick={addStep}>
+            <Plus size={14} />
+            新增步骤
+          </button>
+          <div>
+            <button className="secondary-button" type="button" onClick={onCancel}>
+              取消
+            </button>
+            <button className="primary-button" type="button" onClick={onSave}>
+              <CheckCircle2 size={14} />
+              保存
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function EditableDslStep({
   step,
   index,
@@ -239,10 +314,20 @@ function EditableDslStep({
   }
 
   function updatePathSegments(value: string) {
-    const segments = value.split(/[/>→\\]+/).map((item) => item.trim()).filter(Boolean);
+    const segments = parsePathSegmentsFromInput(value);
     onUpdate({
       pathSegments: segments,
-      navigationType: "menu_path",
+      navigationType: navigationTypeForSegments(segments),
+      target: segments.join("/")
+    });
+  }
+
+  function parseTargetAsPath() {
+    const segments = parsePathSegmentsFromInput(String(step.target || pathSegments || ""));
+    if (segments.length < 2) return;
+    onUpdate({
+      pathSegments: segments,
+      navigationType: navigationTypeForSegments(segments),
       target: segments.join("/")
     });
   }
@@ -287,6 +372,13 @@ function EditableDslStep({
             <input placeholder="工作台/我的待办" value={pathSegments} onChange={(event) => updatePathSegments(event.target.value)} />
           </label>
         ) : null}
+        {step.action === "navigate_path" ? (
+          <div className="dsl-step-editor-grid__wide dsl-step-editor-actions">
+            <button className="secondary-button" type="button" onClick={parseTargetAsPath}>
+              解析目标路径
+            </button>
+          </div>
+        ) : null}
         <label className="dsl-step-editor-grid__wide">
           <span>说明</span>
           <input value={String(step.description || "")} onChange={(event) => onUpdate({ description: event.target.value })} />
@@ -294,6 +386,79 @@ function EditableDslStep({
       </div>
     </li>
   );
+}
+
+const PORTAL_CATEGORY_HINTS = new Set([
+  "我的应用",
+  "办公自动化",
+  "财务",
+  "财务管理",
+  "生产",
+  "生产经营",
+  "设备",
+  "设备管理",
+  "采购",
+  "采购管理",
+  "销售",
+  "销售管理",
+  "安环",
+  "安全环保",
+  "综合",
+  "综合管理",
+  "人力资源",
+  "信息化"
+]);
+
+function cloneDsl(dsl: TestCaseDSL): TestCaseDSL {
+  return JSON.parse(JSON.stringify(dsl)) as TestCaseDSL;
+}
+
+function defaultDslStep(): TestCaseStep {
+  return {
+    action: "wait",
+    target: "登录后页面稳定",
+    ms: 1500,
+    description: "等待页面跳转或渲染稳定。"
+  };
+}
+
+function parsePathSegmentsFromInput(value: string): string[] {
+  const text = String(value || "").trim();
+  if (!text || text.includes("://")) return [];
+  const hasNonHyphenSeparator = /[/>→\\]/.test(text);
+  const rawSegments = hasNonHyphenSeparator ? text.split(/\s*(?:\/|>|→|\\)\s*/) : text.split(/\s*-\s*/);
+  const segments = rawSegments.map((item, index) => cleanPathSegment(item, index)).filter(Boolean);
+  return normalizePortalSegments(segments);
+}
+
+function cleanPathSegment(value: string, index: number): string {
+  let text = value.trim().replace(/^[“"'，,。；;：:]+|[”"'，,。；;：:]+$/g, "");
+  if (index === 0) {
+    text = text.replace(/^(进入|打开|点击|导航到|访问|前往|切换到|跳转到)/, "").trim();
+  }
+  return text;
+}
+
+function normalizePortalSegments(segments: string[]): string[] {
+  if (segments.length < 3 || segments[0] !== "系统导航") return segments;
+  let categoryIndex = 1;
+  for (let index = 1; index < Math.min(segments.length, 4); index += 1) {
+    if (PORTAL_CATEGORY_HINTS.has(segmentBase(segments[index]))) {
+      categoryIndex = index;
+      break;
+    }
+  }
+  const appName = segments.slice(categoryIndex + 1).join("-").trim();
+  if (!appName) return segments;
+  return [segments[0], segments[categoryIndex], appName];
+}
+
+function segmentBase(value: string): string {
+  return value.replace(/\s*[（(]\d+[）)]\s*$/, "").trim();
+}
+
+function navigationTypeForSegments(segments: string[]): string {
+  return segments.length >= 3 && segments[0] === "系统导航" ? "portal_app_path" : "menu_path";
 }
 
 function preferredStepValueKey(step: TestCaseStep): "text" | "value" {

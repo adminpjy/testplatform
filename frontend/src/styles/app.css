@@ -914,6 +914,13 @@ button:disabled {
   font-size: 12px;
 }
 
+.dsl-preview-panel__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
 .dsl-add-step-button {
   min-height: 30px;
   padding: 6px 8px;
@@ -1011,6 +1018,89 @@ button:disabled {
 
 .dsl-step-editor-grid__wide {
   grid-column: 1 / -1;
+}
+
+.dsl-step-editor-actions {
+  display: flex;
+  justify-content: flex-start;
+  margin-top: -2px;
+}
+
+.dsl-editor-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  background: rgb(15 23 42 / 0.48);
+  padding: 18px;
+}
+
+.dsl-editor-modal {
+  display: flex;
+  width: min(980px, 100%);
+  max-height: calc(100vh - 36px);
+  min-height: 420px;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 18px 44px rgb(15 23 42 / 0.22);
+}
+
+.dsl-editor-modal__header,
+.dsl-editor-modal__footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid #e2e8f0;
+  padding: 12px 14px;
+}
+
+.dsl-editor-modal__header h3 {
+  margin: 0;
+  color: #172033;
+  font-size: 15px;
+}
+
+.dsl-editor-modal__header span {
+  color: #64748b;
+  font-size: 12px;
+}
+
+.dsl-editor-modal__body {
+  min-height: 0;
+  overflow: auto;
+  padding: 14px;
+}
+
+.dsl-editor-modal__footer {
+  border-top: 1px solid #e2e8f0;
+  border-bottom: 0;
+}
+
+.dsl-editor-modal__footer > div {
+  display: flex;
+  gap: 8px;
+}
+
+.dsl-editor-meta-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 0.7fr) minmax(0, 1.3fr);
+  gap: 10px;
+}
+
+.dsl-editor-meta-grid label {
+  display: grid;
+  gap: 5px;
+}
+
+.dsl-editor-meta-grid span {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 700;
 }
 
 .project-context {
@@ -2321,6 +2411,10 @@ button:disabled {
   .dsl-step-editor-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+
+  .dsl-editor-meta-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 760px) {
@@ -2369,5 +2463,31 @@ button:disabled {
 
   .dsl-step-editor-grid {
     grid-template-columns: 1fr;
+  }
+
+  .dsl-editor-backdrop {
+    align-items: stretch;
+    padding: 10px;
+  }
+
+  .dsl-editor-modal {
+    max-height: calc(100vh - 20px);
+    min-height: 0;
+  }
+
+  .dsl-editor-modal__header,
+  .dsl-editor-modal__footer {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .dsl-editor-modal__footer > div,
+  .dsl-preview-panel__actions {
+    width: 100%;
+  }
+
+  .dsl-editor-modal__footer button,
+  .dsl-preview-panel__actions button {
+    flex: 1 1 140px;
   }
 }

@@ -126,24 +126,25 @@ class LoginFormResolver:
             except PlaywrightError:
                 continue
 
-        inputs = self._visible_text_inputs(scope)
-        if password_locator is not None and inputs:
+        if password_locator is not None:
+            inputs = self._visible_text_inputs(scope)
+            if not inputs:
+                return _LocatorCandidate(None, {})
             password_box = self._box(password_locator)
             ranked = sorted(inputs, key=lambda item: self._distance_to_password(item["box"], password_box))
             return _LocatorCandidate(ranked[0]["locator"], {"selector": ranked[0]["selector"], "strategy": "nearest_text_input_before_password"})
-        if inputs:
-            return _LocatorCandidate(inputs[0]["locator"], {"selector": inputs[0]["selector"], "strategy": "first_visible_text_input"})
         return _LocatorCandidate(None, {})
 
     def _submit_locator(self, scope: Any) -> "_LocatorCandidate":
         for name in ["登录", "Login", "LOGIN", "Sign in", "Sign In", "进入系统"]:
-            try:
-                button = scope.get_by_role("button", name=name, exact=False)
-                visible = self._first_visible(button)
-                if visible is not None:
-                    return _LocatorCandidate(visible, {"text": name, "strategy": "submit_button_role"})
-            except PlaywrightError:
-                continue
+            for role in ["button", "link"]:
+                try:
+                    button = scope.get_by_role(role, name=name, exact=False)
+                    visible = self._first_visible(button)
+                    if visible is not None:
+                        return _LocatorCandidate(visible, {"text": name, "role": role, "strategy": "submit_button_role"})
+                except PlaywrightError:
+                    continue
         selectors = [
             "button[type='submit']",
             "input[type='submit']",

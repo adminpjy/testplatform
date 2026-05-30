@@ -13,7 +13,12 @@ prompts:
       你是测试 DSL 结构校验器。只返回修正后的 JSON。
     user: |
       如果步骤 target 是菜单路径，必须修正为 action=navigate_path 并补充 pathSegments、navigationType、successCriteria、fallbackStrategies。
+      对“系统导航-办公自动化-中国石化公文管理系统”这类门户路径，必须保留为一个 navigate_path 步骤：
+      pathSegments=["系统导航","办公自动化","中国石化公文管理系统"]，navigationType="portal_app_path"。
+      如果最终系统名称包含连字符，例如“燕山业务流程管理系统-BPM”，BPM 属于最终系统名称，不要拆成第四级。
       登录后的业务步骤必须补充 preconditions={"authState":"logged_in"}，登录步骤本身不要补充。
+      登录步骤包括“用户登录”“登录系统”“登录表单”“登录按钮”“Login”“Sign in”和“登录后页面稳定”。这些步骤不应被当成登录后的业务步骤。
+      如 DSL 将“用户登录”拆成 fill_form 登录表单 + click 登录按钮，也必须保证这两个步骤都不带 authState=logged_in。
       不要把“工作台”“首页”“门户首页”作为通用登录成功标识；如果 DSL 在登录后等待这些固定文本，且用户没有明确要求验证该文本，修正为 {"action":"wait","target":"登录后页面稳定","ms":1500}。
       URL 不应识别为菜单路径。
       DSL:

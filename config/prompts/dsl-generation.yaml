@@ -27,12 +27,22 @@ prompts:
       {"action":"navigate_path","target":"工作台/我的待办","pathSegments":["工作台","我的待办"],"navigationType":"menu_path"}
       三级路径也必须完整保留 pathSegments。
       navigate_path 必须包含 successCriteria 和 fallbackStrategies。
+      门户类路径规则：
+      当用户写“进入系统导航-办公自动化-中国石化公文管理系统”这类目标时，含义通常是：
+      一级入口=系统导航，二级分类=办公自动化，最终系统链接=中国石化公文管理系统。
+      必须生成一个 navigate_path 步骤，不要拆成多个独立步骤。
+      pathSegments 必须是 ["系统导航","办公自动化","中国石化公文管理系统"]，navigationType 使用 "portal_app_path"。
+      如果最终系统名称本身包含连字符，例如“燕山业务流程管理系统-BPM”，不要把 BPM 再拆成菜单层级，应保留为最终系统名称的一部分。
 
       登录状态前置条件规则：
+      用户写“用户登录 / 登录系统 / 账号登录 / 完成登录”时，优先生成高层登录步骤：
+      {"action":"business_goal","target":"用户登录","intent":"login_system"}
+      不要求用户说明按钮是“登录”还是“Login”，也不要要求用户提供页面选择器。
+      登录执行器会自适应处理：已登录则跳过；出现用户名密码框则填写并提交；出现单点登录入口则进入；出现验证码、OTP、短信码、扫码或强制修改密码等人工环节时，生成可继续执行的人工介入提示。
       登录后的业务步骤必须包含：
       "preconditions":{"authState":"logged_in"}
       这些步骤包括菜单导航、查询、表格操作、新增、修改、删除、审批、查看详情、填写表单、选择下拉框、选择日期、组织机构选择、人员选择、文件上传和结果断言。
-      登录步骤本身不要添加 auth_state_logged_in。
+      登录步骤本身、登录表单填写、登录按钮点击、登录后页面稳定等待，都不要添加 auth_state_logged_in 或 preconditions.authState=logged_in。
       不要把“工作台”“首页”“门户首页”当作通用登录成功断言。
       除非用户明确要求验证这些文字，否则登录后不要生成 wait_for_text/assert_text_exists 等固定文本步骤。
       登录成功后的判断应交给后续业务步骤的 authState 前置条件、菜单导航、URL 或用户明确给出的页面特征；如只需要等待跳转稳定，可生成 {"action":"wait","target":"登录后页面稳定","ms":1500}。
