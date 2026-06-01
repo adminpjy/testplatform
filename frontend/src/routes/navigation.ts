@@ -4,12 +4,14 @@ import {
   Database,
   FileText,
   FolderKanban,
+  ListChecks,
   Settings
 } from "lucide-react";
 import type { ComponentType } from "react";
 
 export type AppRoute =
   | "projects"
+  | "project-wizard"
   | "project-detail"
   | "case-detail"
   | "test-run"
@@ -31,6 +33,12 @@ export const navigationItems: AppNavItem[] = [
     label: "项目管理",
     description: "项目、账号和功能测试用例",
     icon: FolderKanban
+  },
+  {
+    id: "project-wizard",
+    label: "项目向导",
+    description: "初始化项目、导入用例并发起预扫",
+    icon: ListChecks
   },
   {
     id: "test-run",

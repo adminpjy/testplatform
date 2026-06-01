@@ -244,6 +244,121 @@ a {
   align-items: start;
 }
 
+.wizard-layout {
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.wizard-steps {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+}
+
+.wizard-step {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 42px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: #334155;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 800;
+  padding: 8px 10px;
+  text-align: left;
+}
+
+.wizard-step--active {
+  border-color: #93c5fd;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.wizard-main {
+  min-height: 560px;
+  padding: 16px;
+}
+
+.wizard-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.wizard-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(120px, 1fr));
+  gap: 10px;
+}
+
+.metric-tile {
+  display: grid;
+  gap: 4px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #f8fafc;
+  padding: 12px;
+}
+
+.metric-tile span {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.metric-tile strong {
+  color: #172033;
+  font-size: 22px;
+  font-variant-numeric: tabular-nums;
+}
+
+.file-drop-field {
+  display: grid;
+  gap: 8px;
+  min-height: 118px;
+  border: 1px dashed #94a3b8;
+  border-radius: 8px;
+  background: #f8fafc;
+  padding: 12px;
+}
+
+.file-drop-field > span {
+  color: #475569;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.file-drop-field strong {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  overflow-wrap: anywhere;
+  color: #334155;
+  font-size: 13px;
+}
+
+.table-checkbox {
+  width: 16px;
+  height: 16px;
+}
+
+.json-snippet {
+  grid-column: 1 / -1;
+  max-height: 220px;
+  overflow: auto;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #0f172a;
+  color: #e2e8f0;
+  font-size: 12px;
+  padding: 12px;
+}
+
 .project-detail-panel,
 .project-tab-panel,
 .project-form,
@@ -2440,6 +2555,7 @@ button:disabled {
   .main-grid,
   .analysis-trace-grid,
   .project-management-grid,
+  .wizard-layout,
   .case-dsl-layout,
   .page-grid--test-run,
   .page-grid--reports,
@@ -2448,6 +2564,7 @@ button:disabled {
   .ability-overview-grid,
   .ability-rules-layout,
   .ability-stat-grid,
+  .wizard-summary-grid,
   .settings-grid,
   .toggle-grid {
     grid-template-columns: 1fr;

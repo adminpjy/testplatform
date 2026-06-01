@@ -473,6 +473,119 @@ class RuleDraft(Base):
     )
 
 
+class ProjectBootstrapPackage(Base):
+    __tablename__ = "project_bootstrap_packages"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("test_projects.id"), nullable=False, index=True)
+    package_code: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), default="draft_generated", nullable=False)
+    source_type: Mapped[str] = mapped_column(String(64), default="two_file_compare", nullable=False)
+    file_a_name: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    file_a_path: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    file_a_role: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    file_b_name: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    file_b_path: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    file_b_role: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    generator_result_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    draft_cases_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    imported_case_ids_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    summary_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[object] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[object] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
+    )
+
+
+class PrescanSession(Base):
+    __tablename__ = "prescan_sessions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("test_projects.id"), nullable=False, index=True)
+    session_code: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), default="created", nullable=False)
+    mode: Mapped[str] = mapped_column(String(64), default="case_driven", nullable=False)
+    dry_run: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    case_ids_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    plan_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    findings_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    rule_draft_ids_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    ability_knowledge_ids_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    enhanced_cases_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    error_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    started_at: Mapped[object | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    ended_at: Mapped[object | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[object] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[object] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
+    )
+
+
+class TestCampaign(Base):
+    __tablename__ = "test_campaigns"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("test_projects.id"), nullable=False, index=True)
+    campaign_code: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(32), default="created", nullable=False)
+    case_ids_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    settings_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    total_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    queued_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    running_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    passed_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    failed_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    blocked_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    summary_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    started_at: Mapped[object | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    ended_at: Mapped[object | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[object] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[object] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
+    )
+
+
+class TestCampaignCase(Base):
+    __tablename__ = "test_campaign_cases"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    campaign_id: Mapped[int] = mapped_column(ForeignKey("test_campaigns.id"), nullable=False, index=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("test_projects.id"), nullable=False, index=True)
+    case_id: Mapped[int] = mapped_column(ForeignKey("test_cases.id"), nullable=False, index=True)
+    case_version_id: Mapped[int | None] = mapped_column(ForeignKey("test_case_versions.id"), nullable=True, index=True)
+    run_id: Mapped[int | None] = mapped_column(ForeignKey("test_runs.id"), nullable=True, index=True)
+    order_index: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), default="queued", nullable=False)
+    failure_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    result_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[object] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[object] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
+    )
+
+
+class MaintenanceFeedback(Base):
+    __tablename__ = "maintenance_feedback"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    feedback_code: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
+    project_id: Mapped[int | None] = mapped_column(ForeignKey("test_projects.id"), nullable=True, index=True)
+    case_id: Mapped[int | None] = mapped_column(ForeignKey("test_cases.id"), nullable=True, index=True)
+    run_id: Mapped[int | None] = mapped_column(ForeignKey("test_runs.id"), nullable=True, index=True)
+    failure_sample_id: Mapped[int | None] = mapped_column(ForeignKey("failure_samples.id"), nullable=True, index=True)
+    status: Mapped[str] = mapped_column(String(32), default="submitted", nullable=False)
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    evidence_package_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    artifact_paths_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    maintainer_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[object] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[object] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
+    )
+
+
 class RuntimeMessage(Base):
     __tablename__ = "runtime_messages"
 

@@ -4,6 +4,7 @@ import type {
   AbilityStats,
   AbilityKnowledge,
   AnalyzeResult,
+  CampaignReportSummary,
   DslValidationResult,
   DocumentSource,
   ExtractedCaseDraft,
@@ -16,16 +17,21 @@ import type {
   HumanIntervention,
   HumanInterventionCreate,
   LLMSettings,
+  MaintenanceFeedback,
   NaturalLanguageTestRequest,
   ProjectAccount,
   ProjectAccountPayload,
   ProjectCreatePayload,
+  ProjectWizardBootstrapRequest,
+  ProjectWizardBootstrapResponse,
+  PrescanResponse,
   PromptInfo,
   PromptPreview,
   RuleDraft,
   SystemInfo,
   SystemCheckResult,
   TestArtifact,
+  TestCampaign,
   TestCaseVersion,
   TestCaseDSL,
   TestProject,
@@ -144,6 +150,48 @@ export function acceptExtractedDraft(draftId: number): Promise<FunctionalTestCas
 
 export function rejectExtractedDraft(draftId: number): Promise<ExtractedCaseDraft> {
   return postJson<ExtractedCaseDraft>(`/api/extracted-case-drafts/${draftId}/reject`, {});
+}
+
+export function bootstrapProjectWizard(payload: ProjectWizardBootstrapRequest): Promise<ProjectWizardBootstrapResponse> {
+  return postJson<ProjectWizardBootstrapResponse>("/api/project-wizard/bootstrap", payload);
+}
+
+export function importBootstrapCases(
+  packageId: number,
+  payload: { draftIndexes?: number[] | null; activate?: boolean }
+): Promise<{ packageId: number; projectId: number; importedCaseIds: number[]; skippedIndexes: number[]; summary: Record<string, unknown> }> {
+  return postJson(`/api/project-wizard/bootstrap/${packageId}/import-cases`, payload);
+}
+
+export function runProjectPrescan(projectId: number, payload: { caseIds?: number[] | null; mode?: string; dryRun?: boolean }): Promise<PrescanResponse> {
+  return postJson<PrescanResponse>(`/api/projects/${projectId}/prescan`, payload);
+}
+
+export function createCampaign(
+  projectId: number,
+  payload: { name: string; description?: string | null; caseIds?: number[] | null; settings?: Record<string, unknown> }
+): Promise<TestCampaign> {
+  return postJson<TestCampaign>(`/api/projects/${projectId}/campaigns`, payload);
+}
+
+export function startCampaign(
+  campaignId: number,
+  payload: { accountId?: number | null; settingsOverride?: Record<string, unknown>; maxCases?: number | null } = {}
+): Promise<TestCampaign> {
+  return postJson<TestCampaign>(`/api/campaigns/${campaignId}/start`, payload);
+}
+
+export function getCampaignReportSummary(campaignId: number): Promise<CampaignReportSummary> {
+  return getJson<CampaignReportSummary>(`/api/campaigns/${campaignId}/report-summary`);
+}
+
+export function createMaintenanceFeedback(payload: {
+  runId?: number | null;
+  failureSampleId?: number | null;
+  summary?: string | null;
+  userNote?: string | null;
+}): Promise<MaintenanceFeedback> {
+  return postJson<MaintenanceFeedback>("/api/maintenance-feedback", payload);
 }
 
 export function createProjectCase(projectId: number, payload: FunctionalTestCasePayload): Promise<FunctionalTestCase> {

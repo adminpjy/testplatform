@@ -214,6 +214,158 @@ export interface ExtractedCaseDraft {
   updated_at: string;
 }
 
+export interface BootstrapFilePayload {
+  file_name: string;
+  role: string;
+  content: string;
+}
+
+export interface InitialCaseDraft {
+  index: number;
+  caseName: string;
+  naturalLanguageGoal: string;
+  menuPath: string | null;
+  businessIntent: string | null;
+  testData: Record<string, unknown>;
+  riskLevel: string;
+  confidence: number;
+  source: string;
+}
+
+export interface ProjectBootstrapPackage {
+  id: number;
+  project_id: number;
+  package_code: string;
+  status: string;
+  source_type: string;
+  file_a_name: string | null;
+  file_a_role: string | null;
+  file_b_name: string | null;
+  file_b_role: string | null;
+  draft_cases_json: Record<string, unknown> | null;
+  imported_case_ids_json: Record<string, unknown> | null;
+  summary_json: Record<string, unknown> | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ProjectWizardBootstrapRequest {
+  project: ProjectCreatePayload & { project_code?: string | null };
+  account?: ProjectAccountPayload | null;
+  files: BootstrapFilePayload[];
+  generatorResult?: Record<string, unknown> | Array<Record<string, unknown>> | null;
+  sourceType?: string;
+}
+
+export interface ProjectWizardBootstrapResponse {
+  projectId: number;
+  package: ProjectBootstrapPackage;
+  drafts: InitialCaseDraft[];
+  summary: Record<string, unknown>;
+}
+
+export interface ImportBootstrapCasesResponse {
+  packageId: number;
+  projectId: number;
+  importedCaseIds: number[];
+  skippedIndexes: number[];
+  summary: Record<string, unknown>;
+}
+
+export interface PrescanSession {
+  id: number;
+  project_id: number;
+  session_code: string;
+  status: string;
+  mode: string;
+  dry_run: boolean;
+  case_ids_json: Record<string, unknown> | null;
+  plan_json: Record<string, unknown> | null;
+  findings_json: Record<string, unknown> | null;
+  rule_draft_ids_json: Record<string, unknown> | null;
+  ability_knowledge_ids_json: Record<string, unknown> | null;
+  enhanced_cases_json: Record<string, unknown> | null;
+  error_summary: string | null;
+  started_at: string | null;
+  ended_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PrescanResponse {
+  session: PrescanSession;
+  summary: Record<string, unknown>;
+  ruleDraftIds: number[];
+  abilityKnowledgeIds: number[];
+  enhancedCases: Array<Record<string, unknown>>;
+}
+
+export interface CampaignCase {
+  id: number;
+  campaign_id: number;
+  project_id: number;
+  case_id: number;
+  case_version_id: number | null;
+  run_id: number | null;
+  order_index: number;
+  status: string;
+  failure_summary: string | null;
+  result_json: Record<string, unknown> | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TestCampaign {
+  id: number;
+  project_id: number;
+  campaign_code: string;
+  name: string;
+  description: string | null;
+  status: string;
+  case_ids_json: Record<string, unknown> | null;
+  settings_json: Record<string, unknown> | null;
+  total_count: number;
+  queued_count: number;
+  running_count: number;
+  passed_count: number;
+  failed_count: number;
+  blocked_count: number;
+  summary_json: Record<string, unknown> | null;
+  started_at: string | null;
+  ended_at: string | null;
+  created_at: string;
+  updated_at: string;
+  cases: CampaignCase[];
+}
+
+export interface CampaignReportSummary {
+  campaignId: number;
+  campaignCode: string;
+  projectId: number;
+  name: string;
+  status: string;
+  totals: Record<string, unknown>;
+  failures: Array<Record<string, unknown>>;
+  runs: Array<Record<string, unknown>>;
+  recommendations: string[];
+}
+
+export interface MaintenanceFeedback {
+  id: number;
+  feedback_code: string;
+  project_id: number | null;
+  case_id: number | null;
+  run_id: number | null;
+  failure_sample_id: number | null;
+  status: string;
+  summary: string | null;
+  evidence_package_json: Record<string, unknown> | null;
+  artifact_paths_json: Record<string, unknown> | null;
+  maintainer_notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface AnalyzeResult {
   readyToExecute: boolean;
   confidence: number;

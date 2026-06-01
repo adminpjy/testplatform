@@ -4,6 +4,7 @@ import { idFromHash, routeFromHash, type AppRoute } from "./routes/navigation";
 import { AbilityCenterPage } from "./pages/AbilityCenterPage";
 import { CaseDetailPage } from "./pages/CaseDetailPage";
 import { FailureSamplesPage } from "./pages/FailureSamplesPage";
+import { ProjectWizardPage } from "./pages/ProjectWizardPage";
 import { ProjectsPage } from "./pages/ProjectsPage";
 import { ReportsPage } from "./pages/ReportsPage";
 import { SystemSettingsPage } from "./pages/SystemSettingsPage";
@@ -34,6 +35,8 @@ function renderPage(route: AppRoute) {
   switch (route) {
     case "projects":
       return <ProjectsPage />;
+    case "project-wizard":
+      return <ProjectWizardPage />;
     case "project-detail":
       return <ProjectsPage initialProjectId={idFromHash(window.location.hash, "projects")} />;
     case "case-detail":
