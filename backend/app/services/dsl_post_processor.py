@@ -31,7 +31,11 @@ class DslPostProcessor:
         normalized = dict(dsl)
         normalized["testData"] = dict(normalized.get("testData") or {})
         normalized_steps = [self.normalize_step(step) for step in normalized.get("steps") or [] if isinstance(step, dict)]
-        normalized["steps"] = _relax_brittle_login_success_assertions(normalized_steps)
+        folded_steps = _fold_table_row_substeps(
+            _relax_brittle_login_success_assertions(normalized_steps),
+            normalized["testData"],
+        )
+        normalized["steps"] = _normalize_query_row_context(folded_steps)
         for step in normalized["steps"]:
             _merge_step_test_data(normalized["testData"], step)
         missing_fields = list(normalized.get("missingFields") or [])
@@ -62,6 +66,10 @@ class DslPostProcessor:
             current.setdefault("loopPolicy", _loop_policy_from_step(current))
             current.setdefault("readableDescription", "处理表格中的所有数据行")
             action = "process_table_rows"
+
+        if action == "process_table_rows":
+            current.setdefault("loopPolicy", _loop_policy_from_step(current))
+            _normalize_existing_row_steps(current)
 
         if action in {"click", "confirm_dialog", "click_table_row_action"} and _is_approval_pass_target(target):
             _remember_original(current, action, target, "approval pass click is normalized to business goal")
@@ -106,6 +114,203 @@ class DslPostProcessor:
 
 def normalize_dsl(dsl: dict[str, Any]) -> dict[str, Any]:
     return DslPostProcessor().normalize_dsl(dsl)
+
+
+def _normalize_query_row_context(steps: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    normalized: list[dict[str, Any]] = []
+    last_query_criteria: dict[str, Any] = {}
+    for step in steps:
+        current = dict(step)
+        action = str(current.get("action") or "")
+        intent = str((current.get("operationIntent") or {}).get("intent") or current.get("intent") or "")
+        criteria = _extract_query_criteria(current)
+        if criteria and action in {"query_table", "query_table_count"} and not isinstance(current.get("criteria"), dict):
+            current["criteria"] = dict(criteria)
+        if (
+            last_query_criteria
+            and action in {"open_table_row", "open_row_link_or_detail", "click_table_row_action"}
+            and not isinstance(current.get("rowCriteria"), dict)
+            and not isinstance(current.get("row_criteria"), dict)
+        ):
+            current["rowCriteria"] = dict(last_query_criteria)
+        if criteria and (action in {"query_table", "query_table_count"} or intent == "query_list"):
+            last_query_criteria = dict(criteria)
+        normalized.append(current)
+    return normalized
+
+
+def _extract_query_criteria(step: dict[str, Any]) -> dict[str, Any]:
+    criteria: dict[str, Any] = {}
+    for key in [
+        "criteria",
+        "query",
+        "queryConditions",
+        "query_conditions",
+        "conditions",
+        "filters",
+        "filterConditions",
+        "filter_conditions",
+        "search",
+    ]:
+        value = step.get(key)
+        if isinstance(value, dict):
+            for field, field_value in value.items():
+                if field_value not in (None, ""):
+                    criteria[str(field)] = field_value
+    return criteria
+
+
+def _fold_table_row_substeps(steps: list[dict[str, Any]], test_data: dict[str, Any]) -> list[dict[str, Any]]:
+    folded: list[dict[str, Any]] = []
+    index = 0
+    while index < len(steps):
+        current = dict(steps[index])
+        if str(current.get("action") or "") != "process_table_rows":
+            folded.append(current)
+            index += 1
+            continue
+
+        body_steps: list[dict[str, Any]] = []
+        scan = index + 1
+        while scan < len(steps) and _is_table_loop_approval_body_step(steps[scan]):
+            body_steps.append(dict(steps[scan]))
+            scan += 1
+
+        if body_steps or _has_approval_row_steps(current):
+            opinion = _opinion_from_steps_or_test_data(body_steps, test_data)
+            _configure_table_loop_for_approval(current, opinion=opinion)
+            current.setdefault("normalizationReason", "table row follow-up approval steps folded into rowSteps")
+            current["normalizedBy"] = "DslPostProcessor"
+            folded.append(current)
+            index = scan
+            continue
+
+        folded.append(current)
+        index += 1
+    return folded
+
+
+def _is_table_loop_approval_body_step(step: dict[str, Any]) -> bool:
+    action = str(step.get("action") or "")
+    intent = str((step.get("operationIntent") or {}).get("intent") or step.get("intent") or "")
+    text = _flatten(
+        {
+            "target": step.get("target"),
+            "description": step.get("description"),
+            "readableDescription": step.get("readableDescription"),
+            "name": step.get("name"),
+            "stepName": step.get("stepName") or step.get("step_name"),
+            "formData": step.get("formData"),
+        }
+    )
+    if action == "wait":
+        return True
+    if action in {"open_table_row", "open_row_link_or_detail", "click_table_row_action"}:
+        return True
+    if action in {"fill_form", "auto_fill_form"} and any(token in text for token in ["意见", "审批", "审核", "办理", "处理"]):
+        return True
+    if action in {"click", "confirm_dialog"} and any(token in text for token in ["第一行", "任意列", "待办", "提交", "审批", "审核", "同意", "通过", "办理", "处理"]):
+        return True
+    if action == "business_goal" and intent in {"approval_pass", "approval_reject"}:
+        return True
+    if action == "business_goal" and any(token in text for token in ["审批", "审核", "同意", "通过", "提交"]):
+        return True
+    if action == "close_dialog_by_common_controls":
+        return True
+    return False
+
+
+def _has_approval_row_steps(step: dict[str, Any]) -> bool:
+    loop_policy = step.get("loopPolicy") if isinstance(step.get("loopPolicy"), dict) else {}
+    for key in ["rowSteps", "row_steps", "subSteps", "sub_steps", "bodySteps", "body_steps"]:
+        value = step.get(key) or loop_policy.get(key)
+        if not isinstance(value, list):
+            continue
+        if any(_is_table_loop_approval_body_step(item) for item in value if isinstance(item, dict)):
+            return True
+    return False
+
+
+def _opinion_from_steps_or_test_data(body_steps: list[dict[str, Any]], test_data: dict[str, Any]) -> str | None:
+    for step in body_steps:
+        for key in ["value", "opinion", "opinionText", "approvalOpinion", "comment", "commentText"]:
+            value = step.get(key)
+            if value not in (None, ""):
+                return str(value)
+        for mapping_key in ["formData", "testData"]:
+            mapping = step.get(mapping_key)
+            if isinstance(mapping, dict):
+                value = _opinion_from_mapping(mapping)
+                if value:
+                    return value
+    return _opinion_from_mapping(test_data)
+
+
+def _opinion_from_mapping(mapping: dict[str, Any]) -> str | None:
+    for key in ["我的意见", "审批意见", "审核意见", "处理意见", "办理意见", "意见", "opinion", "comment"]:
+        value = mapping.get(key)
+        if value not in (None, ""):
+            return str(value)
+    return None
+
+
+def _configure_table_loop_for_approval(step: dict[str, Any], *, opinion: str | None) -> None:
+    loop_policy = dict(step.get("loopPolicy") or step.get("loop_policy") or {})
+    loop_policy.setdefault("maxRows", int(step.get("maxRows") or step.get("max_rows") or 200))
+    loop_policy.setdefault("emptyStrategy", step.get("emptyStrategy") or step.get("empty_strategy") or "pass")
+    loop_policy.setdefault("rowAction", "open_todo")
+    loop_policy.setdefault("openMode", "new_page_or_same_page")
+    loop_policy.setdefault("closeStrategy", "close_new_page_or_return_to_list")
+    loop_policy.setdefault(
+        "rowEntryLabels",
+        ["相关办理人处理", "办理人处理", "待办处理", "办理", "处理", "审批", "审核", "标题", "文号", "单号"],
+    )
+    row_step = _approval_row_step(opinion)
+    loop_policy["rowSteps"] = [row_step]
+    step["loopPolicy"] = loop_policy
+    step["rowSteps"] = [row_step]
+    step.setdefault("target", "我的待办列表")
+    step.setdefault("readableDescription", "逐条打开待办并提交审批意见")
+
+
+def _approval_row_step(opinion: str | None) -> dict[str, Any]:
+    form_data = {}
+    if opinion:
+        form_data = {"我的意见": opinion, "审批意见": opinion, "意见": opinion}
+    row_step: dict[str, Any] = {
+        "action": "business_goal",
+        "target": "审批通过",
+        "intent": "approval_pass",
+        "readableDescription": "填写审批意见并提交",
+    }
+    if opinion:
+        row_step["value"] = opinion
+        row_step["formData"] = form_data
+    return row_step
+
+
+def _normalize_existing_row_steps(step: dict[str, Any]) -> None:
+    loop_policy = dict(step.get("loopPolicy") or step.get("loop_policy") or {})
+    for key in ["rowSteps", "row_steps", "subSteps", "sub_steps", "bodySteps", "body_steps"]:
+        value = step.get(key) if isinstance(step.get(key), list) else loop_policy.get(key)
+        if not isinstance(value, list):
+            continue
+        normalized = []
+        for item in value:
+            if not isinstance(item, dict):
+                continue
+            current = dict(item)
+            action = str(current.get("action") or "")
+            target = str(current.get("target") or "")
+            if action in {"click", "confirm_dialog", "click_table_row_action"} and _is_approval_pass_target(target):
+                current["action"] = "business_goal"
+                current["intent"] = "approval_pass"
+                current["target"] = "审批通过"
+            normalized.append(current)
+        step[key] = normalized
+        loop_policy[key] = normalized
+    if loop_policy:
+        step["loopPolicy"] = loop_policy
 
 
 def parse_menu_path(target: str) -> list[str]:

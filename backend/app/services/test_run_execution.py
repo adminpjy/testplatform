@@ -28,6 +28,8 @@ from app.schemas.test_runs import TestCaseDSL, TestRunCreate
 from app.services.ability_resolver import annotate_dsl_with_abilities
 from app.services.dsl_post_processor import normalize_dsl
 from app.services.failure_analyzer import analyze_step_failure, failure_type
+from app.services.llm_settings import get_active_llm_config
+from app.services.natural_language_parser import NaturalLanguageParser
 from app.utils.url_policy import ensure_allowed_url
 from app.utils.secrets import decrypt_secret
 from executor.aitp_executor.runner.case_runner import CaseRunner
@@ -55,6 +57,8 @@ def create_and_execute_run(db: Session, payload: TestRunCreate) -> TestRun:
         dsl.get("testData"),
         payload.testDataOverride,
     )
+    instruction = payload.instruction or (version.natural_language_goal if version else None) or (case.instruction if case else None)
+    test_data = _apply_instruction_record_criteria(test_data, instruction)
     settings = _merge_dicts(
         case.settings_json if case else None,
         version.settings_json if version else None,
@@ -71,7 +75,7 @@ def create_and_execute_run(db: Session, payload: TestRunCreate) -> TestRun:
         dsl=dsl,
         test_data=test_data,
         settings=settings,
-        instruction=payload.instruction or (version.natural_language_goal if version else None) or (case.instruction if case else None),
+        instruction=instruction,
         base_url=payload.base_url,
         run_name=None,
     )
@@ -119,7 +123,7 @@ def rerun_test_run(db: Session, run_id: int) -> TestRun:
     version = db.get(TestCaseVersion, source.case_version_id) if source.case_version_id else None
     account = db.get(TestAccount, source.account_id) if source.account_id else None
     system = db.get(TestSystem, source.system_id) if source.system_id else None
-    dsl = normalize_dsl(source.dsl_snapshot or source.dsl_json or {})
+    dsl = _source_dsl_for_rerun(source, account=account)
     return _create_run_record_and_start(
         db,
         project=project,
@@ -155,7 +159,7 @@ def recover_test_run_from_intervention(
     account = db.get(TestAccount, source.account_id) if source.account_id else None
     system = db.get(TestSystem, source.system_id) if source.system_id else None
     failed_step = db.get(TestStepRun, step_run_id) if step_run_id else None
-    dsl = normalize_dsl(source.dsl_snapshot or source.dsl_json or {})
+    dsl = _source_dsl_for_rerun(source, account=account)
     recovery_steps = _intervention_plan_steps_to_dsl(plan)
     if recovery_steps:
         failed_index = _failed_step_index(db, run_id=run_id, failed_step=failed_step, dsl=dsl)
@@ -240,6 +244,48 @@ def save_run_as_case(db: Session, payload: SaveRunAsCaseRequest) -> TestCase:
     return case
 
 
+def _source_dsl_for_rerun(source: TestRun, *, account: TestAccount | None) -> dict:
+    dsl = source.dsl_snapshot or source.dsl_json
+    if not isinstance(dsl, dict) or not dsl.get("steps"):
+        raise ValueError("运行记录没有保存可执行 DSL 快照，无法直接重跑。请重新分析或选择包含 DSL 的运行记录。")
+    if _requires_unavailable_runtime_password(source, dsl, account=account):
+        raise ValueError(
+            "该运行记录使用的是临时输入的密码，系统只保存脱敏快照，不保存明文密码。"
+            "请先为项目配置测试账号，或点击该运行记录带入配置后补充密码再执行。"
+        )
+    return normalize_dsl(dsl)
+
+
+def _requires_unavailable_runtime_password(
+    source: TestRun,
+    dsl: dict,
+    *,
+    account: TestAccount | None,
+) -> bool:
+    if account is not None:
+        return False
+    credentials = dsl.get("credentials") if isinstance(dsl.get("credentials"), dict) else {}
+    secret_ref = str(credentials.get("secret_ref") or "")
+    if secret_ref not in {"runtime_form_password", "redacted_password"}:
+        return False
+    if source.account_id is not None:
+        return True
+    return bool(credentials.get("username") or _dsl_contains_login_step(dsl))
+
+
+def _dsl_contains_login_step(dsl: dict) -> bool:
+    for step in dsl.get("steps") or []:
+        if not isinstance(step, dict):
+            continue
+        text = " ".join(
+            str(step.get(key) or "")
+            for key in ["action", "target", "intent", "description", "name", "stepName", "step_name"]
+        ).lower()
+        if "登录" in text or "登陆" in text or "login" in text or "signin" in text:
+            return True
+    return False
+
+
 def _start_background_execution(run_id: int, dsl: dict) -> None:
     thread = Thread(target=_execute_run_background, args=(run_id, dsl), daemon=True)
     thread.start()
@@ -259,7 +305,7 @@ def _execute_run_background(run_id: int, dsl: dict) -> None:
         db.commit()
 
         try:
-            _apply_executor_runtime_env()
+            _apply_executor_runtime_env(dsl)
             execution_result = CaseRunner(event_sink=_runtime_sink(db, run.id)).run(run_code=run.run_code, dsl=dsl)
             _persist_execution_result(db, run, execution_result)
             run.status = "passed" if execution_result["status"] == "passed" else "failed"
@@ -280,7 +326,8 @@ def _execute_run_background(run_id: int, dsl: dict) -> None:
             _update_case_run_stats(db, run)
 
 
-def _apply_executor_runtime_env() -> None:
+def _apply_executor_runtime_env(dsl: dict | None = None) -> None:
+    run_settings = dsl.get("settings") if isinstance(dsl, dict) and isinstance(dsl.get("settings"), dict) else {}
     values = {
         "EXECUTOR_MODE": app_settings.executor_mode,
         "CUBE_API_URL": app_settings.cube_api_url,
@@ -303,6 +350,68 @@ def _apply_executor_runtime_env() -> None:
         "GOAL_TOTAL_TIMEOUT_MS": str(app_settings.goal_total_timeout_ms),
         "GOAL_SINGLE_ACTION_TIMEOUT_MS": str(app_settings.goal_single_action_timeout_ms),
     }
+    try:
+        llm_config = get_active_llm_config()
+        vision_enabled = _vision_enabled_for_run(run_settings, has_active_model=bool(llm_config.base_url and llm_config.api_key))
+        values.update(
+            {
+                "LLM_PROVIDER": llm_config.provider,
+                "TEST_LLM_BASE_URL": llm_config.base_url,
+                "TEST_LLM_API_KEY": llm_config.api_key,
+                "TEST_LLM_MODEL": llm_config.model,
+                "TEST_LLM_TIMEOUT_SECONDS": str(llm_config.timeout_seconds),
+                "TEST_LLM_MAX_TOKENS": str(llm_config.max_tokens),
+                "TEST_LLM_TEMPERATURE": str(llm_config.temperature),
+                "TEST_LLM_TOP_P": str(llm_config.top_p),
+                "TEST_LLM_VERIFY_SSL": _bool_string(llm_config.verify_ssl),
+                "TEST_LLM_CA_BUNDLE": llm_config.ca_bundle,
+                "TEST_LLM_TRUST_ENV": _bool_string(llm_config.trust_env),
+                "VISION_FALLBACK_ENABLED": _bool_string(vision_enabled),
+                "VISION_MODEL_PROVIDER": app_settings.vision_model_provider or llm_config.provider,
+                "VISION_MODEL_ENDPOINT": app_settings.vision_model_endpoint or llm_config.base_url,
+                "VISION_MODEL_API_KEY": (
+                    app_settings.vision_model_api_key.get_secret_value()
+                    if app_settings.vision_model_api_key
+                    else llm_config.api_key
+                ),
+                "VISION_MODEL_NAME": app_settings.vision_model_name or llm_config.model,
+                "VISION_MODEL_TIMEOUT": str(app_settings.vision_model_timeout or llm_config.timeout_seconds),
+                "VISION_MODEL_VERIFY_SSL": _bool_string(app_settings.vision_model_verify_ssl if app_settings.vision_model_endpoint else llm_config.verify_ssl),
+                "VISION_MODEL_CA_BUNDLE": app_settings.vision_model_ca_bundle or llm_config.ca_bundle,
+                "VISION_MODEL_TRUST_ENV": _bool_string(app_settings.vision_model_trust_env if app_settings.vision_model_endpoint else llm_config.trust_env),
+            }
+        )
+    except Exception:
+        fallback_has_model = bool(app_settings.test_llm_base_url and app_settings.test_llm_api_key)
+        vision_enabled = _vision_enabled_for_run(run_settings, has_active_model=fallback_has_model)
+        values.update(
+            {
+                "LLM_PROVIDER": app_settings.llm_provider,
+                "TEST_LLM_BASE_URL": app_settings.test_llm_base_url,
+                "TEST_LLM_MODEL": app_settings.test_llm_model,
+                "TEST_LLM_TIMEOUT_SECONDS": str(app_settings.test_llm_timeout_seconds),
+                "TEST_LLM_MAX_TOKENS": str(app_settings.test_llm_max_tokens),
+                "TEST_LLM_TEMPERATURE": str(app_settings.test_llm_temperature),
+                "TEST_LLM_TOP_P": str(app_settings.test_llm_top_p),
+                "TEST_LLM_VERIFY_SSL": _bool_string(app_settings.test_llm_verify_ssl),
+                "TEST_LLM_CA_BUNDLE": app_settings.test_llm_ca_bundle,
+                "TEST_LLM_TRUST_ENV": _bool_string(app_settings.test_llm_trust_env),
+                "VISION_FALLBACK_ENABLED": _bool_string(vision_enabled),
+                "VISION_MODEL_PROVIDER": app_settings.vision_model_provider or app_settings.llm_provider,
+                "VISION_MODEL_ENDPOINT": app_settings.vision_model_endpoint or app_settings.test_llm_base_url,
+                "VISION_MODEL_NAME": app_settings.vision_model_name or app_settings.test_llm_model,
+                "VISION_MODEL_TIMEOUT": str(app_settings.vision_model_timeout or app_settings.test_llm_timeout_seconds),
+                "VISION_MODEL_VERIFY_SSL": _bool_string(app_settings.vision_model_verify_ssl if app_settings.vision_model_endpoint else app_settings.test_llm_verify_ssl),
+                "VISION_MODEL_CA_BUNDLE": app_settings.vision_model_ca_bundle or app_settings.test_llm_ca_bundle,
+                "VISION_MODEL_TRUST_ENV": _bool_string(app_settings.vision_model_trust_env if app_settings.vision_model_endpoint else app_settings.test_llm_trust_env),
+            }
+        )
+        if app_settings.test_llm_api_key:
+            values["TEST_LLM_API_KEY"] = app_settings.test_llm_api_key.get_secret_value()
+        if app_settings.vision_model_api_key:
+            values["VISION_MODEL_API_KEY"] = app_settings.vision_model_api_key.get_secret_value()
+        elif app_settings.test_llm_api_key:
+            values["VISION_MODEL_API_KEY"] = app_settings.test_llm_api_key.get_secret_value()
     if app_settings.playwright_proxy_password:
         values["PLAYWRIGHT_PROXY_PASSWORD"] = app_settings.playwright_proxy_password.get_secret_value()
     for key, value in values.items():
@@ -311,6 +420,26 @@ def _apply_executor_runtime_env() -> None:
 
 def _bool_string(value: bool) -> str:
     return "true" if value else "false"
+
+
+def _default_vision_fallback_enabled(project: TestProject) -> bool:
+    if bool(getattr(project, "enable_vision_fallback_default", False)):
+        return True
+    if app_settings.vision_fallback_enabled:
+        return True
+    try:
+        active = get_active_llm_config()
+        return bool(active.base_url and active.api_key)
+    except Exception:
+        return bool(app_settings.test_llm_base_url and app_settings.test_llm_api_key)
+
+
+def _vision_enabled_for_run(run_settings: dict, *, has_active_model: bool) -> bool:
+    if "visionFallbackEnabled" in run_settings:
+        return bool(run_settings.get("visionFallbackEnabled"))
+    if "vision_fallback_enabled" in run_settings:
+        return bool(run_settings.get("vision_fallback_enabled"))
+    return bool(app_settings.vision_fallback_enabled or has_active_model)
 
 
 def list_runs(db: Session) -> list[TestRun]:
@@ -421,9 +550,75 @@ def list_step_runs(db: Session, run_id: int) -> list[TestStepRun]:
 
 
 def list_artifacts(db: Session, run_id: int) -> list[TestArtifact]:
-    return list(
+    artifacts = list(
         db.scalars(select(TestArtifact).where(TestArtifact.run_id == run_id).order_by(TestArtifact.id)).all()
     )
+    return artifacts + _runtime_process_screenshot_artifacts(db, run_id, artifacts)
+
+
+def _runtime_process_screenshot_artifacts(
+    db: Session,
+    run_id: int,
+    stored_artifacts: list[TestArtifact],
+) -> list[SimpleNamespace]:
+    run = db.get(TestRun, run_id)
+    if run is None or not run.run_code:
+        return []
+    stored_paths = {artifact.file_path for artifact in stored_artifacts if artifact.file_path}
+    try:
+        from executor.aitp_executor.utils.file_paths import runs_root, safe_name
+
+        manifest = runs_root() / safe_name(run.run_code) / "process-screenshots.jsonl"
+    except Exception:
+        return []
+    if not manifest.exists():
+        return []
+
+    step_id_by_number = _step_id_by_number(db, run_id)
+    records: list[SimpleNamespace] = []
+    with manifest.open("r", encoding="utf-8") as handle:
+        for index, line in enumerate(handle, start=1):
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            file_path = str(record.get("path") or "")
+            if not file_path or file_path in stored_paths:
+                continue
+            step_number = _coerce_int(record.get("step_number"))
+            metadata = {
+                "step_number": step_number,
+                "index": record.get("index") or index,
+                "label": record.get("label"),
+                "url": record.get("url"),
+                "title": record.get("title"),
+                "metadata": record.get("metadata") or {},
+            }
+            records.append(
+                SimpleNamespace(
+                    id=-index,
+                    run_id=run_id,
+                    step_id=step_id_by_number.get(step_number),
+                    artifact_type="process_screenshot",
+                    file_path=file_path,
+                    metadata_json=metadata,
+                    created_at=_parse_dt(record.get("created_at")) or _utc_now(),
+                )
+            )
+    return records
+
+
+def _step_id_by_number(db: Session, run_id: int) -> dict[int, int]:
+    step_runs = list(
+        db.scalars(select(TestStepRun).where(TestStepRun.run_id == run_id).order_by(TestStepRun.id)).all()
+    )
+    mapping: dict[int, int] = {}
+    for index, step in enumerate(step_runs, start=1):
+        mapping[index] = step.id
+        number = _coerce_int(step.step_id)
+        if number is not None:
+            mapping[number] = step.id
+    return mapping
 
 
 def latest_screenshot(db: Session, run_id: int) -> TestArtifact | SimpleNamespace | None:
@@ -554,6 +749,9 @@ def _create_run_record_and_start(
 ) -> TestRun:
     execution_dsl = normalize_dsl(dict(dsl))
     execution_dsl["testData"] = test_data
+    settings = dict(settings or {})
+    if "visionFallbackEnabled" not in settings and "vision_fallback_enabled" not in settings:
+        settings["visionFallbackEnabled"] = _default_vision_fallback_enabled(project)
     execution_dsl["settings"] = settings
     selected_base_url = base_url or execution_dsl.get("baseUrl") or (system.login_url if system else None) or project.login_url or project.base_url
     if selected_base_url:
@@ -698,6 +896,30 @@ def _merge_dicts(*values: dict | None) -> dict:
     return merged
 
 
+def _apply_instruction_record_criteria(test_data: dict, instruction: str | None) -> dict:
+    criteria = NaturalLanguageParser._extract_instruction_record_criteria(instruction)
+    if not criteria:
+        return test_data
+    merged = dict(test_data or {})
+    for field, value in criteria.items():
+        aliases = _record_field_aliases(field)
+        matched = [alias for alias in aliases if alias in merged]
+        if matched:
+            for alias in matched:
+                merged[alias] = value
+        else:
+            merged[field] = value
+    return merged
+
+
+def _record_field_aliases(field: str) -> list[str]:
+    if "实例号" in field:
+        return ["实例号", "流程实例号", "instanceNo", "instance_no", "processInstanceId", "process_instance_id"]
+    if field in {"编号", "单据编号", "单号", "申请编号", "工单号"}:
+        return [field, "编号", "单据编号", "单号", "申请编号", "工单号", "recordNo", "record_no"]
+    return [field]
+
+
 def _account_snapshot(account: TestAccount | None) -> dict | None:
     if account is None:
         return None
@@ -826,6 +1048,24 @@ def _persist_execution_result(db: Session, run: TestRun, execution_result: dict)
             step_result.get("accessibility_snapshot_path"),
             {"step_number": step_result.get("step_number")},
         )
+        for process_screenshot in step_result.get("process_screenshots") or []:
+            if not isinstance(process_screenshot, dict):
+                continue
+            _add_artifact(
+                db,
+                run.id,
+                step_run.id,
+                "process_screenshot",
+                process_screenshot.get("path") or process_screenshot.get("file_path"),
+                {
+                    "step_number": step_result.get("step_number"),
+                    "index": process_screenshot.get("index"),
+                    "label": process_screenshot.get("label"),
+                    "url": process_screenshot.get("url"),
+                    "title": process_screenshot.get("title"),
+                    "metadata": process_screenshot.get("metadata") or {},
+                },
+            )
         if step_run.status == "failed":
             _add_artifact(
                 db,
@@ -844,6 +1084,7 @@ def _persist_execution_result(db: Session, run: TestRun, execution_result: dict)
         "locator_debug": "locator_debug",
         "execution_trace": "execution_trace",
         "runtime_stream": "runtime_stream",
+        "process_screenshots": "process_screenshots",
         "sandbox_screenshot": "sandbox_screenshot",
         "playwright_trace": "playwright_trace",
     }

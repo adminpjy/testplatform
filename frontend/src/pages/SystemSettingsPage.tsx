@@ -81,7 +81,7 @@ export function SystemSettingsPage() {
         name: "新的 DeepSeek V4 服务",
         provider: "openai_compatible",
         baseUrl: "",
-        model: "DeepSeek",
+        model: "DeepSeek-V4",
         stream: false,
         verifySsl: true,
         timeoutSeconds: 120,
@@ -89,6 +89,7 @@ export function SystemSettingsPage() {
         temperature: 0,
         topP: 0.95,
         caBundle: "",
+        trustEnv: true,
         apiKey: "",
       };
       return { ...base, activeProfileId: base.activeProfileId || id, profiles: [...base.profiles, profile] };
@@ -275,6 +276,14 @@ export function SystemSettingsPage() {
                     <span>模型</span>
                     <input value={profile.model} onChange={(event) => updateLlmProfile(profile.id, { model: event.target.value })} />
                   </label>
+                  <label className="form-grid__wide">
+                    <span>CA Bundle 文件路径</span>
+                    <input
+                      value={profile.caBundle || ""}
+                      onChange={(event) => updateLlmProfile(profile.id, { caBundle: event.target.value })}
+                      placeholder="可选：企业根证书 PEM 文件路径"
+                    />
+                  </label>
                   <label>
                     <span>最大 Token</span>
                     <input type="number" value={profile.maxTokens} onChange={(event) => updateLlmProfile(profile.id, { maxTokens: Number(event.target.value) })} />
@@ -298,6 +307,10 @@ export function SystemSettingsPage() {
                   <label className="switch-row">
                     <input type="checkbox" checked={profile.verifySsl} onChange={(event) => updateLlmProfile(profile.id, { verifySsl: event.target.checked })} />
                     <span>校验 SSL 证书</span>
+                  </label>
+                  <label className="switch-row">
+                    <input type="checkbox" checked={profile.trustEnv} onChange={(event) => updateLlmProfile(profile.id, { trustEnv: event.target.checked })} />
+                    <span>读取代理/证书环境变量</span>
                   </label>
                 </div>
               </div>

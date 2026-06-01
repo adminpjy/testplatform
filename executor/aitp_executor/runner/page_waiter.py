@@ -142,6 +142,8 @@ def _inspect_page(page: Any, started: float) -> PageReadyState:
                 };
             }"""
         )
+        if not isinstance(payload, dict):
+            return PageReadyState(False, "inspect_empty_payload", _elapsed_ms(started))
         return PageReadyState(
             ready=False,
             reason="waiting",
@@ -154,6 +156,8 @@ def _inspect_page(page: Any, started: float) -> PageReadyState:
             loading_visible=bool(payload.get("loadingVisible")),
         )
     except PlaywrightError as exc:
+        return PageReadyState(False, f"inspect_failed:{exc}", _elapsed_ms(started))
+    except Exception as exc:
         return PageReadyState(False, f"inspect_failed:{exc}", _elapsed_ms(started))
 
 

@@ -1165,7 +1165,7 @@ button:disabled {
 
 .run-history-row {
   display: grid;
-  grid-template-columns: minmax(190px, 1fr) auto 150px 90px;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 10px;
   align-items: center;
   width: 100%;
@@ -1173,8 +1173,21 @@ button:disabled {
   border-radius: 8px;
   background: #ffffff;
   color: #334155;
-  cursor: pointer;
   padding: 10px;
+  text-align: left;
+}
+
+.run-history-row__main {
+  display: grid;
+  grid-template-columns: minmax(190px, 1fr) auto 150px 90px;
+  gap: 10px;
+  align-items: center;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  padding: 0;
   text-align: left;
 }
 
@@ -1195,6 +1208,12 @@ button:disabled {
   gap: 5px;
   color: #64748b;
   font-size: 12px;
+}
+
+.run-history-row__rerun {
+  min-height: 32px;
+  padding: 6px 9px;
+  white-space: nowrap;
 }
 
 .status-badge {
@@ -1309,6 +1328,48 @@ button:disabled {
   object-fit: contain;
 }
 
+.current-process-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(92px, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+  max-height: 260px;
+  overflow: auto;
+}
+
+.current-process-strip__item,
+.step-process-shot {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  border: 1px solid #e2e8f0;
+  border-radius: 7px;
+  background: #ffffff;
+  color: #334155;
+  cursor: pointer;
+  padding: 6px;
+  text-align: left;
+}
+
+.current-process-strip__item img,
+.step-process-shot img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border-radius: 5px;
+  background: #f8fafc;
+  object-fit: cover;
+}
+
+.current-process-strip__item span,
+.step-process-shot span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .step-screenshot-list {
   display: flex;
   flex-direction: column;
@@ -1384,6 +1445,13 @@ button:disabled {
 .step-screenshot-row__details {
   border-top: 1px solid #e2e8f0;
   padding: 12px;
+}
+
+.step-process-shot-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
 }
 
 .step-screenshot-row__large-image {
@@ -2443,6 +2511,7 @@ button:disabled {
 
   .form-grid,
   .run-history-row,
+  .run-history-row__main,
   .step-screenshot-row__summary {
     grid-template-columns: 1fr;
   }

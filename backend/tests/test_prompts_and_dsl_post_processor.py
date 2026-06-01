@@ -126,6 +126,25 @@ def test_natural_language_plan_generates_process_table_rows_only_for_all_todos()
     assert any(step.get("action") == "process_table_rows" for step in dsl.steps)
 
 
+def test_natural_language_plan_builds_todo_batch_approval_row_steps() -> None:
+    payload = NaturalLanguageTestRequest(
+        instruction="1、登录系统\n2、读取待办列表\n3、逐一点开待办，填写意见“按要求执行”，点击提交",
+        base_url="https://work.example.test/",
+        stream=True,
+    )
+    dsl = NaturalLanguageParser(provider=StaticTestLLMProvider()).plan(payload)
+
+    process_steps = [step for step in dsl.steps if step.get("action") == "process_table_rows"]
+    assert process_steps
+    process_step = process_steps[0]
+    row_steps = process_step["loopPolicy"]["rowSteps"]
+    assert row_steps[0]["action"] == "business_goal"
+    assert row_steps[0]["intent"] == "approval_pass"
+    assert row_steps[0]["value"] == "按要求执行"
+    assert process_step["loopPolicy"]["openMode"] == "new_page_or_same_page"
+    assert not any(str(step.get("target") or "") == "待办表格中的第一行任意列" for step in dsl.steps)
+
+
 def test_natural_language_plan_generates_approval_pass_business_goal() -> None:
     payload = NaturalLanguageTestRequest(
         instruction="审批通过当前单据，并验证审批成功。",
@@ -169,6 +188,73 @@ def test_natural_language_plan_marks_delete_missing_record_target() -> None:
     assert not any(step.get("intent") == "delete_record" for step in dsl.steps)
 
 
+def test_plan_instruction_instance_number_overrides_stale_test_data() -> None:
+    payload = NaturalLanguageTestRequest(
+        instruction="1、打开门户\n2、登录用户\n3、打开“工作台/我的待办”\n4、审批实例号“26058”",
+        base_url="https://work.example.test/",
+        testData={"实例号": "26097"},
+        stream=True,
+    )
+    raw = json.dumps(
+        {
+            "caseName": "审批待办",
+            "baseUrl": "https://work.example.test/",
+            "credentials": {},
+            "testData": {"实例号": "26097"},
+            "settings": {},
+            "steps": [
+                {"action": "business_goal", "target": "登录用户", "intent": "login_system"},
+                {
+                    "action": "navigate_path",
+                    "target": "工作台/我的待办",
+                    "pathSegments": ["工作台", "我的待办"],
+                    "navigationType": "menu_path",
+                },
+                {"action": "business_goal", "target": "审批实例号26097", "intent": "approval_pass"},
+            ],
+        },
+        ensure_ascii=False,
+    )
+
+    dsl = NaturalLanguageParser().parse_plan(raw, payload)
+
+    assert dsl.testData["实例号"] == "26058"
+    query_steps = [step for step in dsl.steps if step.get("action") == "query_table"]
+    open_steps = [step for step in dsl.steps if step.get("action") == "open_table_row"]
+    assert query_steps[0]["queryConditions"]["实例号"] == "26058"
+    assert open_steps[0]["rowCriteria"]["实例号"] == "26058"
+    assert "26097" not in json.dumps(dsl.model_dump(), ensure_ascii=False)
+
+
+def test_analysis_instruction_instance_number_overrides_stale_test_data_wording() -> None:
+    payload = NaturalLanguageTestRequest(
+        instruction="审批实例号“26058”",
+        base_url="https://work.example.test/",
+        testData={"实例号": "26097"},
+        stream=True,
+    )
+    raw = json.dumps(
+        {
+            "readyToExecute": True,
+            "confidence": 0.9,
+            "understoodGoal": "审批实例号26058（测试数据中为26097，以测试数据为准）",
+            "missingFields": [],
+            "clarifyingQuestions": [],
+            "assumptions": ["测试数据中为26097，以测试数据为准"],
+            "riskLevel": "low",
+            "normalizedInstruction": "审批实例号26058（测试数据中为26097，以测试数据为准）",
+        },
+        ensure_ascii=False,
+    )
+
+    analysis = NaturalLanguageParser().parse_analysis(raw, payload)
+
+    assert analysis.normalizedInstruction == "审批实例号“26058”"
+    assert analysis.understoodGoal == "审批实例号“26058”"
+    assert not any("以测试数据为准" in item for item in analysis.assumptions)
+    assert any("以本次目标为准" in item for item in analysis.assumptions)
+
+
 def test_post_processor_converts_business_goal_path() -> None:
     dsl = {
         "caseName": "case",
@@ -194,6 +280,26 @@ def test_post_processor_converts_for_each_table_row_to_process_table_rows() -> N
     assert step["action"] == "process_table_rows"
     assert step["loopPolicy"]["maxRows"] == 10
     assert step["originalAction"] == "for_each_table_row"
+
+
+def test_post_processor_folds_table_row_approval_steps_into_row_steps() -> None:
+    normalized = DslPostProcessor().normalize_dsl(
+        {
+            "testData": {},
+            "steps": [
+                {"action": "process_table_rows", "target": "我的待办列表"},
+                {"action": "click", "target": "待办表格中的第一行任意列"},
+                {"action": "fill_form", "target": "审批意见表单", "formData": {"我的意见": "按要求执行"}},
+                {"action": "click", "target": "提交按钮"},
+            ],
+        }
+    )
+
+    assert len(normalized["steps"]) == 1
+    step = normalized["steps"][0]
+    assert step["action"] == "process_table_rows"
+    assert step["loopPolicy"]["rowSteps"][0]["value"] == "按要求执行"
+    assert step["loopPolicy"]["rowSteps"][0]["intent"] == "approval_pass"
 
 
 def test_post_processor_converts_approval_clicks_to_business_goals() -> None:
@@ -222,6 +328,19 @@ def test_post_processor_adds_auth_precondition_to_business_steps() -> None:
     assert "preconditions" not in normalized["steps"][1]
     assert normalized["steps"][2]["preconditions"] == {"authState": "logged_in"}
     assert normalized["steps"][3]["preconditions"] == {"authState": "logged_in"}
+
+
+def test_post_processor_carries_query_conditions_to_next_table_row_step() -> None:
+    normalized = DslPostProcessor().normalize_dsl(
+        {
+            "steps": [
+                {"action": "query_table", "queryConditions": {"实例号": "26097"}, "operationIntent": {"intent": "query_list"}},
+                {"action": "open_table_row", "target": "我的待办列表"},
+            ],
+        }
+    )
+    assert normalized["steps"][0]["criteria"] == {"实例号": "26097"}
+    assert normalized["steps"][1]["rowCriteria"] == {"实例号": "26097"}
 
 
 def test_post_processor_never_requires_auth_for_open_url() -> None:

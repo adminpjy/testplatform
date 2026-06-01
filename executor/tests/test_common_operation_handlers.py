@@ -11,8 +11,10 @@ from executor.aitp_executor.handlers.date_picker_handler import DatePickerHandle
 from executor.aitp_executor.handlers.dropdown_handler import DropdownHandler
 from executor.aitp_executor.handlers.form_fill_handler import FormFillHandler
 from executor.aitp_executor.handlers.assertion_handler import AssertionHandler
+from executor.aitp_executor.handlers.approval_workflow_handler import ApprovalWorkflowHandler
 from executor.aitp_executor.locator.element_locator import ElementLocator
 from executor.aitp_executor.handlers.table_handler import TableHandler
+from executor.aitp_executor.handlers.query_handler import QueryHandler
 from executor.aitp_executor.handlers.table_row_action_handler import TableRowActionHandler
 
 
@@ -91,6 +93,187 @@ def test_table_row_action_prefers_process_action_over_flow_view(page: Page) -> N
     )
     assert outcome["locator_strategy"] == "table_row_action"
     assert page.evaluate("window.clicked") == "approve"
+
+
+def test_query_handler_uses_query_conditions_and_semantic_form_label(page: Page) -> None:
+    page.set_content(
+        """
+        <form>
+          <div class="el-form-item">
+            <label class="el-form-item__label">实例号</label>
+            <div class="el-form-item__content"><input id="instanceNo" /></div>
+          </div>
+          <button type="button">查询</button>
+        </form>
+        <table><tbody>
+          <tr><td>1</td><td>26097</td><td>杨得草，张龙加班申请</td></tr>
+        </tbody></table>
+        """
+    )
+    context, _events, debug = _runtime_context()
+
+    outcome = QueryHandler().execute(
+        page,
+        step={"action": "query_table", "queryConditions": {"实例号": "26097"}, "operationIntent": {"intent": "query_list"}},
+        execution_context=context,
+    )
+
+    assert page.locator("#instanceNo").input_value() == "26097"
+    assert '"matched_rows": 1' in outcome["reason"]
+    assert any(item.get("criteriaKeys") == ["实例号"] for item in debug)
+
+
+def test_open_table_row_uses_previous_query_criteria(page: Page) -> None:
+    page.set_content(
+        """
+        <table><tbody>
+          <tr><td>1</td><td>26110</td><td><a href="#" onclick="window.opened='26110'">第一条</a></td></tr>
+          <tr><td>2</td><td>26097</td><td><a href="#" onclick="window.opened='26097'">杨得草，张龙加班申请</a></td></tr>
+        </tbody></table>
+        """
+    )
+    dsl = {
+        "steps": [
+            {"action": "query_table", "queryConditions": {"实例号": "26097"}, "operationIntent": {"intent": "query_list"}},
+            {"action": "open_table_row", "target": "我的待办列表", "operationIntent": {"intent": "open_table_row"}},
+        ]
+    }
+    context, _events, _debug = _runtime_context()
+    context["step_number"] = 2
+
+    outcome = TableRowActionHandler().open_first_row(
+        page,
+        step=dsl["steps"][1],
+        dsl=dsl,
+        execution_context=context,
+    )
+
+    assert page.evaluate("window.opened") == "26097"
+    assert outcome["element_ref"] == "row:实例号=26097"
+
+
+def test_process_table_rows_opens_new_page_and_runs_approval_row_steps(page: Page) -> None:
+    page.set_content(
+        """
+        <table><tbody>
+          <tr><td>ZYXX202659</td><td><a href="#" onclick="
+            const w = window.open('', '_blank');
+            w.document.write(`<main>
+              <label for='opinion'>我的意见</label>
+              <textarea id='opinion'></textarea>
+              <button onclick='window.submitted = document.querySelector(&quot;#opinion&quot;).value'>提交</button>
+            </main>`);
+            w.document.close();
+          ">相关办理人处理</a></td></tr>
+        </tbody></table>
+        """
+    )
+    try:
+        screenshots: list[dict] = []
+        holder = {"page": page}
+        context, _events, _debug = _runtime_context()
+        context.update(
+            {
+                "get_active_page": lambda: holder["page"],
+                "set_active_page": lambda new_page, metadata=None: holder.update({"page": new_page}),
+                "capture_process_screenshot": lambda label, metadata=None, page=None: screenshots.append(
+                    {"label": label, "metadata": metadata or {}, "url": (page or holder["page"]).url}
+                ),
+            }
+        )
+
+        approval_handler = ApprovalWorkflowHandler()
+
+        def execute_sub_step(sub_step: dict, sub_page: Page, metadata: dict | None = None) -> dict:
+            outcome = approval_handler.approval_pass(sub_page, step=sub_step, dsl={}, execution_context=context)
+            assert sub_page.locator("#opinion").input_value() == "按要求执行"
+            assert sub_page.evaluate("window.submitted") == "按要求执行"
+            return outcome
+
+        context["execute_sub_step"] = execute_sub_step
+        outcome = TableRowActionHandler().process_rows(
+            page,
+            step={
+                "action": "process_table_rows",
+                "target": "我的待办列表",
+                "loopPolicy": {
+                    "rowEntryLabels": ["相关办理人处理"],
+                    "rowSteps": [
+                        {
+                            "action": "business_goal",
+                            "target": "审批通过",
+                            "intent": "approval_pass",
+                            "value": "按要求执行",
+                        }
+                    ],
+                },
+                "operationIntent": {"intent": "process_table_rows"},
+            },
+            execution_context=context,
+        )
+
+        assert outcome["locator_strategy"] == "table_row_loop"
+        assert '"processed_rows": 1' in outcome["reason"]
+        assert holder["page"] is page
+        assert any(item["label"] == "row_001_opened" for item in screenshots)
+        assert any(item["label"] == "row_001_substep_001_after" for item in screenshots)
+    finally:
+        for opened_page in list(page.context.pages):
+            if opened_page is not page and not opened_page.is_closed():
+                opened_page.close()
+
+
+def test_approval_handler_fills_required_opinion_after_validation(page: Page) -> None:
+    page.set_content(
+        """
+        <main>
+          <textarea id="opinion" placeholder="请输入内容"></textarea>
+          <div id="err" class="el-message" style="display:none">请检查必填项</div>
+          <button onclick="
+            if (document.querySelector('#opinion').value) {
+              window.submitted = true;
+              document.querySelector('#err').style.display = 'none';
+            } else {
+              document.querySelector('#err').style.display = 'block';
+            }
+          ">审批</button>
+        </main>
+        """
+    )
+    context, _events, _debug = _runtime_context()
+
+    outcome = ApprovalWorkflowHandler().approval_pass(
+        page,
+        step={"action": "business_goal", "target": "审批通过", "operationIntent": {"intent": "approval_pass"}},
+        execution_context=context,
+    )
+
+    assert page.evaluate("window.submitted") is True
+    assert page.locator("#opinion").input_value().startswith("同意")
+    assert outcome["locator_strategy"] == "approval_pass"
+
+
+def test_approval_handler_uses_instruction_opinion_text(page: Page) -> None:
+    page.set_content(
+        """
+        <main>
+          <label for="opinion">我的意见</label>
+          <textarea id="opinion"></textarea>
+          <button onclick="window.submitted = document.querySelector('#opinion').value">提交</button>
+        </main>
+        """
+    )
+    context, _events, _debug = _runtime_context()
+
+    outcome = ApprovalWorkflowHandler().approval_pass(
+        page,
+        step={"action": "business_goal", "target": "审批通过", "intent": "approval_pass", "value": "按要求执行"},
+        execution_context=context,
+    )
+
+    assert page.locator("#opinion").input_value() == "按要求执行"
+    assert page.evaluate("window.submitted") == "按要求执行"
+    assert outcome["locator_strategy"] == "approval_pass"
 
 
 def test_dropdown_handler_selects_native_select(page: Page) -> None:

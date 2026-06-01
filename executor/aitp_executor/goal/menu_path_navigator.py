@@ -256,6 +256,12 @@ class MenuPathNavigator:
                 "menu_path_navigator",
                 {"step_id": step_id, "segment": segment, "index": index},
             )
+            _capture_process(
+                context,
+                f"navigation_segment_{index + 1}_before_click",
+                page,
+                {"segment": segment, "index": index, "isLeaf": is_leaf},
+            )
             before = _page_fingerprint(page)
             pages_before = _context_pages(page)
             if not _click(locator):
@@ -274,6 +280,18 @@ class MenuPathNavigator:
 
             if is_leaf:
                 active_page = _prepare_navigation_target_page(new_page, page, path_segments, result, context, emit, step_id)
+                _capture_process(
+                    context,
+                    f"navigation_segment_{index + 1}_after_click",
+                    active_page,
+                    {
+                        "segment": segment,
+                        "index": index,
+                        "isLeaf": True,
+                        "pageChanged": page_changed,
+                        "newPageOpened": new_page is not None,
+                    },
+                )
                 evidence = _target_evidence(active_page, path_segments)
                 if new_page is not None:
                     evidence.append("new_page_opened_after_leaf_click")
@@ -293,6 +311,18 @@ class MenuPathNavigator:
                 return False
 
             transition_evidence = _segment_transition_evidence(page, segment, next_segment)
+            _capture_process(
+                context,
+                f"navigation_segment_{index + 1}_after_click",
+                page,
+                {
+                    "segment": segment,
+                    "index": index,
+                    "nextSegment": next_segment,
+                    "pageChanged": page_changed,
+                    "evidence": transition_evidence,
+                },
+            )
             if _segment_transition_reached(transition_evidence, page_changed=page_changed):
                 evidence = transition_evidence or ["page_changed_after_segment_click"]
                 result.successEvidence.extend(item for item in evidence if item not in result.successEvidence)
@@ -724,6 +754,12 @@ def _prepare_navigation_target_page(
     transition["targetEvidence"] = _target_evidence(new_page, path_segments)
     result.pageTransitions.append(transition)
     _set_active_page(context, new_page, transition)
+    _capture_process(
+        context,
+        "navigation_new_page_after_leaf_click",
+        new_page,
+        {"target": leaf, "targetEvidence": transition["targetEvidence"]},
+    )
     emit(
         "success" if transition["targetEvidence"] else "warning",
         "navigation_page",
@@ -753,6 +789,15 @@ def _set_active_page(context: dict[str, Any], page: Any, transition: dict[str, A
     if callable(setter):
         try:
             setter(page, transition)
+        except Exception:
+            return
+
+
+def _capture_process(context: dict[str, Any], label: str, page: Any, metadata: dict[str, Any] | None = None) -> None:
+    capturer = context.get("capture_process_screenshot")
+    if callable(capturer):
+        try:
+            capturer(label, metadata or {}, page)
         except Exception:
             return
 

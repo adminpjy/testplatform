@@ -16,6 +16,7 @@ import {
   getTestRuns,
   getTestRunSteps,
   interveneStep,
+  rerunTestRun,
   streamAnalyzeAndPlan
 } from "../api/platform";
 import { AnalysisTracePanel } from "../components/AnalysisTracePanel";
@@ -132,8 +133,12 @@ export function TestRunPage() {
     }
   }
 
-  async function selectRun(run: TestRun, focusRuntime = false) {
+  async function selectRun(run: TestRun, focusRuntime = false, applyToForm = true) {
+    setApiError(null);
     setActiveRun(run);
+    if (applyToForm) {
+      await applyRunToForm(run);
+    }
     const [stepList, artifactList, sampleList, interventionList] = await Promise.all([
       getTestRunSteps(run.id),
       getTestRunArtifacts(run.id),
@@ -153,6 +158,38 @@ export function TestRunPage() {
         mainViewRef.current?.scrollIntoView({ block: "start", behavior: "smooth" });
       }, 50);
     }
+  }
+
+  async function applyRunToForm(run: TestRun) {
+    const runDsl = dslFromRun(run);
+    setSelectedProjectId(run.project_id);
+    await loadCasesForProject(run.project_id, run.case_id || undefined);
+    setSelectedCaseId(run.case_id || "");
+    setInstruction(run.instruction_snapshot || run.instruction || runDsl?.caseName || "");
+    setBaseUrl(run.base_url_snapshot || run.base_url || runDsl?.baseUrl || "");
+    setPlannedDsl(runDsl);
+    setAnalysisMessages([]);
+    const runTestData = asRecord(run.test_data_snapshot) || runDsl?.testData || {};
+    setTestDataJson(JSON.stringify(runTestData, null, 2));
+    const runSettings = asRecord(run.settings_snapshot) || runDsl?.settings || {};
+    setVisionFallback(Boolean(runSettings.visionFallbackEnabled));
+    const accountSnapshot = asRecord(run.account_snapshot);
+    const credentials = asRecord(runDsl?.credentials);
+    setUsername(String(accountSnapshot?.username || credentials?.username || ""));
+    setPassword("");
+    setAnalysis({
+      readyToExecute: Boolean(runDsl),
+      confidence: runDsl ? 1 : 0,
+      understoodGoal: run.instruction_snapshot || run.instruction || runDsl?.caseName || run.run_code,
+      missingFields: runDsl ? [] : ["DSL"],
+      clarifyingQuestions: runDsl ? [] : ["该运行记录没有保存可执行 DSL，无法直接带入执行。"],
+      assumptions: [
+        `已从运行记录 ${run.run_code} 带入配置。`,
+        "密码不会从历史记录中回填；直接重跑会优先使用项目测试账号。"
+      ],
+      riskLevel: "low",
+      normalizedInstruction: run.instruction_snapshot || run.instruction || runDsl?.caseName || ""
+    });
   }
 
   async function handleProjectChange(projectId: number) {
@@ -273,8 +310,27 @@ export function TestRunPage() {
       });
       const runList = await getTestRuns();
       setRuns(runList);
-      await selectRun(run);
+      await selectRun(run, false, false);
     } catch (error) {
+      setApiError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setIsExecuting(false);
+    }
+  }
+
+  async function handleRerunFromHistory(run: TestRun) {
+    setApiError(null);
+    setIsExecuting(true);
+    setConfigCollapsed(true);
+    setActiveTab("steps");
+    try {
+      const nextRun = await rerunTestRun(run.id);
+      const runList = await getTestRuns();
+      setRuns(runList);
+      await selectRun(nextRun, true);
+    } catch (error) {
+      await selectRun(run, true);
+      setConfigCollapsed(false);
       setApiError(error instanceof Error ? error.message : String(error));
     } finally {
       setIsExecuting(false);
@@ -491,6 +547,7 @@ export function TestRunPage() {
               <CurrentScreenshotCard
                 run={activeRun}
                 steps={steps}
+                artifacts={artifacts}
                 refreshKey={screenshotRefreshKey}
                 onRefresh={() => setScreenshotRefreshKey(Date.now())}
                 onPreview={openPreview}
@@ -534,7 +591,15 @@ export function TestRunPage() {
           <div className="tab-content-panel">
             {activeTab === "steps" ? <StepScreenshotList steps={steps} artifacts={artifacts} onPreview={openPreview} /> : null}
             {activeTab === "history" ? (
-              <RunHistoryTab runs={runs} activeRun={activeRun} onSelectRun={(run) => void selectRun(run, true)} />
+              <RunHistoryTab
+                runs={runs}
+                activeRun={activeRun}
+                onSelectRun={(run) => {
+                  setConfigCollapsed(false);
+                  void selectRun(run, true);
+                }}
+                onRerun={(run) => void handleRerunFromHistory(run)}
+              />
             ) : null}
             {activeTab === "failures" ? (
               <FailureAnalysisTab
@@ -696,6 +761,8 @@ function artifactLabel(type: string): string {
   if (type === "locator_debug") return "locator-debug";
   if (type === "runtime_stream") return "运行消息";
   if (type === "execution_trace") return "执行轨迹";
+  if (type === "process_screenshots") return "过程截图清单";
+  if (type === "process_screenshot") return "过程截图";
   if (type === "playwright_trace") return "trace.zip";
   if (type === "summary") return "summary.json";
   if (type === "report") return "report.html";
@@ -773,6 +840,15 @@ function materializeDsl(
   }
 ): TestCaseDSL {
   const steps = planned.steps.length > 0 ? planned.steps : fallbackSteps(context);
+  const explicitCriteria = recordCriteriaFromInstruction(context.instruction);
+  const mergedTestData = applyRecordCriteriaToTestData(
+    {
+      ...(planned.testData || {}),
+      ...context.testData
+    },
+    explicitCriteria
+  );
+  const conflicts = recordCriteriaConflicts(context.testData, explicitCriteria);
   return {
     ...planned,
     caseName: planned.caseName || "自然语言测试执行",
@@ -782,16 +858,144 @@ function materializeDsl(
       password: context.password,
       secret_ref: "runtime_form_password"
     },
-    testData: {
-      ...(planned.testData || {}),
-      ...context.testData
-    },
+    testData: mergedTestData,
     settings: {
       ...planned.settings,
       visionFallbackEnabled: context.visionFallback
     },
-    steps: steps.map((step) => hydrateStep(step, context))
+    steps: steps.map((step) => applyRecordCriteriaToStep(hydrateStep(step, context), explicitCriteria, conflicts))
   };
+}
+
+function dslFromRun(run: TestRun): TestCaseDSL | null {
+  const raw = asRecord(run.dsl_snapshot) || asRecord(run.dsl_json);
+  if (!raw) {
+    return null;
+  }
+  const steps = Array.isArray(raw.steps) ? (raw.steps.filter((step) => step && typeof step === "object") as TestCaseStep[]) : [];
+  if (steps.length === 0) {
+    return null;
+  }
+  return {
+    caseName: String(raw.caseName || raw.case_name || run.run_code),
+    baseUrl: String(raw.baseUrl || raw.base_url || run.base_url_snapshot || run.base_url || ""),
+    credentials: asRecord(raw.credentials) || {},
+    testData: asRecord(raw.testData) || asRecord(raw.test_data) || {},
+    settings: asRecord(raw.settings) || {},
+    steps,
+    missingFields: Array.isArray(raw.missingFields) ? raw.missingFields.map(String) : [],
+    clarifyingQuestions: Array.isArray(raw.clarifyingQuestions) ? raw.clarifyingQuestions.map(String) : []
+  };
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  return value as Record<string, unknown>;
+}
+
+function recordCriteriaFromInstruction(instruction: string): Record<string, string> {
+  const fields = ["流程实例号", "实例号", "申请编号", "单据编号", "工单号", "单号", "编号"];
+  for (const field of fields) {
+    const match = instruction.match(new RegExp(`${field}\\s*(?:为|是|=|:|：)?\\s*[“"']?\\s*([A-Za-z0-9_-]{3,})\\s*[”"']?`));
+    if (match?.[1]) {
+      return { [field.includes("实例号") ? "实例号" : field]: match[1] };
+    }
+  }
+  const approvalMatch = instruction.match(/审批\s*[“"']?\s*([A-Za-z0-9_-]{3,})\s*[”"']?/);
+  if (approvalMatch?.[1] && ["待办", "流程", "单据", "实例"].some((token) => instruction.includes(token))) {
+    return { 实例号: approvalMatch[1] };
+  }
+  return {};
+}
+
+function applyRecordCriteriaToTestData(
+  testData: Record<string, unknown>,
+  criteria: Record<string, string>
+): Record<string, unknown> {
+  const next = { ...testData };
+  for (const [field, value] of Object.entries(criteria)) {
+    const aliases = recordFieldAliases(field);
+    const matched = aliases.filter((alias) => Object.prototype.hasOwnProperty.call(next, alias));
+    if (matched.length === 0) {
+      next[field] = value;
+    } else {
+      for (const alias of matched) {
+        next[alias] = value;
+      }
+    }
+  }
+  return next;
+}
+
+function applyRecordCriteriaToStep(
+  step: TestCaseStep,
+  criteria: Record<string, string>,
+  conflicts: Array<[string, string]>
+): TestCaseStep {
+  if (Object.keys(criteria).length === 0) {
+    return step;
+  }
+  const next: TestCaseStep = { ...step };
+  if (["query_table", "query_table_count"].includes(String(next.action))) {
+    next.queryConditions = mergeCriteriaObject(asRecord(next.queryConditions), criteria);
+    next.criteria = mergeCriteriaObject(asRecord(next.criteria), criteria);
+  }
+  if (["open_table_row", "open_row_link_or_detail", "click_table_row_action"].includes(String(next.action))) {
+    next.rowCriteria = mergeCriteriaObject(asRecord(next.rowCriteria), criteria);
+  }
+  for (const key of ["queryConditions", "query_conditions", "criteria", "conditions", "rowCriteria", "row_criteria"]) {
+    const value = asRecord(next[key]);
+    if (value) {
+      next[key] = mergeCriteriaObject(value, criteria);
+    }
+  }
+  for (const key of ["target", "description", "name", "stepName", "step_name", "readableDescription"]) {
+    if (typeof next[key] === "string") {
+      next[key] = replaceConflictingValues(String(next[key]), conflicts);
+    }
+  }
+  return next;
+}
+
+function mergeCriteriaObject(current: Record<string, unknown> | null, criteria: Record<string, string>): Record<string, unknown> {
+  const next = { ...(current || {}) };
+  for (const [field, value] of Object.entries(criteria)) {
+    const alias = recordFieldAliases(field).find((candidate) => Object.prototype.hasOwnProperty.call(next, candidate)) || field;
+    next[alias] = value;
+  }
+  return next;
+}
+
+function recordCriteriaConflicts(
+  testData: Record<string, unknown>,
+  criteria: Record<string, string>
+): Array<[string, string]> {
+  const conflicts: Array<[string, string]> = [];
+  for (const [field, value] of Object.entries(criteria)) {
+    for (const alias of recordFieldAliases(field)) {
+      const oldValue = testData[alias];
+      if (oldValue != null && String(oldValue) !== value) {
+        conflicts.push([String(oldValue), value]);
+      }
+    }
+  }
+  return conflicts;
+}
+
+function replaceConflictingValues(value: string, conflicts: Array<[string, string]>): string {
+  return conflicts.reduce((current, [oldValue, newValue]) => current.split(oldValue).join(newValue), value);
+}
+
+function recordFieldAliases(field: string): string[] {
+  if (field.includes("实例号")) {
+    return ["实例号", "流程实例号", "instanceNo", "instance_no", "processInstanceId", "process_instance_id"];
+  }
+  if (["编号", "单据编号", "单号", "申请编号", "工单号"].includes(field)) {
+    return [field, "编号", "单据编号", "单号", "申请编号", "工单号", "recordNo", "record_no"];
+  }
+  return [field];
 }
 
 function hydrateStep(step: TestCaseStep, context: { baseUrl: string; username: string; password: string }): TestCaseStep {

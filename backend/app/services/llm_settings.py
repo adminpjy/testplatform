@@ -57,6 +57,7 @@ def update_llm_settings(db: Session, payload: LLMSettingsUpdate) -> LLMSettingsR
                 "temperature": profile.temperature,
                 "topP": profile.topP,
                 "caBundle": profile.caBundle,
+                "trustEnv": profile.trustEnv,
             }
         )
     _save_settings(db, {"activeProfileId": payload.activeProfileId, "profiles": profiles})
@@ -83,6 +84,7 @@ def llm_settings_metadata() -> dict[str, Any]:
             "model": settings.test_llm_model,
             "endpoint": settings.test_llm_base_url,
             "stream": settings.test_llm_stream,
+            "trustEnv": settings.test_llm_trust_env,
         }
 
 
@@ -127,6 +129,7 @@ def _default_settings_value(config: Settings) -> dict[str, Any]:
                 "temperature": config.test_llm_temperature,
                 "topP": config.test_llm_top_p,
                 "caBundle": config.test_llm_ca_bundle,
+                "trustEnv": config.test_llm_trust_env,
             }
         ]
     normalized = [_normalize_profile(_encrypt_plain_key(profile), index) for index, profile in enumerate(profiles)]
@@ -169,16 +172,17 @@ def _normalize_profile(profile: dict[str, Any], index: int) -> dict[str, Any]:
         "id": profile_id,
         "name": str(profile.get("name") or profile_id),
         "provider": str(profile.get("provider") or settings.llm_provider or "openai_compatible"),
-        "baseUrl": str(profile.get("baseUrl") or profile.get("base_url") or ""),
+        "baseUrl": _clean_text(profile.get("baseUrl") or profile.get("base_url") or ""),
         "apiKeyEncrypted": profile.get("apiKeyEncrypted") or profile.get("api_key_encrypted"),
-        "model": str(profile.get("model") or settings.test_llm_model),
+        "model": _clean_text(profile.get("model") or settings.test_llm_model),
         "stream": bool(profile.get("stream", settings.test_llm_stream)),
         "verifySsl": bool(profile.get("verifySsl", profile.get("verify_ssl", settings.test_llm_verify_ssl))),
         "timeoutSeconds": _int_value(profile.get("timeoutSeconds", profile.get("timeout_seconds")), settings.test_llm_timeout_seconds),
         "maxTokens": _int_value(profile.get("maxTokens", profile.get("max_tokens")), settings.test_llm_max_tokens),
         "temperature": _float_value(profile.get("temperature"), settings.test_llm_temperature),
         "topP": _float_value(profile.get("topP", profile.get("top_p")), settings.test_llm_top_p),
-        "caBundle": str(profile.get("caBundle") or profile.get("ca_bundle") or ""),
+        "caBundle": _clean_text(profile.get("caBundle") or profile.get("ca_bundle") or ""),
+        "trustEnv": bool(profile.get("trustEnv", profile.get("trust_env", settings.test_llm_trust_env))),
     }
 
 
@@ -197,6 +201,7 @@ def _public_profile(profile: dict[str, Any]) -> LLMProfileRead:
         temperature=float(profile["temperature"]),
         topP=float(profile["topP"]),
         caBundle=str(profile.get("caBundle") or ""),
+        trustEnv=bool(profile.get("trustEnv", settings.test_llm_trust_env)),
         hasApiKey=has_key,
         apiKeyMasked=_mask_profile_key(profile) if has_key else None,
     )
@@ -221,6 +226,7 @@ def _runtime_config(value: dict[str, Any]) -> LLMRuntimeConfig:
         top_p=float(profile["topP"]),
         verify_ssl=bool(profile["verifySsl"]),
         ca_bundle=str(profile.get("caBundle") or ""),
+        trust_env=bool(profile.get("trustEnv", settings.test_llm_trust_env)),
     )
 
 
@@ -248,3 +254,8 @@ def _float_value(value: Any, default: float) -> float:
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+def _clean_text(value: Any) -> str:
+    text = str(value or "").strip()
+    return text.strip("\"'`“”‘’").strip()

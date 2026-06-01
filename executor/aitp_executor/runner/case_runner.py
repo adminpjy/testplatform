@@ -29,6 +29,7 @@ from executor.aitp_executor.locator.element_locator import ElementLocator
 from executor.aitp_executor.reports.artifact_writer import ArtifactWriter
 from executor.aitp_executor.reports.report_writer import ReportWriter
 from executor.aitp_executor.runner.page_waiter import wait_for_page_ready
+from executor.aitp_executor.handlers.query_handler import _extract_query_criteria
 
 
 class CaseRunner:
@@ -184,6 +185,7 @@ class CaseRunner:
         summary_path = writer.write_json("summary.json", summary)
         self._emit_runtime(writer, "progress", "reporting", "正在生成报告", "report_writer", {"summary": summary_path})
         report_path = report_writer.write(summary, results, trace_path=playwright_trace_path)
+        process_screenshots_path = writer.path("process-screenshots.jsonl")
         self._emit_runtime(
             writer,
             "success" if status == "passed" else "error",
@@ -204,6 +206,7 @@ class CaseRunner:
                 "locator_debug": writer.relative(writer.path("locator-debug.jsonl")),
                 "execution_trace": writer.relative(writer.path("execution-trace.jsonl")),
                 "runtime_stream": writer.relative(writer.path("runtime-stream.jsonl")),
+                "process_screenshots": writer.relative(process_screenshots_path) if process_screenshots_path.exists() else None,
                 "sandbox_screenshot": sandbox_screenshot_path,
                 "playwright_trace": playwright_trace_path,
             },
@@ -222,6 +225,7 @@ class CaseRunner:
         started_at = _utc_now()
         action = str(step.get("action") or "")
         target = str(step.get("target") or step.get("selector") or "")
+        process_screenshots: list[dict[str, Any]] = []
         locatable_action = action in {"input", "click", "confirm_dialog", "navigate_menu", "select", "upload_file", "business_goal", "navigate_path"}
         vision_requested = bool((dsl.get("settings") or {}).get("visionFallbackEnabled"))
         is_login_goal = _is_login_goal_step(step)
@@ -240,7 +244,24 @@ class CaseRunner:
             {"type": "step.execute", "step_number": step_number, "step": _redact_step(step)},
         )
         self._wait_for_page_ready(writer, page, step_number=step_number, reason="before_step")
-        auth_failure = self._auth_precondition_failure(page, writer, step_number, step, action, target)
+        self._capture_process_screenshot(
+            page,
+            writer,
+            step_number,
+            "before_step",
+            process_screenshots,
+            {"action": action, "target": target},
+        )
+        auth_failure = self._auth_precondition_failure(
+            page,
+            writer,
+            step_number,
+            step,
+            action,
+            target,
+            page_holder=page_holder,
+            process_screenshots=process_screenshots,
+        )
         if auth_failure is not None:
             return auth_failure
         if action in {"business_goal", "navigate_path"} and not is_login_goal:
@@ -318,10 +339,26 @@ class CaseRunner:
         failure_analysis: dict[str, Any] | None = None
         candidates: list[dict[str, Any]] = []
         try:
-            outcome = self._execute_action(page, step, dsl, writer=writer, step_number=step_number, page_holder=page_holder)
+            outcome = self._execute_action(
+                page,
+                step,
+                dsl,
+                writer=writer,
+                step_number=step_number,
+                page_holder=page_holder,
+                process_screenshots=process_screenshots,
+            )
             page = _active_page(page_holder, page)
             page_ready = self._wait_for_page_ready(writer, page, step_number=step_number, reason="after_action")
             outcome["page_ready"] = page_ready
+            self._capture_process_screenshot(
+                page,
+                writer,
+                step_number,
+                "after_action",
+                process_screenshots,
+                {"action": action, "target": target, "page_ready": page_ready},
+            )
             if locatable_action:
                 self._emit_locator_decision_runtime(writer, step_number, action, target, outcome, vision_requested)
             locator_strategy = outcome.get("locator_strategy")
@@ -335,6 +372,15 @@ class CaseRunner:
         except Exception as exc:
             status = "failed"
             error_summary = _error_summary(exc)
+            page = _active_page(page_holder, page)
+            self._capture_process_screenshot(
+                page,
+                writer,
+                step_number,
+                "on_error",
+                process_screenshots,
+                {"action": action, "target": target, "error": error_summary},
+            )
             failure_type = getattr(exc, "failure_type", None)
             failure_details = getattr(exc, "details", None)
             if isinstance(failure_details, dict):
@@ -400,6 +446,7 @@ class CaseRunner:
             "failure_analysis": failure_analysis,
             "suggested_recovery": failure_analysis.get("suggestedRecovery") if failure_analysis else None,
             "screenshot_path": screenshot_path,
+            "process_screenshots": process_screenshots,
             "dom_snapshot_path": dom_snapshot_path,
             "accessibility_snapshot_path": accessibility_snapshot_path,
             "error_summary": error_summary,
@@ -443,6 +490,7 @@ class CaseRunner:
                 "status": status,
                 "duration_ms": result["duration_ms"],
                 "screenshot_path": screenshot_path,
+                "process_screenshot_count": len(process_screenshots),
                 "dom_snapshot_path": dom_snapshot_path,
                 "accessibility_snapshot_path": accessibility_snapshot_path,
                 "locator_strategy": locator_strategy,
@@ -460,12 +508,23 @@ class CaseRunner:
         step: dict[str, Any],
         action: str,
         target: str,
+        *,
+        page_holder: dict[str, Any] | None = None,
+        process_screenshots: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any] | None:
         started_at = _utc_now()
         guard_result = self.protected_step_guard.check_before_step(
             step,
             page,
-            execution_context=self._handler_execution_context(writer, step_number, step, {}),
+            execution_context=self._handler_execution_context(
+                writer,
+                step_number,
+                step,
+                {},
+                page_holder=page_holder,
+                current_page=page,
+                process_screenshots=process_screenshots,
+            ),
         )
         auth_result = guard_result.authResult or {}
         writer.append_jsonl(
@@ -558,6 +617,15 @@ class CaseRunner:
         )
         self._emit_failure_analysis_runtime(writer, step_number, action, target, failure_analysis)
 
+        page = _active_page(page_holder, page)
+        self._capture_process_screenshot(
+            page,
+            writer,
+            step_number,
+            "auth_blocked",
+            process_screenshots,
+            {"action": action, "target": target, "failureType": guard_result.failureType},
+        )
         screenshot_path = self._write_screenshot(page, writer, step_number)
         dom_snapshot_path = self._write_dom_snapshot(page, writer, step_number)
         accessibility_snapshot_path = self._write_accessibility_snapshot(page, writer, step_number)
@@ -580,6 +648,7 @@ class CaseRunner:
             "failure_analysis": failure_analysis,
             "suggested_recovery": failure_analysis.get("suggestedRecovery"),
             "screenshot_path": screenshot_path,
+            "process_screenshots": process_screenshots or [],
             "dom_snapshot_path": dom_snapshot_path,
             "accessibility_snapshot_path": accessibility_snapshot_path,
             "error_summary": error_summary,
@@ -797,10 +866,19 @@ class CaseRunner:
         writer: ArtifactWriter | None = None,
         step_number: int | None = None,
         page_holder: dict[str, Any] | None = None,
+        process_screenshots: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         action = step.get("action")
         target = step.get("target") or step.get("selector") or ""
-        execution_context = self._handler_execution_context(writer, step_number, step, dsl, page_holder=page_holder, current_page=page)
+        execution_context = self._handler_execution_context(
+            writer,
+            step_number,
+            step,
+            dsl,
+            page_holder=page_holder,
+            current_page=page,
+            process_screenshots=process_screenshots,
+        )
         operation_intent = str((step.get("operationIntent") or {}).get("intent") or "")
 
         if action == "open_url":
@@ -965,6 +1043,7 @@ class CaseRunner:
         *,
         page_holder: dict[str, Any] | None = None,
         current_page: Any | None = None,
+        process_screenshots: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         execution_context: dict[str, Any] = {
             "step_number": step_number,
@@ -997,7 +1076,52 @@ class CaseRunner:
 
             execution_context["set_active_page"] = set_active_page
             execution_context["handle_security_interstitial"] = self._continue_security_interstitial
+
+            def execute_sub_step(
+                sub_step: dict[str, Any],
+                sub_page: Any | None = None,
+                metadata: dict[str, Any] | None = None,
+            ) -> dict[str, Any]:
+                target_page = sub_page if sub_page is not None else _active_page(page_holder, current_page)
+                if writer is not None:
+                    writer.append_jsonl(
+                        "execution-trace.jsonl",
+                        {
+                            "type": "sub_step.execute",
+                            "parent_step_number": step_number,
+                            "metadata": metadata or {},
+                            "step": _redact_step(sub_step),
+                        },
+                    )
+                return self._execute_action(
+                    target_page,
+                    sub_step,
+                    dsl,
+                    writer=writer,
+                    step_number=step_number,
+                    page_holder=page_holder,
+                    process_screenshots=process_screenshots,
+                )
+
+            execution_context["execute_sub_step"] = execute_sub_step
         if writer is not None:
+            if process_screenshots is not None:
+                def capture_process_screenshot(
+                    label: str,
+                    metadata: dict[str, Any] | None = None,
+                    page: Any | None = None,
+                ) -> dict[str, Any] | None:
+                    target_page = page if page is not None else _active_page(page_holder, current_page)
+                    return self._capture_process_screenshot(
+                        target_page,
+                        writer,
+                        step_number,
+                        label,
+                        process_screenshots,
+                        metadata,
+                    )
+
+                execution_context["capture_process_screenshot"] = capture_process_screenshot
             execution_context["emit_runtime"] = (
                 lambda message_type, phase, content, method, metadata: self._emit_runtime(
                     writer,
@@ -1051,6 +1175,54 @@ class CaseRunner:
                     "source": resolution.get("source"),
                 },
             )
+
+    def _capture_process_screenshot(
+        self,
+        page: Any,
+        writer: ArtifactWriter,
+        step_number: int | None,
+        label: str,
+        sink: list[dict[str, Any]] | None,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        if page is None or step_number is None or sink is None:
+            return None
+        try:
+            index = len(sink) + 1
+            path = writer.process_screenshot_path(step_number, index, label)
+            page.screenshot(path=str(path), full_page=True)
+            page_info = _page_info(page)
+            record = {
+                "step_number": step_number,
+                "index": index,
+                "label": label,
+                "path": writer.relative(path),
+                "url": page_info.get("url"),
+                "title": page_info.get("title"),
+                "metadata": metadata or {},
+            }
+            sink.append(record)
+            writer.append_jsonl("process-screenshots.jsonl", record)
+            self._emit_runtime(
+                writer,
+                "progress",
+                "process_screenshot",
+                f"已记录过程截图：{_process_screenshot_label(label)}。",
+                "runner",
+                {
+                    "step_number": step_number,
+                    "label": label,
+                    "index": index,
+                    "screenshot_path": record["path"],
+                    "url": record.get("url"),
+                    "title": record.get("title"),
+                },
+            )
+            return record
+        except PlaywrightError:
+            return None
+        except Exception:
+            return None
 
     def _write_screenshot(self, page: Any, writer: ArtifactWriter, step_number: int) -> str | None:
         try:
@@ -1367,6 +1539,16 @@ def _page_info(page: Any) -> dict[str, Any]:
     return info
 
 
+def _process_screenshot_label(label: str) -> str:
+    labels = {
+        "before_step": "步骤开始前",
+        "after_action": "动作执行后",
+        "on_error": "异常发生时",
+        "auth_blocked": "登录状态拦截时",
+    }
+    return labels.get(label, label.replace("_", " "))
+
+
 def _guard_error_summary(result: GuardResult, target: str) -> str:
     if result.failureType == "protected_step_blocked_by_auth_challenge":
         return (
@@ -1516,12 +1698,24 @@ def _redact_step(step: dict[str, Any]) -> dict[str, Any]:
 def _normalize_runtime_dsl(dsl: dict[str, Any]) -> dict[str, Any]:
     normalized = dict(dsl)
     steps = []
+    last_query_criteria: dict[str, Any] = {}
     for step in normalized.get("steps") or []:
         if not isinstance(step, dict):
             continue
         current = dict(step)
         action = str(current.get("action") or "")
         target = str(current.get("target") or "")
+        intent = str((current.get("operationIntent") or {}).get("intent") or current.get("intent") or "")
+        criteria = _extract_query_criteria(current)
+        if criteria and action in {"query_table", "query_table_count"} and not isinstance(current.get("criteria"), dict):
+            current["criteria"] = criteria
+        if (
+            last_query_criteria
+            and action in {"open_table_row", "open_row_link_or_detail", "click_table_row_action"}
+            and not isinstance(current.get("rowCriteria"), dict)
+            and not isinstance(current.get("row_criteria"), dict)
+        ):
+            current["rowCriteria"] = dict(last_query_criteria)
         segments = _runtime_path_segments(current.get("pathSegments") or target)
         if action == "navigate_path" and len(segments) >= 2:
             current["pathSegments"] = segments
@@ -1537,6 +1731,8 @@ def _normalize_runtime_dsl(dsl: dict[str, Any]) -> dict[str, Any]:
             current.pop("preconditions", None)
         elif step_requires_auth(current):
             current["preconditions"] = {"authState": "logged_in"}
+        if criteria and (action in {"query_table", "query_table_count"} or intent == "query_list"):
+            last_query_criteria = dict(criteria)
         steps.append(current)
     normalized["steps"] = steps
     return normalized

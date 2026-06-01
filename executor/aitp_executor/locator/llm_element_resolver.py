@@ -47,7 +47,11 @@ class LLMElementResolver:
 
 def _configured_from_env() -> bool:
     provider = os.getenv("LLM_PROVIDER", "openai_compatible").strip().lower()
-    return provider in {"openai", "openai-compatible", "openai_compatible"} and bool(os.getenv("TEST_LLM_BASE_URL")) and bool(os.getenv("TEST_LLM_API_KEY"))
+    return (
+        provider in {"openai", "openai-compatible", "openai_compatible"}
+        and bool(_clean_text(os.getenv("TEST_LLM_BASE_URL")))
+        and bool(os.getenv("TEST_LLM_API_KEY", "").strip())
+    )
 
 
 def _element_payload(page_context: dict[str, Any], target: str, action: str, candidates: list[dict[str, Any]]) -> dict[str, Any]:
@@ -67,10 +71,10 @@ def _element_payload(page_context: dict[str, Any], target: str, action: str, can
 
 
 def _call_llm(payload: dict[str, Any]) -> str:
-    api_key = os.getenv("TEST_LLM_API_KEY", "")
+    api_key = os.getenv("TEST_LLM_API_KEY", "").strip()
     system_prompt, user_prompt = _render_element_prompt(payload)
     body = {
-        "model": os.getenv("TEST_LLM_MODEL", "DeepSeek-V4"),
+        "model": _clean_text(os.getenv("TEST_LLM_MODEL", "DeepSeek-V4")) or "DeepSeek-V4",
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
@@ -86,10 +90,8 @@ def _call_llm(payload: dict[str, Any]) -> str:
         headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
         method="POST",
     )
-    context = None
-    if os.getenv("TEST_LLM_VERIFY_SSL", "true").strip().lower() in {"0", "false", "no"}:
-        context = ssl._create_unverified_context()
-    with urlrequest.urlopen(req, timeout=_int_env("TEST_LLM_TIMEOUT_SECONDS", 120), context=context) as response:
+    context = _ssl_context_from_env()
+    with _open_request(req, timeout=_int_env("TEST_LLM_TIMEOUT_SECONDS", 120), context=context) as response:
         response_body = json.loads(response.read().decode("utf-8"))
     return str(response_body["choices"][0]["message"]["content"])
 
@@ -119,7 +121,7 @@ def _render_element_prompt_from_yaml(payload: dict[str, Any]) -> tuple[str, str]
 
 
 def _completion_url(base_url: str) -> str:
-    base = base_url.rstrip("/")
+    base = _clean_text(base_url).rstrip("/")
     if base.endswith("/chat/completions"):
         return base
     parsed = urlparse(base)
@@ -147,3 +149,42 @@ def _int_env(name: str, default: int) -> int:
         return int(os.getenv(name, str(default)))
     except ValueError:
         return default
+
+
+def _clean_text(value: str | None) -> str:
+    text = str(value or "").strip()
+    return text.strip("\"'`“”‘’").strip()
+
+
+def _ssl_context_from_env() -> ssl.SSLContext | None:
+    if os.getenv("TEST_LLM_VERIFY_SSL", "true").strip().lower() in {"0", "false", "no"}:
+        return ssl._create_unverified_context()
+    ca_bundle = _clean_text(os.getenv("TEST_LLM_CA_BUNDLE"))
+    if ca_bundle:
+        return ssl.create_default_context(cafile=ca_bundle)
+    context = _system_trust_context()
+    if context is not None:
+        return context
+    return None
+
+
+def _system_trust_context() -> ssl.SSLContext | None:
+    try:
+        import truststore
+    except Exception:
+        return None
+    try:
+        return truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    except Exception:
+        return None
+
+
+def _open_request(req: urlrequest.Request, *, timeout: int, context: ssl.SSLContext | None):
+    handlers = []
+    if context is not None:
+        handlers.append(urlrequest.HTTPSHandler(context=context))
+    if os.getenv("TEST_LLM_TRUST_ENV", "true").strip().lower() in {"0", "false", "no"}:
+        handlers.append(urlrequest.ProxyHandler({}))
+    if handlers:
+        return urlrequest.build_opener(*handlers).open(req, timeout=timeout)
+    return urlrequest.urlopen(req, timeout=timeout)

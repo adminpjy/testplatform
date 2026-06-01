@@ -2,19 +2,21 @@ import { Image, RefreshCw } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 import { apiUrl, fileUrl } from "../api/client";
-import type { TestRun, TestStepRun } from "../types/platform";
+import type { TestArtifact, TestRun, TestStepRun } from "../types/platform";
 import { readableStepAction } from "../utils/runtimeDisplay";
 import { StatusBadge } from "./StatusBadge";
 
 export function CurrentScreenshotCard({
   run,
   steps,
+  artifacts,
   refreshKey,
   onRefresh,
   onPreview
 }: {
   run: TestRun | null;
   steps: TestStepRun[];
+  artifacts: TestArtifact[];
   refreshKey: number;
   onRefresh: () => void;
   onPreview: (src: string, title: string) => void;
@@ -35,6 +37,11 @@ export function CurrentScreenshotCard({
       ? fileUrl(currentStep.screenshot_path)
       : apiUrl(`/api/test-runs/${run.id}/latest-screenshot?t=${refreshKey}`)
     : null;
+  const processScreenshots = useMemo(() => {
+    return artifacts
+      .filter((artifact) => artifact.artifact_type === "process_screenshot" && artifact.file_path)
+      .sort(compareProcessScreenshots);
+  }, [artifacts]);
 
   useEffect(() => {
     setImageFailed(false);
@@ -87,8 +94,52 @@ export function CurrentScreenshotCard({
       ) : (
         <div className="empty-state">{run ? "暂无截图" : "执行后显示当前截图"}</div>
       )}
+
+      {processScreenshots.length > 0 ? (
+        <div className="current-process-strip" aria-label="过程截图">
+          {processScreenshots.map((artifact) => {
+            const src = fileUrl(artifact.file_path);
+            const title = processScreenshotLabel(artifact);
+            return (
+              <button className="current-process-strip__item" type="button" key={artifact.id} onClick={() => onPreview(src, title)}>
+                <img alt={title} src={src} />
+                <span>{title}</span>
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
     </section>
   );
+}
+
+function compareProcessScreenshots(left: TestArtifact, right: TestArtifact): number {
+  const leftStep = metadataNumber(left, "step_number");
+  const rightStep = metadataNumber(right, "step_number");
+  if (leftStep !== rightStep) return leftStep - rightStep;
+  const leftIndex = metadataNumber(left, "index");
+  const rightIndex = metadataNumber(right, "index");
+  if (leftIndex !== rightIndex) return leftIndex - rightIndex;
+  return left.id - right.id;
+}
+
+function metadataNumber(artifact: TestArtifact, key: string): number {
+  const value = artifact.metadata_json?.[key];
+  return typeof value === "number" ? value : Number(value || 0);
+}
+
+function processScreenshotLabel(artifact: TestArtifact): string {
+  const label = String(artifact.metadata_json?.label || "");
+  if (label === "before_step") return "步骤开始";
+  if (label === "after_action") return "动作完成";
+  if (label === "on_error") return "异常现场";
+  if (label === "login_username_filled") return "账号已填";
+  if (label === "login_password_filled") return "密码已填";
+  if (label === "login_before_submit") return "提交前";
+  if (label.includes("before_click")) return "点击前";
+  if (label.includes("after_click")) return "点击后";
+  if (label === "navigation_new_page_after_leaf_click") return "新页面";
+  return label || "过程截图";
 }
 
 function formatTime(value?: string | null): string {

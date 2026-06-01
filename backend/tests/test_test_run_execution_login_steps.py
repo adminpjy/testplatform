@@ -7,10 +7,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.services.test_run_execution import (
     _apply_executor_runtime_env,
+    _apply_instruction_record_criteria,
     _hydrate_login_steps,
     _insert_intervention_steps,
     _intervention_plan_steps_to_dsl,
     _redact_dsl_for_storage,
+    _source_dsl_for_rerun,
 )
 from app.services import test_run_execution as execution_service
 
@@ -88,3 +90,57 @@ def test_apply_executor_runtime_env_bridges_playwright_certificate_settings(monk
     assert os.environ["EXECUTOR_MODE"] == "cube"
     assert os.environ["PLAYWRIGHT_IGNORE_HTTPS_ERRORS"] == "true"
     assert os.environ["PLAYWRIGHT_AUTO_CONTINUE_SECURITY_INTERSTITIAL"] == "true"
+
+
+def test_source_dsl_for_rerun_requires_saved_executable_dsl() -> None:
+    run = SimpleNamespace(dsl_snapshot=None, dsl_json=None, account_id=None)
+
+    try:
+        _source_dsl_for_rerun(run, account=None)
+    except ValueError as exc:
+        assert "没有保存可执行 DSL" in str(exc)
+    else:
+        raise AssertionError("Expected missing DSL to fail.")
+
+
+def test_source_dsl_for_rerun_blocks_redacted_runtime_password_without_account() -> None:
+    run = SimpleNamespace(
+        dsl_snapshot={
+            "caseName": "login",
+            "baseUrl": "https://example.test",
+            "credentials": {"username": "tester01", "secret_ref": "runtime_form_password"},
+            "steps": [{"action": "business_goal", "target": "用户登录"}],
+        },
+        dsl_json=None,
+        account_id=None,
+    )
+
+    try:
+        _source_dsl_for_rerun(run, account=None)
+    except ValueError as exc:
+        assert "临时输入的密码" in str(exc)
+    else:
+        raise AssertionError("Expected redacted runtime password to fail without account.")
+
+
+def test_source_dsl_for_rerun_allows_saved_dsl_with_account() -> None:
+    run = SimpleNamespace(
+        dsl_snapshot={
+            "caseName": "login",
+            "baseUrl": "https://example.test",
+            "credentials": {"username": "tester01", "secret_ref": "runtime_form_password"},
+            "steps": [{"action": "business_goal", "target": "用户登录"}],
+        },
+        dsl_json=None,
+        account_id=1,
+    )
+
+    dsl = _source_dsl_for_rerun(run, account=SimpleNamespace(id=1))
+
+    assert dsl["steps"][0]["target"] == "用户登录"
+
+
+def test_instruction_record_criteria_overrides_execution_test_data() -> None:
+    test_data = _apply_instruction_record_criteria({"实例号": "26097", "其他": "保留"}, "审批实例号“26058”")
+
+    assert test_data == {"实例号": "26058", "其他": "保留"}

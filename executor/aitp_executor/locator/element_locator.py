@@ -22,6 +22,19 @@ class LocatorResult:
     candidates: list[dict[str, Any]] = field(default_factory=list)
 
 
+class PointClickLocator:
+    def __init__(self, page: Any, *, x: float, y: float) -> None:
+        self.page = page
+        self.x = x
+        self.y = y
+
+    def click(self, *args: Any, **kwargs: Any) -> None:
+        self.page.mouse.click(self.x, self.y)
+
+    def dblclick(self, *args: Any, **kwargs: Any) -> None:
+        self.page.mouse.dblclick(self.x, self.y)
+
+
 class ElementLocator:
     def __init__(
         self,
@@ -40,7 +53,7 @@ class ElementLocator:
         self.ranker = ranker or CandidateRanker()
         self.ambiguity_resolver = ambiguity_resolver or AmbiguityResolver()
         self.llm_resolver = llm_resolver or LLMElementResolver()
-        self.vision_resolver = vision_resolver or VisionResolver(configured=False)
+        self.vision_resolver = vision_resolver or VisionResolver()
 
     def locate(self, page: Any, *, action: str, target: str, step: dict[str, Any] | None = None) -> LocatorResult:
         step = step or {}
@@ -110,6 +123,30 @@ class ElementLocator:
             )
 
         vision_result = self.vision_resolver.resolve(page=page, target=target, action=action)
+        if vision_result.selector:
+            return LocatorResult(
+                page.locator(vision_result.selector),
+                "vision_selector",
+                vision_result.selector,
+                vision_result.confidence,
+                vision_result.reason,
+                needs_vision_fallback=True,
+                fallback_reason=vision_result.status,
+                candidates=ranked_payload,
+            )
+        if vision_result.point and action in {"click", "confirm_dialog", "navigate_menu"}:
+            x = float(vision_result.point["x"])
+            y = float(vision_result.point["y"])
+            return LocatorResult(
+                PointClickLocator(page, x=x, y=y),
+                "vision_point",
+                f"x={x:.0f},y={y:.0f}",
+                vision_result.confidence,
+                vision_result.reason,
+                needs_vision_fallback=True,
+                fallback_reason=vision_result.status,
+                candidates=ranked_payload,
+            )
         selected = decision.selected
         if selected and selected.score > 0 and vision_result.selector:
             selector = str(selected.element.get("selector"))

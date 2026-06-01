@@ -1,4 +1,4 @@
-import { Clock3 } from "lucide-react";
+import { Clock3, RotateCcw } from "lucide-react";
 
 import type { TestRun } from "../types/platform";
 import { StatusBadge } from "./StatusBadge";
@@ -6,11 +6,13 @@ import { StatusBadge } from "./StatusBadge";
 export function RunHistoryTab({
   runs,
   activeRun,
-  onSelectRun
+  onSelectRun,
+  onRerun
 }: {
   runs: TestRun[];
   activeRun: TestRun | null;
   onSelectRun: (run: TestRun) => void;
+  onRerun: (run: TestRun) => void;
 }) {
   if (runs.length === 0) {
     return <div className="empty-state">暂无运行记录</div>;
@@ -24,20 +26,24 @@ export function RunHistoryTab({
       </div>
       <div className="run-history-tab__list">
         {runs.slice(0, 20).map((run) => (
-          <button
+          <div
             className={activeRun?.id === run.id ? "run-history-row run-history-row--active" : "run-history-row"}
             key={run.id}
-            type="button"
-            onClick={() => onSelectRun(run)}
           >
-            <span className="run-history-row__code">{run.run_code}</span>
-            <StatusBadge value={run.status} />
-            <span>{formatDateTime(run.started_at || run.created_at)}</span>
-            <span className="run-history-row__duration">
-              <Clock3 size={14} />
-              {durationText(run)}
-            </span>
-          </button>
+            <button className="run-history-row__main" type="button" onClick={() => onSelectRun(run)}>
+              <span className="run-history-row__code">{run.run_code}</span>
+              <StatusBadge value={run.status} />
+              <span>{formatDateTime(run.started_at || run.created_at)}</span>
+              <span className="run-history-row__duration">
+                <Clock3 size={14} />
+                {durationText(run)}
+              </span>
+            </button>
+            <button className="secondary-button run-history-row__rerun" type="button" onClick={() => onRerun(run)}>
+              <RotateCcw size={14} />
+              重跑
+            </button>
+          </div>
         ))}
       </div>
     </div>

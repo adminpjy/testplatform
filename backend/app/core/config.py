@@ -1,6 +1,5 @@
 from functools import lru_cache
 from pathlib import Path
-from urllib.parse import urlparse
 
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -23,7 +22,6 @@ class Settings(BaseSettings):
     executor_mode: str = Field(default="local", alias="EXECUTOR_MODE")
     max_concurrent_runs: int = Field(default=2, alias="MAX_CONCURRENT_RUNS")
     run_timeout_seconds: int = Field(default=600, alias="RUN_TIMEOUT_SECONDS")
-    allowed_base_url_prefixes: str = Field(default="", alias="ALLOWED_BASE_URL_PREFIXES")
     local_secret_key: SecretStr = Field(default=SecretStr("local-development-secret"), alias="LOCAL_SECRET_KEY")
     llm_provider: str = Field(default="openai_compatible", alias="LLM_PROVIDER")
     test_llm_base_url: str = Field(default="", alias="TEST_LLM_BASE_URL")
@@ -37,6 +35,7 @@ class Settings(BaseSettings):
     test_llm_top_p: float = Field(default=1.0, alias="TEST_LLM_TOP_P")
     test_llm_verify_ssl: bool = Field(default=True, alias="TEST_LLM_VERIFY_SSL")
     test_llm_ca_bundle: str = Field(default="", alias="TEST_LLM_CA_BUNDLE")
+    test_llm_trust_env: bool = Field(default=True, alias="TEST_LLM_TRUST_ENV")
     cube_api_url: str = Field(default="", alias="CUBE_API_URL")
     cube_api_key: SecretStr | None = Field(default=None, alias="CUBE_API_KEY")
     cube_browser_template_id: str = Field(default="", alias="CUBE_BROWSER_TEMPLATE_ID")
@@ -50,7 +49,11 @@ class Settings(BaseSettings):
     vision_model_provider: str = Field(default="", alias="VISION_MODEL_PROVIDER")
     vision_model_endpoint: str = Field(default="", alias="VISION_MODEL_ENDPOINT")
     vision_model_api_key: SecretStr | None = Field(default=None, alias="VISION_MODEL_API_KEY")
+    vision_model_name: str = Field(default="", alias="VISION_MODEL_NAME")
     vision_model_timeout: int = Field(default=30, alias="VISION_MODEL_TIMEOUT")
+    vision_model_verify_ssl: bool = Field(default=True, alias="VISION_MODEL_VERIFY_SSL")
+    vision_model_ca_bundle: str = Field(default="", alias="VISION_MODEL_CA_BUNDLE")
+    vision_model_trust_env: bool = Field(default=True, alias="VISION_MODEL_TRUST_ENV")
     playwright_ignore_https_errors: bool = Field(default=False, alias="PLAYWRIGHT_IGNORE_HTTPS_ERRORS")
     playwright_auto_continue_security_interstitial: bool = Field(
         default=False,
@@ -95,22 +98,6 @@ class Settings(BaseSettings):
     @property
     def database_dialect(self) -> str:
         return make_url(self.database_url).get_backend_name()
-
-    @property
-    def allowed_base_url_prefix_list(self) -> list[str]:
-        return [item.strip().rstrip("/") for item in self.allowed_base_url_prefixes.split(",") if item.strip()]
-
-    def is_allowed_url(self, value: str | None) -> bool:
-        if not value:
-            return True
-        prefixes = self.allowed_base_url_prefix_list
-        if not prefixes:
-            return True
-        parsed = urlparse(value)
-        if parsed.scheme not in {"http", "https"}:
-            return False
-        normalized = value.rstrip("/")
-        return any(normalized == prefix or normalized.startswith(f"{prefix}/") for prefix in prefixes)
 
     def ensure_runtime_dirs(self) -> None:
         Path(self.data_dir).mkdir(parents=True, exist_ok=True)

@@ -105,6 +105,22 @@ class CommonOperationHandler:
             }
         )
 
+    def capture(
+        self,
+        execution_context: dict[str, Any] | None,
+        label: str,
+        metadata: dict[str, Any] | None = None,
+        *,
+        page: Any | None = None,
+    ) -> Any | None:
+        capturer = (execution_context or {}).get("capture_process_screenshot")
+        if not callable(capturer):
+            return None
+        try:
+            return capturer(label, metadata or {}, page=page)
+        except Exception:
+            return None
+
     def emit_rule_hits(self, ctx: HandlerContext, resolution: dict[str, Any]) -> None:
         selected = resolution.get("selectedRules") or []
         self.debug(

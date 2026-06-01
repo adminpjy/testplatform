@@ -49,6 +49,7 @@ def get_llm_provider(config: Settings = settings) -> LLMProvider:
                     top_p=runtime.top_p,
                     verify_ssl=runtime.verify_ssl,
                     ca_bundle=runtime.ca_bundle,
+                    trust_env=runtime.trust_env,
                 )
         except Exception:
             pass
@@ -67,5 +68,6 @@ def get_llm_provider(config: Settings = settings) -> LLMProvider:
             top_p=config.test_llm_top_p,
             verify_ssl=config.test_llm_verify_ssl,
             ca_bundle=config.test_llm_ca_bundle,
+            trust_env=config.test_llm_trust_env,
         )
     raise LLMProviderError(f"Unsupported LLM provider: {provider_name}")

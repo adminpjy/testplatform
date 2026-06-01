@@ -79,9 +79,12 @@ class LoginGoalExecutor:
 
         _emit(ctx, "progress", "login", "正在输入测试账号。", "login_goal_executor", {"field": "username"})
         form.username_locator.fill(str(username))
+        _capture(ctx, "login_username_filled", page, {"field": "username"})
         _emit(ctx, "progress", "login", "正在输入测试密码。", "login_goal_executor", {"field": "password", "redacted": True})
         form.password_locator.fill(str(password))
+        _capture(ctx, "login_password_filled", page, {"field": "password", "redacted": True})
         _emit(ctx, "progress", "login", "正在提交登录请求。", "login_goal_executor", {})
+        _capture(ctx, "login_before_submit", page, {"field": "submit"})
         if form.submit_locator is not None:
             form.submit_locator.click()
         else:
@@ -200,3 +203,9 @@ def _emit(ctx: dict[str, Any], message_type: str, phase: str, content: str, meth
     emitter = ctx.get("emit_runtime")
     if callable(emitter):
         emitter(message_type, phase, content, method, metadata)
+
+
+def _capture(ctx: dict[str, Any], label: str, page: Any, metadata: dict[str, Any]) -> None:
+    capturer = ctx.get("capture_process_screenshot")
+    if callable(capturer):
+        capturer(label, metadata, page)

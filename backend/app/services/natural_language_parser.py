@@ -124,6 +124,10 @@ class NaturalLanguageParser:
         data["instruction"] = self._redact_sensitive_text(str(data.get("instruction") or ""))
         data["credentials"] = self._sanitize_credentials(data.get("credentials") or {})
         data["testData"] = self._sanitize_mapping(data.get("testData") or {})
+        explicit_criteria = self._extract_instruction_record_criteria(payload.instruction)
+        if explicit_criteria:
+            data["instructionExplicitData"] = explicit_criteria
+            data["dataPrecedence"] = "自然语言测试目标中的显式数据优先；testData 仅作为未在目标中说明的补充数据。"
         return data
 
     def _stream_enabled(self, payload: NaturalLanguageTestRequest) -> bool:
@@ -191,6 +195,8 @@ class NaturalLanguageParser:
             result.readyToExecute = False
         if not result.readyToExecute and not result.clarifyingQuestions:
             result.clarifyingQuestions = ["请补充被测地址、业务目标和期望结果。"]
+        if payload is not None:
+            result = NaturalLanguageParser._apply_instruction_precedence_to_analysis(result, payload)
         return result
 
     def _repair_dsl(self, dsl_data: dict[str, Any], payload: NaturalLanguageTestRequest) -> dict[str, Any]:
@@ -204,8 +210,13 @@ class NaturalLanguageParser:
             "missingFields": dsl_data.get("missingFields") or [],
             "clarifyingQuestions": dsl_data.get("clarifyingQuestions") or [],
         }
+        self._apply_instruction_precedence_to_dsl(repaired, payload)
+        if self._is_todo_batch_approval(payload):
+            self._ensure_todo_batch_approval_dsl(repaired, payload)
+            self._apply_instruction_precedence_to_dsl(repaired, payload)
         if self._is_todo_dialog_exploration(payload):
             repaired.update(self._default_todo_dialog_dsl(payload, base=repaired))
+            self._apply_instruction_precedence_to_dsl(repaired, payload)
         repaired_steps = []
         for step in repaired["steps"]:
             if not isinstance(step, dict):
@@ -218,6 +229,324 @@ class NaturalLanguageParser:
             repaired_steps.append(step)
         repaired["steps"] = repaired_steps
         return normalize_dsl(repaired)
+
+    @classmethod
+    def _apply_instruction_precedence_to_analysis(
+        cls,
+        result: AnalyzeResult,
+        payload: NaturalLanguageTestRequest,
+    ) -> AnalyzeResult:
+        criteria = cls._extract_instruction_record_criteria(payload.instruction)
+        conflicts = cls._conflicting_payload_values(criteria, payload.testData or {})
+        if not criteria or not conflicts:
+            return result
+        criteria_text = "，".join(f"{key}={value}" for key, value in criteria.items())
+        result.assumptions = [
+            item
+            for item in result.assumptions
+            if not ("测试数据" in str(item) and "为准" in str(item))
+        ]
+        note = f"本次自然语言目标明确指定 {criteria_text}，与旧测试数据冲突时以本次目标为准。"
+        result.assumptions = list(dict.fromkeys([*result.assumptions, note]))
+        if result.normalizedInstruction and any(old in result.normalizedInstruction for old, _new in conflicts):
+            result.normalizedInstruction = str(payload.instruction)
+        if result.understoodGoal and any(old in result.understoodGoal for old, _new in conflicts):
+            result.understoodGoal = str(payload.instruction)
+        return result
+
+    @classmethod
+    def _apply_instruction_precedence_to_dsl(cls, repaired: dict[str, Any], payload: NaturalLanguageTestRequest) -> None:
+        criteria = cls._extract_instruction_record_criteria(payload.instruction)
+        if not criteria:
+            return
+        conflicts = cls._conflicting_payload_values(criteria, payload.testData or {})
+        repaired["testData"] = cls._merge_test_data_with_instruction_precedence(repaired.get("testData"), criteria)
+        steps = [dict(step) for step in repaired.get("steps") or [] if isinstance(step, dict)]
+        for step in steps:
+            cls._apply_criteria_to_existing_step(step, criteria, conflicts)
+        repaired["steps"] = cls._ensure_record_target_steps(steps, criteria, payload.instruction)
+
+    @staticmethod
+    def _extract_instruction_record_criteria(instruction: str | None) -> dict[str, str]:
+        text = str(instruction or "")
+        criteria: dict[str, str] = {}
+        fields = ["流程实例号", "实例号", "申请编号", "单据编号", "工单号", "单号", "编号"]
+        for field in fields:
+            match = re.search(
+                rf"{field}\s*(?:为|是|=|:|：)?\s*[“\"']?\s*([A-Za-z0-9_-]{{3,}})\s*[”\"']?",
+                text,
+            )
+            if match:
+                criteria["实例号" if "实例号" in field else field] = match.group(1)
+                return criteria
+        approval_match = re.search(r"审批\s*[“\"']?\s*([A-Za-z0-9_-]{3,})\s*[”\"']?", text)
+        if approval_match and any(token in text for token in ["待办", "流程", "单据", "实例"]):
+            criteria["实例号"] = approval_match.group(1)
+        return criteria
+
+    @staticmethod
+    def _merge_test_data_with_instruction_precedence(value: Any, criteria: dict[str, str]) -> dict[str, Any]:
+        test_data = dict(value or {}) if isinstance(value, dict) else {}
+        for field, field_value in criteria.items():
+            canonical = "实例号" if "实例号" in field else field
+            aliases = _record_field_aliases(canonical)
+            replaced = False
+            for alias in aliases:
+                if alias in test_data:
+                    test_data[alias] = field_value
+                    replaced = True
+            if not replaced:
+                test_data[canonical] = field_value
+        return test_data
+
+    @classmethod
+    def _apply_criteria_to_existing_step(
+        cls,
+        step: dict[str, Any],
+        criteria: dict[str, str],
+        conflicts: list[tuple[str, str]],
+    ) -> None:
+        action = str(step.get("action") or "")
+        if action in {"query_table", "query_table_count"}:
+            cls._merge_criteria_field(step, "queryConditions", criteria)
+            cls._merge_criteria_field(step, "criteria", criteria)
+        if action in {"open_table_row", "open_row_link_or_detail", "click_table_row_action"}:
+            cls._merge_criteria_field(step, "rowCriteria", criteria)
+        for key in [
+            "queryConditions",
+            "query_conditions",
+            "criteria",
+            "conditions",
+            "rowCriteria",
+            "row_criteria",
+            "recordCondition",
+            "record_condition",
+            "targetRecord",
+            "target_record",
+        ]:
+            if isinstance(step.get(key), dict):
+                cls._merge_criteria_field(step, key, criteria)
+        for key in ["target", "description", "name", "stepName", "step_name", "readableDescription"]:
+            if isinstance(step.get(key), str):
+                step[key] = cls._replace_conflicting_values(str(step[key]), conflicts)
+
+    @staticmethod
+    def _merge_criteria_field(step: dict[str, Any], key: str, criteria: dict[str, str]) -> None:
+        current = dict(step.get(key) or {}) if isinstance(step.get(key), dict) else {}
+        for field, value in criteria.items():
+            aliases = _record_field_aliases(field)
+            matched_alias = next((alias for alias in aliases if alias in current), field)
+            current[matched_alias] = value
+        step[key] = current
+
+    @classmethod
+    def _ensure_record_target_steps(
+        cls,
+        steps: list[dict[str, Any]],
+        criteria: dict[str, str],
+        instruction: str,
+    ) -> list[dict[str, Any]]:
+        if not criteria or "审批" not in instruction:
+            return steps
+        approval_index = cls._first_approval_step_index(steps)
+        if approval_index is None:
+            return steps
+        before_approval = steps[:approval_index]
+        inserts: list[dict[str, Any]] = []
+        if not any(str(step.get("action") or "") in {"query_table", "query_table_count"} for step in before_approval):
+            inserts.append(
+                {
+                    "action": "query_table",
+                    "target": "我的待办列表",
+                    "queryConditions": dict(criteria),
+                    "criteria": dict(criteria),
+                    "description": "按本次目标中的实例号查询待办列表。",
+                }
+            )
+        if not any(str(step.get("action") or "") in {"open_table_row", "open_row_link_or_detail"} for step in before_approval):
+            inserts.append(
+                {
+                    "action": "open_table_row",
+                    "target": "我的待办列表",
+                    "rowCriteria": dict(criteria),
+                    "description": "打开匹配本次实例号的待办记录。",
+                }
+            )
+        if not inserts:
+            return steps
+        return steps[:approval_index] + inserts + steps[approval_index:]
+
+    @staticmethod
+    def _first_approval_step_index(steps: list[dict[str, Any]]) -> int | None:
+        for index, step in enumerate(steps):
+            text = " ".join(
+                str(step.get(key) or "")
+                for key in ["action", "target", "intent", "description", "name", "stepName", "step_name"]
+            )
+            operation_intent = step.get("operationIntent") if isinstance(step.get("operationIntent"), dict) else {}
+            if str(operation_intent.get("intent") or "") in {"approval_pass", "approval_reject"}:
+                return index
+            if "审批" in text and any(token in text for token in ["通过", "同意", "办理", "处理", "当前单据", "实例"]):
+                return index
+        return None
+
+    @staticmethod
+    def _conflicting_payload_values(criteria: dict[str, str], test_data: dict[str, Any]) -> list[tuple[str, str]]:
+        conflicts: list[tuple[str, str]] = []
+        if not isinstance(test_data, dict):
+            return conflicts
+        for field, value in criteria.items():
+            aliases = _record_field_aliases(field)
+            new_value = str(value)
+            for alias in aliases:
+                old_value = test_data.get(alias)
+                if old_value not in (None, "") and str(old_value) != new_value:
+                    conflicts.append((str(old_value), new_value))
+        return conflicts
+
+    @staticmethod
+    def _replace_conflicting_values(value: str, conflicts: list[tuple[str, str]]) -> str:
+        result = value
+        for old, new in conflicts:
+            if old and new:
+                result = result.replace(old, new)
+        return result
+
+    @staticmethod
+    def _is_todo_batch_approval(payload: NaturalLanguageTestRequest) -> bool:
+        text = str(payload.instruction or "")
+        compact = re.sub(r"\s+", "", text)
+        if "待办" not in compact:
+            return False
+        if not any(token in compact for token in ["逐一", "逐条", "逐个", "每一条", "所有", "全部", "循环"]):
+            return False
+        if not any(token in compact for token in ["审批", "提交", "同意", "通过", "办理", "处理"]):
+            return False
+        return any(token in compact for token in ["意见", "填写", "填入", "输入"])
+
+    @classmethod
+    def _ensure_todo_batch_approval_dsl(cls, repaired: dict[str, Any], payload: NaturalLanguageTestRequest) -> None:
+        opinion = cls._extract_approval_opinion(payload.instruction) or cls._opinion_from_mapping(repaired.get("testData") or {})
+        if opinion:
+            test_data = dict(repaired.get("testData") or {})
+            for key in ["我的意见", "审批意见", "意见"]:
+                test_data[key] = opinion
+            repaired["testData"] = test_data
+
+        steps = [dict(step) for step in repaired.get("steps") or [] if isinstance(step, dict)]
+        cleaned: list[dict[str, Any]] = []
+        process_inserted = False
+        for step in steps:
+            action = str(step.get("action") or "")
+            if action == "process_table_rows":
+                cleaned.append(cls._todo_batch_process_step(step, opinion=opinion))
+                process_inserted = True
+                continue
+            if cls._is_todo_batch_row_body_step(step):
+                continue
+            cleaned.append(step)
+
+        if not process_inserted:
+            process_step = cls._todo_batch_process_step({"action": "process_table_rows", "target": "我的待办列表"}, opinion=opinion)
+            cleaned.insert(cls._todo_process_insert_index(cleaned), process_step)
+        if not any(str(step.get("action") or "") in {"query_table", "query_table_count"} and "待办" in _flatten(step) for step in cleaned):
+            insert_at = max(0, cls._todo_process_insert_index(cleaned) - 1)
+            cleaned.insert(
+                insert_at,
+                {
+                    "action": "query_table_count",
+                    "target": "我的待办列表",
+                    "emptyStrategy": "pass",
+                    "description": "读取待办列表数量；列表为空时正常结束。",
+                },
+            )
+        repaired["steps"] = cleaned
+
+    @staticmethod
+    def _todo_batch_process_step(step: dict[str, Any], *, opinion: str | None) -> dict[str, Any]:
+        current = dict(step)
+        current["action"] = "process_table_rows"
+        current.setdefault("target", "我的待办列表")
+        row_step: dict[str, Any] = {
+            "action": "business_goal",
+            "target": "审批通过",
+            "intent": "approval_pass",
+            "readableDescription": "填写审批意见并提交。",
+        }
+        if opinion:
+            row_step["value"] = opinion
+            row_step["formData"] = {"我的意见": opinion, "审批意见": opinion, "意见": opinion}
+        loop_policy = dict(current.get("loopPolicy") or current.get("loop_policy") or {})
+        loop_policy.update(
+            {
+                "maxRows": int(current.get("maxRows") or loop_policy.get("maxRows") or loop_policy.get("max_rows") or 200),
+                "emptyStrategy": current.get("emptyStrategy") or loop_policy.get("emptyStrategy") or loop_policy.get("empty_strategy") or "pass",
+                "rowAction": "open_todo",
+                "openMode": "new_page_or_same_page",
+                "closeStrategy": "close_new_page_or_return_to_list",
+                "rowEntryLabels": ["相关办理人处理", "办理人处理", "待办处理", "办理", "处理", "审批", "审核", "标题", "文号", "单号"],
+                "rowSteps": [row_step],
+            }
+        )
+        current["loopPolicy"] = loop_policy
+        current["rowSteps"] = [row_step]
+        current["readableDescription"] = "逐条打开待办，填写意见并提交审批。"
+        return current
+
+    @staticmethod
+    def _todo_process_insert_index(steps: list[dict[str, Any]]) -> int:
+        candidate = len(steps)
+        for index, step in enumerate(steps):
+            text = _flatten(step)
+            action = str(step.get("action") or "")
+            if action in {"query_table", "query_table_count"} and "待办" in text:
+                candidate = index + 1
+            elif action in {"navigate_path", "navigate_menu", "business_goal"} and "待办" in text:
+                candidate = index + 1
+        return candidate
+
+    @staticmethod
+    def _is_todo_batch_row_body_step(step: dict[str, Any]) -> bool:
+        action = str(step.get("action") or "")
+        intent = str((step.get("operationIntent") or {}).get("intent") or step.get("intent") or "")
+        text = _flatten(step)
+        if action in {"open_table_row", "open_row_link_or_detail", "click_table_row_action"}:
+            return True
+        if action == "wait" and any(token in text for token in ["页面稳定", "待办", "审批", "提交"]):
+            return True
+        if action in {"fill_form", "auto_fill_form"} and any(token in text for token in ["意见", "审批", "审核", "办理", "处理"]):
+            return True
+        if action in {"click", "confirm_dialog"} and any(token in text for token in ["第一行", "任意列", "待办", "提交", "审批", "审核", "同意", "通过", "办理", "处理"]):
+            return True
+        if action == "business_goal" and intent in {"approval_pass", "approval_reject"}:
+            return True
+        if action == "business_goal" and any(token in text for token in ["审批", "提交", "同意", "通过"]) and "登录" not in text:
+            return True
+        if action == "close_dialog_by_common_controls":
+            return True
+        return False
+
+    @staticmethod
+    def _extract_approval_opinion(instruction: str | None) -> str | None:
+        text = str(instruction or "")
+        patterns = [
+            r"意见[为是填入填写输入：:\s]*[“\"']([^”\"']{1,200})[”\"']",
+            r"填写意见[“\"']([^”\"']{1,200})[”\"']",
+            r"输入意见[“\"']([^”\"']{1,200})[”\"']",
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, text)
+            if match:
+                return match.group(1).strip()
+        return None
+
+    @staticmethod
+    def _opinion_from_mapping(mapping: dict[str, Any]) -> str | None:
+        for key in ["我的意见", "审批意见", "审核意见", "处理意见", "办理意见", "意见", "opinion", "comment"]:
+            value = mapping.get(key)
+            if value not in (None, ""):
+                return str(value)
+        return None
 
     @staticmethod
     def _is_todo_dialog_exploration(payload: NaturalLanguageTestRequest) -> bool:
@@ -390,5 +719,23 @@ class NaturalLanguageParser:
         return match.group(0) if match else None
 
 
+def _flatten(value: Any) -> str:
+    if isinstance(value, dict):
+        return " ".join(_flatten(item) for item in value.values())
+    if isinstance(value, list):
+        return " ".join(_flatten(item) for item in value)
+    if value is None:
+        return ""
+    return str(value)
+
+
 def _elapsed_ms(started: float) -> int:
     return int((time.monotonic() - started) * 1000)
+
+
+def _record_field_aliases(field: str) -> list[str]:
+    if "实例号" in field:
+        return ["实例号", "流程实例号", "instanceNo", "instance_no", "processInstanceId", "process_instance_id"]
+    if field in {"编号", "单据编号", "单号", "申请编号", "工单号"}:
+        return [field, "编号", "单据编号", "单号", "申请编号", "工单号", "recordNo", "record_no"]
+    return [field]

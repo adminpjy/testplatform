@@ -1,10 +1,13 @@
-from app.core.config import settings
+from urllib.parse import urlparse
 
 
 def ensure_allowed_url(value: str | None, field_name: str = "url") -> None:
-    if settings.is_allowed_url(value):
+    if not value:
         return
-    raise ValueError(f"{field_name} is not in ALLOWED_BASE_URL_PREFIXES.")
+    parsed = urlparse(str(value).strip())
+    if parsed.scheme in {"http", "https"} and parsed.netloc:
+        return
+    raise ValueError(f"{field_name} must be a valid http:// or https:// URL.")
 
 
 def ensure_allowed_urls(values: dict[str, str | None]) -> None:

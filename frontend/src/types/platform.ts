@@ -249,6 +249,7 @@ export interface LLMProfile {
   temperature: number;
   topP: number;
   caBundle: string;
+  trustEnv: boolean;
   hasApiKey?: boolean;
   apiKeyMasked?: string | null;
   apiKey?: string | null;

@@ -374,6 +374,7 @@ def test_case_runner_login_submit_clicks_login_and_verifies(page: Page, monkeypa
 def test_login_goal_opens_portal_login_entry_before_resolving_form(page: Page, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("LOGIN_RESULT_WAIT_MS", "200")
     monkeypatch.setenv("LOGIN_RESULT_RECHECK_TIMES", "0")
+    captures: list[str] = []
     page.set_content(
         """
         <header>
@@ -386,10 +387,13 @@ def test_login_goal_opens_portal_login_entry_before_resolving_form(page: Page, m
     outcome = LoginGoalExecutor().execute_login_goal(
         page,
         {"action": "business_goal", "target": "用户登录", "credentials": {"username": "tester", "password": "secret"}},
-        {},
+        {"capture_process_screenshot": lambda label, _metadata, _page: captures.append(label)},
     )
     assert outcome["locator_strategy"] == "generic_login_form"
     assert outcome["auth_state"]["authState"] == "logged_in"
+    assert "login_username_filled" in captures
+    assert "login_password_filled" in captures
+    assert "login_before_submit" in captures
 
 
 def test_case_runner_uses_popup_page_for_navigation_evidence(page: Page, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -427,8 +431,11 @@ def test_case_runner_uses_popup_page_for_navigation_evidence(page: Page, monkeyp
         )
         assert result["status"] == "passed"
         assert holder["page"] is not page
+        assert result["process_screenshots"]
+        assert any(item["label"] == "navigation_new_page_after_leaf_click" for item in result["process_screenshots"])
         assert "中国石化公文管理系统" in writer.dom_snapshot_path(3).read_text(encoding="utf-8")
         assert "active_page.changed" in writer.path("execution-trace.jsonl").read_text(encoding="utf-8")
+        assert "navigation_segment_3_after_click" in writer.path("process-screenshots.jsonl").read_text(encoding="utf-8")
     finally:
         if holder["page"] is not page:
             holder["page"].close()

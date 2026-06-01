@@ -16,6 +16,8 @@ DEFAULT_PROMPTS = {
         ),
         "user": (
             "TASK: analyze\n"
+            "If instruction conflicts with testData, the explicit value in instruction has higher priority. "
+            "testData is supplemental only.\n"
             "Return JSON matching this schema exactly:\n"
             "{\"readyToExecute\":false,\"confidence\":0.0,\"understoodGoal\":\"\","
             "\"missingFields\":[],\"clarifyingQuestions\":[],\"assumptions\":[],"
@@ -39,7 +41,10 @@ DEFAULT_PROMPTS = {
         "user": (
             "TASK: plan\n"
             "Use only these actions: {{ allowed_actions }}.\n"
+            "If instruction conflicts with testData, use the explicit value in instruction. testData is supplemental only.\n"
             "菜单路径必须生成 action=navigate_path，并补充 pathSegments 与 navigationType=menu_path。\n"
+            "当目标要求逐一/逐条/全部处理待办列表时，必须生成 action=process_table_rows；如果每条待办还要填写意见并提交审批，"
+            "把填写意见和提交审批放入 loopPolicy.rowSteps，不要生成“第一行任意列”这类一次性顶层点击步骤。\n"
             "Return JSON matching this schema exactly:\n"
             "{\"caseName\":\"\",\"baseUrl\":\"\",\"credentials\":{},\"testData\":{},\"settings\":{},\"steps\":[]}\n"
             "INPUT_JSON:\n{{ input_json }}"

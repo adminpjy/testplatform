@@ -1,4 +1,5 @@
 import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -23,6 +24,10 @@ class ArtifactWriter:
 
     def screenshot_path(self, step_number: int) -> Path:
         return self.path("screenshots", f"step-{step_number:03d}.png")
+
+    def process_screenshot_path(self, step_number: int, index: int, label: str) -> Path:
+        slug = _safe_slug(label) or "process"
+        return self.path("screenshots", f"step-{step_number:03d}-{index:02d}-{slug}.png")
 
     def dom_snapshot_path(self, step_number: int) -> Path:
         return self.path("dom", f"step-{step_number:03d}.html")
@@ -53,3 +58,8 @@ class ArtifactWriter:
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _safe_slug(value: str) -> str:
+    slug = re.sub(r"[^a-zA-Z0-9_-]+", "-", str(value or "").strip().lower()).strip("-")
+    return slug[:48]

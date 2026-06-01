@@ -112,8 +112,10 @@ class FormFillHandler(CommonOperationHandler):
 
         self.emit(ctx, "progress", "form_fill", "正在输入测试账号。", metadata={"field": "username"})
         form.username_locator.fill(str(username))
+        _capture_process_screenshot(ctx, "login_username_filled", page, {"field": "username"})
         self.emit(ctx, "progress", "form_fill", "正在输入测试密码。", metadata={"field": "password", "redacted": True})
         form.password_locator.fill(str(password))
+        _capture_process_screenshot(ctx, "login_password_filled", page, {"field": "password", "redacted": True})
         page.wait_for_timeout(100)
         return {
             "filled": [
@@ -189,3 +191,9 @@ def _credential_value(data: dict[str, Any], *keys: str) -> Any:
         if value not in (None, ""):
             return value
     return None
+
+
+def _capture_process_screenshot(ctx: Any, label: str, page: Any, metadata: dict[str, Any]) -> None:
+    capturer = ctx.execution_context.get("capture_process_screenshot")
+    if callable(capturer):
+        capturer(label, metadata, page)

@@ -16,6 +16,7 @@ class LLMProfileRead(BaseModel):
     temperature: float = 0.0
     topP: float = 1.0
     caBundle: str = ""
+    trustEnv: bool = True
     hasApiKey: bool = False
     apiKeyMasked: str | None = None
 
@@ -32,7 +33,7 @@ class LLMProfileUpdate(BaseModel):
     provider: str = "openai_compatible"
     baseUrl: str
     apiKey: str | None = None
-    model: str = "DeepSeek"
+    model: str = "DeepSeek-V4"
     stream: bool = False
     verifySsl: bool = True
     timeoutSeconds: int = 120
@@ -40,6 +41,7 @@ class LLMProfileUpdate(BaseModel):
     temperature: float = 0.0
     topP: float = 1.0
     caBundle: str = ""
+    trustEnv: bool = True
 
     @field_validator("id", "name", "baseUrl", "model")
     @classmethod
@@ -79,6 +81,7 @@ class LLMRuntimeConfig(BaseModel):
     top_p: float
     verify_ssl: bool
     ca_bundle: str = ""
+    trust_env: bool = True
 
     def public_metadata(self) -> dict[str, Any]:
         return {
@@ -88,4 +91,5 @@ class LLMRuntimeConfig(BaseModel):
             "model": self.model,
             "endpoint": self.base_url,
             "stream": self.stream,
+            "trustEnv": self.trust_env,
         }
