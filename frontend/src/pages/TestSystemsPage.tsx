@@ -11,6 +11,7 @@ import {
 } from "../api/platform";
 import { StatusBadge } from "../components/StatusBadge";
 import type { SystemCheckResult, TestRun, TestSystem, TestSystemCreate } from "../types/platform";
+import { labelAuthType, labelEnvironment } from "../utils/displayLabels";
 
 const emptyForm: TestSystemCreate = {
   system_code: "",
@@ -188,30 +189,30 @@ export function TestSystemsPage() {
         <div className="form-grid">
           <Field label="系统编码" value={form.system_code} onChange={(value) => setForm({ ...form, system_code: value })} />
           <Field label="系统名称" value={form.system_name} onChange={(value) => setForm({ ...form, system_name: value })} />
-          <Field label="base_url" value={form.base_url} onChange={(value) => setForm({ ...form, base_url: value })} />
-          <Field label="login_url" value={form.login_url || ""} onChange={(value) => setForm({ ...form, login_url: value })} />
-          <Field label="home_url" value={form.home_url || ""} onChange={(value) => setForm({ ...form, home_url: value })} />
+          <Field label="系统入口地址" value={form.base_url} onChange={(value) => setForm({ ...form, base_url: value })} />
+          <Field label="登录地址" value={form.login_url || ""} onChange={(value) => setForm({ ...form, login_url: value })} />
+          <Field label="首页地址" value={form.home_url || ""} onChange={(value) => setForm({ ...form, home_url: value })} />
           <label>
             <span>环境</span>
             <select value={form.environment} onChange={(event) => setForm({ ...form, environment: event.target.value })}>
-              <option value="dev">dev</option>
-              <option value="test">test</option>
-              <option value="uat">uat</option>
-              <option value="preprod">preprod</option>
-              <option value="prod">prod</option>
+              <option value="dev">{labelEnvironment("dev")}</option>
+              <option value="test">{labelEnvironment("test")}</option>
+              <option value="uat">{labelEnvironment("uat")}</option>
+              <option value="preprod">{labelEnvironment("preprod")}</option>
+              <option value="prod">{labelEnvironment("prod")}</option>
             </select>
           </label>
           <label>
             <span>认证方式</span>
             <select value={form.auth_type} onChange={(event) => setForm({ ...form, auth_type: event.target.value })}>
-              <option value="username_password">username_password</option>
-              <option value="sso">sso</option>
-              <option value="token">token</option>
-              <option value="other">other</option>
+              <option value="username_password">{labelAuthType("username_password")}</option>
+              <option value="sso">{labelAuthType("sso")}</option>
+              <option value="token">{labelAuthType("token")}</option>
+              <option value="other">{labelAuthType("other")}</option>
             </select>
           </label>
           <label>
-            <span>超时 ms</span>
+          <span>超时（毫秒）</span>
             <input
               type="number"
               value={form.default_timeout_ms}
@@ -262,14 +263,14 @@ export function TestSystemsPage() {
           <div className="check-result">
             <div>
               <CheckCircle2 size={18} />
-              <strong>{checkResult.check_type}</strong>
+              <strong>{checkResult.check_type === "connectivity" ? "连通性检查" : checkResult.check_type === "login" ? "登录检查" : "系统检查"}</strong>
               <StatusBadge value={checkResult.status} />
             </div>
             <dl className="settings-list">
-              <dt>HTTP</dt>
+              <dt>响应状态码</dt>
               <dd>{checkResult.http_status ?? "-"}</dd>
               <dt>耗时</dt>
-              <dd>{checkResult.response_time_ms ?? "-"} ms</dd>
+              <dd>{checkResult.response_time_ms ?? "-"} 毫秒</dd>
               <dt>说明</dt>
               <dd>{checkResult.message}</dd>
             </dl>

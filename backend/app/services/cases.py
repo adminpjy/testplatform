@@ -60,7 +60,7 @@ def get_case(db: Session, case_id: int) -> TestCase | None:
     return case
 
 
-def create_case(db: Session, project: TestProject, payload: FunctionalTestCaseCreate) -> TestCase:
+def create_case(db: Session, project: TestProject, payload: FunctionalTestCaseCreate, user: PlatformUser | None = None) -> TestCase:
     data = payload.model_dump(exclude_unset=True)
     dsl_json = _normalize_optional_dsl(data.get("dsl_json"))
     case = TestCase(
@@ -82,6 +82,8 @@ def create_case(db: Session, project: TestProject, payload: FunctionalTestCaseCr
         dsl_json=dsl_json,
         risk_level=data.get("risk_level") or "low",
         status=data.get("status") or "draft",
+        created_by_user_id=user.id if user else None,
+        updated_by_user_id=user.id if user else None,
     )
     db.add(case)
     db.flush()
@@ -93,13 +95,15 @@ def create_case(db: Session, project: TestProject, payload: FunctionalTestCaseCr
     return case
 
 
-def update_case(db: Session, case: TestCase, payload: FunctionalTestCaseUpdate) -> TestCase:
+def update_case(db: Session, case: TestCase, payload: FunctionalTestCaseUpdate, user: PlatformUser | None = None) -> TestCase:
     data = payload.model_dump(exclude_unset=True)
     versioned_changed = any(field in data and _json_value(getattr(case, field), field) != _json_value(data[field], field) for field in VERSIONED_FIELDS)
     if "dsl_json" in data:
         data["dsl_json"] = _normalize_optional_dsl(data["dsl_json"])
     for field_name, value in data.items():
         setattr(case, field_name, value)
+    if user is not None:
+        case.updated_by_user_id = user.id
     if "natural_language_goal" in data:
         case.instruction = data["natural_language_goal"]
     db.add(case)
@@ -128,7 +132,7 @@ def set_case_status(db: Session, case: TestCase, status: str) -> TestCase:
     return case
 
 
-def copy_case(db: Session, case: TestCase) -> TestCase:
+def copy_case(db: Session, case: TestCase, user: PlatformUser | None = None) -> TestCase:
     copied = TestCase(
         project_id=case.project_id,
         case_code=_case_code(),
@@ -148,6 +152,8 @@ def copy_case(db: Session, case: TestCase) -> TestCase:
         risk_level=case.risk_level,
         dsl_json=copy.deepcopy(case.dsl_json or {}),
         status="draft",
+        created_by_user_id=user.id if user else None,
+        updated_by_user_id=user.id if user else None,
     )
     db.add(copied)
     db.flush()
@@ -224,8 +230,17 @@ def format_dsl(dsl_json: dict[str, Any]) -> dict[str, Any]:
     return normalize_dsl(dsl_json)
 
 
-def update_case_dsl(db: Session, case: TestCase, dsl_json: dict[str, Any], change_summary: str | None, change_type: str = "manual_edit") -> TestCase:
+def update_case_dsl(
+    db: Session,
+    case: TestCase,
+    dsl_json: dict[str, Any],
+    change_summary: str | None,
+    change_type: str = "manual_edit",
+    user: PlatformUser | None = None,
+) -> TestCase:
     case.dsl_json = normalize_dsl(dsl_json)
+    if user is not None:
+        case.updated_by_user_id = user.id
     version = _create_version_from_case(db, case, change_type=change_type, change_summary=change_summary or "DSL updated")
     case.current_version_id = version.id
     db.add(case)
@@ -246,12 +261,14 @@ def generate_case_dsl(db: Session, case: TestCase, payload: CaseAnalyzeRequest) 
     return parser.plan(request).model_dump()
 
 
-def save_generated_dsl(db: Session, case: TestCase, payload: SaveGeneratedDslRequest) -> TestCase:
+def save_generated_dsl(db: Session, case: TestCase, payload: SaveGeneratedDslRequest, user: PlatformUser | None = None) -> TestCase:
     if payload.test_data_json:
         merged = dict(case.test_data_json or {})
         merged.update(payload.test_data_json)
         case.test_data_json = merged
     case.dsl_json = normalize_dsl(payload.dsl_json)
+    if user is not None:
+        case.updated_by_user_id = user.id
     version = _create_version_from_case(
         db,
         case,
@@ -351,3 +368,4 @@ def _nl_request(db: Session, case: TestCase, payload: CaseAnalyzeRequest) -> Nat
         settings=case.settings_json or {},
         stream=payload.stream,
     )
+    PlatformUser,

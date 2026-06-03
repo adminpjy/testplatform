@@ -4,6 +4,7 @@ import {
   type RuntimeMessage,
   type RuntimeMessageWire
 } from "../types/runtime";
+import { getAuthToken } from "./client";
 
 export interface RuntimeStreamOptions {
   baseUrl?: string;
@@ -38,6 +39,10 @@ export function runtimeStreamUrl(runId: number, baseUrl = "", afterId?: number):
   const url = new URL(`/api/test-runs/${runId}/stream`, baseUrl || window.location.origin);
   if (afterId !== undefined && afterId > 0) {
     url.searchParams.set("after_id", String(afterId));
+  }
+  const token = getAuthToken();
+  if (token) {
+    url.searchParams.set("token", token);
   }
   return url.toString();
 }

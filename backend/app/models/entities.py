@@ -48,6 +48,8 @@ class TestProject(Base):
     auth_type: Mapped[str] = mapped_column(String(64), default="username_password", nullable=False)
     default_account_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     default_timeout_ms: Mapped[int] = mapped_column(Integer, default=15000, nullable=False)
+    owner_user_id: Mapped[int | None] = mapped_column(ForeignKey("platform_users.id"), nullable=True, index=True)
+    created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("platform_users.id"), nullable=True, index=True)
     enable_trace_default: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     enable_screenshot_default: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     enable_dom_snapshot_default: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
@@ -158,6 +160,8 @@ class TestCase(Base):
     run_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     pass_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     fail_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("platform_users.id"), nullable=True, index=True)
+    updated_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("platform_users.id"), nullable=True, index=True)
     created_at: Mapped[object] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
     updated_at: Mapped[object] = mapped_column(
         DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
@@ -205,7 +209,9 @@ class TestRun(Base):
     system_id: Mapped[int | None] = mapped_column(ForeignKey("test_systems.id"), nullable=True, index=True)
     case_id: Mapped[int | None] = mapped_column(ForeignKey("test_cases.id"), nullable=True, index=True)
     case_version_id: Mapped[int | None] = mapped_column(ForeignKey("test_case_versions.id"), nullable=True, index=True)
+    campaign_id: Mapped[int | None] = mapped_column(ForeignKey("test_campaigns.id"), nullable=True, index=True)
     account_id: Mapped[int | None] = mapped_column(ForeignKey("test_accounts.id"), nullable=True, index=True)
+    created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("platform_users.id"), nullable=True, index=True)
     instruction: Mapped[str | None] = mapped_column(Text, nullable=True)
     instruction_snapshot: Mapped[str | None] = mapped_column(Text, nullable=True)
     base_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
@@ -369,6 +375,13 @@ class FailureAnalysis(Base):
     evidence_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     suggestions_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     recommended_actions_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    generalized_pattern_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    solution_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    rule_draft_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    validation_plan_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    user_reply: Mapped[str | None] = mapped_column(Text, nullable=True)
+    internal_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    llm_raw_response_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     risk_level: Mapped[str] = mapped_column(String(32), default="medium", nullable=False)
     requires_human_review: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     llm_prompt_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
@@ -473,6 +486,88 @@ class RuleDraft(Base):
     )
 
 
+class FailurePattern(Base):
+    __tablename__ = "failure_patterns"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    pattern_code: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
+    pattern_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    failure_type: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    generalized_description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    evidence_schema_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    applicability_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    exclusion_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    risk_level: Mapped[str] = mapped_column(String(32), default="medium", nullable=False)
+    confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    source_sample_ids_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    status: Mapped[str] = mapped_column(String(32), default="draft", nullable=False)
+    created_at: Mapped[object] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[object] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
+    )
+
+
+class FailureSolution(Base):
+    __tablename__ = "failure_solutions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    solution_code: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
+    failure_sample_id: Mapped[int] = mapped_column(ForeignKey("failure_samples.id"), nullable=False, index=True)
+    failure_analysis_id: Mapped[int | None] = mapped_column(ForeignKey("failure_analyses.id"), nullable=True, index=True)
+    pattern_id: Mapped[int | None] = mapped_column(ForeignKey("failure_patterns.id"), nullable=True, index=True)
+    project_id: Mapped[int | None] = mapped_column(ForeignKey("test_projects.id"), nullable=True, index=True)
+    case_id: Mapped[int | None] = mapped_column(ForeignKey("test_cases.id"), nullable=True, index=True)
+    run_id: Mapped[int | None] = mapped_column(ForeignKey("test_runs.id"), nullable=True, index=True)
+    rule_draft_id: Mapped[int | None] = mapped_column(ForeignKey("rule_drafts.id"), nullable=True, index=True)
+    root_cause: Mapped[str | None] = mapped_column(Text, nullable=True)
+    solution_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    generalized_pattern_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    strategy_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    suggested_rule_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    validation_plan_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    context_snapshot_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    llm_prompt_snapshot_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    llm_response_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    user_reply: Mapped[str | None] = mapped_column(Text, nullable=True)
+    internal_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    admin_adjustment_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    status: Mapped[str] = mapped_column(String(32), default="draft", nullable=False)
+    created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("platform_users.id"), nullable=True, index=True)
+    updated_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("platform_users.id"), nullable=True, index=True)
+    created_at: Mapped[object] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[object] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
+    )
+
+
+class RuleValidation(Base):
+    __tablename__ = "rule_validations"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    validation_code: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
+    solution_id: Mapped[int | None] = mapped_column(ForeignKey("failure_solutions.id"), nullable=True, index=True)
+    rule_draft_id: Mapped[int | None] = mapped_column(ForeignKey("rule_drafts.id"), nullable=True, index=True)
+    ability_rule_id: Mapped[int | None] = mapped_column(ForeignKey("ability_rules.id"), nullable=True, index=True)
+    project_id: Mapped[int | None] = mapped_column(ForeignKey("test_projects.id"), nullable=True, index=True)
+    case_id: Mapped[int | None] = mapped_column(ForeignKey("test_cases.id"), nullable=True, index=True)
+    run_id: Mapped[int | None] = mapped_column(ForeignKey("test_runs.id"), nullable=True, index=True)
+    validation_type: Mapped[str] = mapped_column(String(64), default="evidence_static_precheck", nullable=False)
+    sample_ids_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    status: Mapped[str] = mapped_column(String(32), default="created", nullable=False)
+    passed_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    failed_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    false_positive_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    result_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    report_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("platform_users.id"), nullable=True, index=True)
+    started_at: Mapped[object | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    ended_at: Mapped[object | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[object] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[object] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
+    )
+
+
 class ProjectBootstrapPackage(Base):
     __tablename__ = "project_bootstrap_packages"
 
@@ -539,6 +634,7 @@ class TestCampaign(Base):
     failed_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     blocked_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     summary_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("platform_users.id"), nullable=True, index=True)
     started_at: Mapped[object | None] = mapped_column(DateTime(timezone=True), nullable=True)
     ended_at: Mapped[object | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[object] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
@@ -580,6 +676,212 @@ class MaintenanceFeedback(Base):
     evidence_package_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     artifact_paths_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     maintainer_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[object] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[object] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
+    )
+
+
+class MaintenanceResponse(Base):
+    __tablename__ = "maintenance_responses"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    response_code: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
+    failure_sample_id: Mapped[int | None] = mapped_column(ForeignKey("failure_samples.id"), nullable=True, index=True)
+    solution_id: Mapped[int | None] = mapped_column(ForeignKey("failure_solutions.id"), nullable=True, index=True)
+    validation_id: Mapped[int | None] = mapped_column(ForeignKey("rule_validations.id"), nullable=True, index=True)
+    project_id: Mapped[int | None] = mapped_column(ForeignKey("test_projects.id"), nullable=True, index=True)
+    case_id: Mapped[int | None] = mapped_column(ForeignKey("test_cases.id"), nullable=True, index=True)
+    run_id: Mapped[int | None] = mapped_column(ForeignKey("test_runs.id"), nullable=True, index=True)
+    submitted_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("platform_users.id"), nullable=True, index=True)
+    handled_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("platform_users.id"), nullable=True, index=True)
+    status: Mapped[str] = mapped_column(String(32), default="draft", nullable=False)
+    root_cause: Mapped[str | None] = mapped_column(Text, nullable=True)
+    fix_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    validation_result: Mapped[str | None] = mapped_column(Text, nullable=True)
+    user_reply: Mapped[str | None] = mapped_column(Text, nullable=True)
+    internal_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    evidence_summary_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[object] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    resolved_at: Mapped[object | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    updated_at: Mapped[object] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
+    )
+
+
+class TestAsset(Base):
+    __tablename__ = "test_assets"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    asset_code: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
+    asset_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    asset_type: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    project_id: Mapped[int | None] = mapped_column(ForeignKey("test_projects.id"), nullable=True, index=True)
+    module: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    tags_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    status: Mapped[str] = mapped_column(String(32), default="draft", nullable=False, index=True)
+    owner: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    current_version_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    latest_published_version_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    created_from: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    source_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    risk_level: Mapped[str] = mapped_column(String(32), default="low", nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    content_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    metadata_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[object] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[object] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
+    )
+
+
+class TestAssetVersion(Base):
+    __tablename__ = "test_asset_versions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    asset_id: Mapped[int] = mapped_column(ForeignKey("test_assets.id"), nullable=False, index=True)
+    version_no: Mapped[int] = mapped_column(Integer, nullable=False)
+    version_label: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    status: Mapped[str] = mapped_column(String(32), default="draft", nullable=False)
+    content_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    diff_summary_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    change_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[object] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+
+class DefectCandidate(Base):
+    __tablename__ = "defect_candidates"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    defect_code: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
+    project_id: Mapped[int | None] = mapped_column(ForeignKey("test_projects.id"), nullable=True, index=True)
+    case_id: Mapped[int | None] = mapped_column(ForeignKey("test_cases.id"), nullable=True, index=True)
+    run_id: Mapped[int | None] = mapped_column(ForeignKey("test_runs.id"), nullable=True, index=True)
+    failure_sample_id: Mapped[int | None] = mapped_column(ForeignKey("failure_samples.id"), nullable=True, index=True)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    defect_type: Mapped[str] = mapped_column(String(64), default="system_defect", nullable=False, index=True)
+    severity: Mapped[str] = mapped_column(String(32), default="medium", nullable=False, index=True)
+    priority: Mapped[str] = mapped_column(String(32), default="normal", nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(32), default="candidate", nullable=False, index=True)
+    assignee: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    reproduce_steps_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    evidence_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    external_ref_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    dedup_key: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    created_at: Mapped[object] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[object] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
+    )
+
+
+class LearningItem(Base):
+    __tablename__ = "learning_items"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    learning_code: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
+    project_id: Mapped[int | None] = mapped_column(ForeignKey("test_projects.id"), nullable=True, index=True)
+    item_type: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), default="proposed", nullable=False, index=True)
+    source_type: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    source_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    risk_level: Mapped[str] = mapped_column(String(32), default="medium", nullable=False)
+    proposal_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    validation_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    audit_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[object] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[object] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
+    )
+
+
+class PlatformUser(Base):
+    __tablename__ = "platform_users"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    username: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
+    display_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    role: Mapped[str] = mapped_column(String(64), default="testuser", nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(32), default="active", nullable=False, index=True)
+    password_hash: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    config_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[object] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[object] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
+    )
+
+
+class ProjectMembership(Base):
+    __tablename__ = "project_memberships"
+    __table_args__ = (UniqueConstraint("project_id", "user_id", name="uq_project_memberships_project_user"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("test_projects.id"), nullable=False, index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("platform_users.id"), nullable=False, index=True)
+    role: Mapped[str] = mapped_column(String(64), default="testuser", nullable=False, index=True)
+    permissions_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    status: Mapped[str] = mapped_column(String(32), default="active", nullable=False, index=True)
+    created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("platform_users.id"), nullable=True, index=True)
+    created_at: Mapped[object] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[object] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
+    )
+
+
+class AuditEvent(Base):
+    __tablename__ = "audit_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    project_id: Mapped[int | None] = mapped_column(ForeignKey("test_projects.id"), nullable=True, index=True)
+    actor_user_id: Mapped[int | None] = mapped_column(ForeignKey("platform_users.id"), nullable=True, index=True)
+    actor: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    action: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    target_type: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    target_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    case_id: Mapped[int | None] = mapped_column(ForeignKey("test_cases.id"), nullable=True, index=True)
+    run_id: Mapped[int | None] = mapped_column(ForeignKey("test_runs.id"), nullable=True, index=True)
+    campaign_id: Mapped[int | None] = mapped_column(ForeignKey("test_campaigns.id"), nullable=True, index=True)
+    result: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    risk_level: Mapped[str] = mapped_column(String(32), default="low", nullable=False)
+    before_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    after_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    detail_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[object] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+
+class SecretVaultItem(Base):
+    __tablename__ = "secret_vault_items"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    secret_code: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
+    project_id: Mapped[int | None] = mapped_column(ForeignKey("test_projects.id"), nullable=True, index=True)
+    secret_type: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    encrypted_value: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(32), default="active", nullable=False, index=True)
+    expires_at: Mapped[object | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    metadata_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[object] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[object] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
+    )
+
+
+class PlatformPlugin(Base):
+    __tablename__ = "platform_plugins"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    plugin_code: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
+    plugin_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    plugin_type: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    version: Mapped[str] = mapped_column(String(32), default="1.0.0", nullable=False)
+    status: Mapped[str] = mapped_column(String(32), default="active", nullable=False, index=True)
+    priority: Mapped[int] = mapped_column(Integer, default=100, nullable=False)
+    config_schema_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    config_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    health_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[object] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
     updated_at: Mapped[object] = mapped_column(
         DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False

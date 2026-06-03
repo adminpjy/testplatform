@@ -55,7 +55,8 @@ prompts:
 
       2. 处理所有待办：
          只有用户明确说“处理所有 / 遍历所有 / 每一条 / 所有行 / 逐行 / 循环”时，才生成：
-         {"action":"process_table_rows","target":"我的待办列表","loopPolicy":{"maxRows":200,"emptyStrategy":"pass","rowAction":"open_link_or_detail","closeStrategy":"common_dialog_controls"}}
+         {"action":"process_table_rows","target":"我的待办列表","loopPolicy":{"maxRows":30,"emptyStrategy":"pass","rowAction":"open_link_or_detail","closeStrategy":"common_dialog_controls","maxDurationMs":600000,"rowProbeTimeoutMs":250,"maxConsecutiveFailures":2}}
+         如果用户要求“审批/同意/通过/提交/办理所有待办”，必须把每条待办打开后的审批提交动作放入 loopPolicy.rowSteps。
 
       3. 查询列表：
          生成 query_table，并把查询条件放入 queryConditions。

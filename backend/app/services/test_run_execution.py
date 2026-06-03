@@ -18,6 +18,7 @@ from app.models import (
     TestArtifact,
     TestCase,
     TestCaseVersion,
+    PlatformUser,
     TestProject,
     TestRun,
     TestStepRun,
@@ -30,6 +31,7 @@ from app.services.dsl_post_processor import normalize_dsl
 from app.services.failure_analyzer import analyze_step_failure, failure_type
 from app.services.llm_settings import get_active_llm_config
 from app.services.natural_language_parser import NaturalLanguageParser
+from app.services.permissions import accessible_project_ids
 from app.utils.url_policy import ensure_allowed_url
 from app.utils.secrets import decrypt_secret
 from executor.aitp_executor.runner.case_runner import CaseRunner
@@ -38,7 +40,13 @@ from executor.aitp_executor.runner.case_runner import CaseRunner
 TERMINAL_RUN_STATUSES = {"passed", "failed", "stopped", "cancelled", "aborted"}
 
 
-def create_and_execute_run(db: Session, payload: TestRunCreate) -> TestRun:
+def create_and_execute_run(
+    db: Session,
+    payload: TestRunCreate,
+    *,
+    actor_user_id: int | None = None,
+    campaign_id: int | None = None,
+) -> TestRun:
     project = db.get(TestProject, payload.project_id)
     if project is None:
         raise ValueError("Project not found.")
@@ -78,10 +86,19 @@ def create_and_execute_run(db: Session, payload: TestRunCreate) -> TestRun:
         instruction=instruction,
         base_url=payload.base_url,
         run_name=None,
+        actor_user_id=actor_user_id,
+        campaign_id=campaign_id,
     )
 
 
-def create_and_execute_case_run(db: Session, case_id: int, payload: CaseRunCreate) -> TestRun:
+def create_and_execute_case_run(
+    db: Session,
+    case_id: int,
+    payload: CaseRunCreate,
+    *,
+    actor_user_id: int | None = None,
+    campaign_id: int | None = None,
+) -> TestRun:
     case = db.get(TestCase, case_id)
     if case is None or case.deleted_at is not None or case.status == "deleted":
         raise ValueError("Test case not found.")
@@ -109,10 +126,12 @@ def create_and_execute_case_run(db: Session, case_id: int, payload: CaseRunCreat
         instruction=version.natural_language_goal if version else case.instruction,
         base_url=None,
         run_name=payload.runName,
+        actor_user_id=actor_user_id,
+        campaign_id=campaign_id,
     )
 
 
-def rerun_test_run(db: Session, run_id: int) -> TestRun:
+def rerun_test_run(db: Session, run_id: int, *, actor_user_id: int | None = None) -> TestRun:
     source = db.get(TestRun, run_id)
     if source is None:
         raise ValueError("Test run not found.")
@@ -137,6 +156,8 @@ def rerun_test_run(db: Session, run_id: int) -> TestRun:
         instruction=source.instruction_snapshot or source.instruction,
         base_url=source.base_url_snapshot or source.base_url,
         run_name=f"rerun:{source.run_code}",
+        actor_user_id=actor_user_id,
+        campaign_id=source.campaign_id,
     )
 
 
@@ -160,7 +181,7 @@ def recover_test_run_from_intervention(
     system = db.get(TestSystem, source.system_id) if source.system_id else None
     failed_step = db.get(TestStepRun, step_run_id) if step_run_id else None
     dsl = _source_dsl_for_rerun(source, account=account)
-    recovery_steps = _intervention_plan_steps_to_dsl(plan)
+    recovery_steps = _intervention_plan_steps_to_dsl(plan, failed_step=failed_step)
     if recovery_steps:
         failed_index = _failed_step_index(db, run_id=run_id, failed_step=failed_step, dsl=dsl)
         dsl = _insert_intervention_steps(dsl, recovery_steps, failed_index)
@@ -189,14 +210,27 @@ def recover_test_run_from_intervention(
     )
 
 
-def rerun_case_latest(db: Session, case_id: int, payload: CaseRunCreate | None = None) -> TestRun:
-    return create_and_execute_case_run(db, case_id, payload or CaseRunCreate())
+def rerun_case_latest(
+    db: Session,
+    case_id: int,
+    payload: CaseRunCreate | None = None,
+    *,
+    actor_user_id: int | None = None,
+) -> TestRun:
+    return create_and_execute_case_run(db, case_id, payload or CaseRunCreate(), actor_user_id=actor_user_id)
 
 
-def run_case_version(db: Session, case_id: int, version_id: int, payload: CaseRunCreate | None = None) -> TestRun:
+def run_case_version(
+    db: Session,
+    case_id: int,
+    version_id: int,
+    payload: CaseRunCreate | None = None,
+    *,
+    actor_user_id: int | None = None,
+) -> TestRun:
     payload = payload or CaseRunCreate()
     payload.caseVersionId = version_id
-    return create_and_execute_case_run(db, case_id, payload)
+    return create_and_execute_case_run(db, case_id, payload, actor_user_id=actor_user_id)
 
 
 def save_run_as_case(db: Session, payload: SaveRunAsCaseRequest) -> TestCase:
@@ -442,8 +476,15 @@ def _vision_enabled_for_run(run_settings: dict, *, has_active_model: bool) -> bo
     return bool(app_settings.vision_fallback_enabled or has_active_model)
 
 
-def list_runs(db: Session) -> list[TestRun]:
-    runs = list(db.scalars(select(TestRun).order_by(TestRun.id.desc())).all())
+def list_runs(db: Session, user: PlatformUser | None = None) -> list[TestRun]:
+    query = select(TestRun)
+    if user is not None:
+        project_ids = accessible_project_ids(db, user)
+        if project_ids is not None:
+            if not project_ids:
+                return []
+            query = query.where(TestRun.project_id.in_(project_ids))
+    runs = list(db.scalars(query.order_by(TestRun.id.desc())).all())
     changed = False
     for run in runs:
         changed = _reconcile_run_lifecycle(db, run, commit=False) or changed
@@ -622,6 +663,12 @@ def _step_id_by_number(db: Session, run_id: int) -> dict[int, int]:
 
 
 def latest_screenshot(db: Session, run_id: int) -> TestArtifact | SimpleNamespace | None:
+    run = db.get(TestRun, run_id)
+    if run is None or not run.run_code:
+        return None
+    runtime_screenshot = _latest_runtime_screenshot_file(run.run_code)
+    if runtime_screenshot is not None:
+        return runtime_screenshot
     for artifact_type in ("screenshot", "failure_screenshot", "sandbox_screenshot"):
         artifact = db.scalars(
             select(TestArtifact)
@@ -630,19 +677,25 @@ def latest_screenshot(db: Session, run_id: int) -> TestArtifact | SimpleNamespac
         ).first()
         if artifact is not None:
             return artifact
-    run = db.get(TestRun, run_id)
-    if run is None or not run.run_code:
-        return None
+    return None
 
-    from executor.aitp_executor.utils.file_paths import relative_to_project, runs_root, safe_name
 
-    run_root = runs_root() / safe_name(run.run_code)
-    candidates = list((run_root / "screenshots").glob("step-*.png"))
-    candidates.extend(run_root.glob("sandbox-started.png"))
-    if not candidates:
+def _latest_runtime_screenshot_file(run_code: str) -> SimpleNamespace | None:
+    try:
+        from executor.aitp_executor.utils.file_paths import relative_to_project, runs_root, safe_name
+
+        run_root = runs_root() / safe_name(run_code)
+        screenshot_root = run_root / "screenshots"
+        candidates = [path for path in screenshot_root.glob("step-*.png") if path.is_file()]
+        sandbox = screenshot_root / "sandbox-started.png"
+        if sandbox.exists() and sandbox.is_file():
+            candidates.append(sandbox)
+        if not candidates:
+            return None
+        latest = max(candidates, key=lambda path: (path.stat().st_mtime, path.name))
+        return SimpleNamespace(file_path=relative_to_project(latest))
+    except Exception:
         return None
-    latest = max(candidates, key=lambda path: (path.stat().st_mtime, path.name))
-    return SimpleNamespace(file_path=relative_to_project(latest))
 
 
 def report_artifact(db: Session, run_id: int) -> TestArtifact | None:
@@ -746,6 +799,8 @@ def _create_run_record_and_start(
     instruction: str | None,
     base_url: str | None,
     run_name: str | None,
+    actor_user_id: int | None = None,
+    campaign_id: int | None = None,
 ) -> TestRun:
     execution_dsl = normalize_dsl(dict(dsl))
     execution_dsl["testData"] = test_data
@@ -783,7 +838,9 @@ def _create_run_record_and_start(
         system_id=system.id if system else project.system_id,
         case_id=case.id if case else None,
         case_version_id=version.id if version else None,
+        campaign_id=campaign_id,
         account_id=account.id if account else None,
+        created_by_user_id=actor_user_id,
         instruction=instruction,
         instruction_snapshot=instruction,
         base_url=selected_base_url,
@@ -808,8 +865,9 @@ def _create_run_record_and_start(
     return run
 
 
-def _intervention_plan_steps_to_dsl(plan: dict) -> list[dict]:
+def _intervention_plan_steps_to_dsl(plan: dict, *, failed_step: TestStepRun | None = None) -> list[dict]:
     steps: list[dict] = []
+    structured_retry_only = _requires_structured_retry(failed_step)
     for item in plan.get("steps") or []:
         if not isinstance(item, dict):
             continue
@@ -822,6 +880,8 @@ def _intervention_plan_steps_to_dsl(plan: dict) -> list[dict]:
             "sourceAction": action,
             "reason": reason,
         }
+        if structured_retry_only and action not in {"wait", "close_dialog", "assert_text_exists", "assert_url_contains"}:
+            continue
         if action == "wait":
             wait_ms = _coerce_wait_ms(value)
             steps.append({**base, "action": "wait", "target": target or "等待页面稳定", "ms": wait_ms})
@@ -848,6 +908,23 @@ def _intervention_plan_steps_to_dsl(plan: dict) -> list[dict]:
             if target:
                 steps.append({**base, "action": "assert_url_contains", "target": target, "text": target})
     return steps
+
+
+def _requires_structured_retry(failed_step: TestStepRun | None) -> bool:
+    if failed_step is None:
+        return False
+    combined = " ".join(
+        str(item or "")
+        for item in [
+            getattr(failed_step, "action", None),
+            getattr(failed_step, "target", None),
+            getattr(failed_step, "step_name", None),
+            getattr(failed_step, "locator_strategy", None),
+            getattr(failed_step, "reason", None),
+            getattr(failed_step, "error_summary", None),
+        ]
+    )
+    return any(token in combined for token in ["process_table_rows", "for_each_table_row", "table_row_loop_failed"])
 
 
 def _insert_intervention_steps(dsl: dict, recovery_steps: list[dict], failed_index: int | None) -> dict:

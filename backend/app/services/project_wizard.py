@@ -11,7 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.models import ProjectBootstrapPackage, TestCase, TestProject
+from app.models import PlatformUser, ProjectBootstrapPackage, TestCase, TestProject
 from app.schemas.cases import FunctionalTestCaseCreate
 from app.schemas.enterprise import (
     ImportBootstrapCasesRequest,
@@ -24,8 +24,8 @@ from app.services.dsl_post_processor import normalize_dsl, parse_menu_path
 from app.services.projects import create_project, create_project_account, get_project_model, update_project
 
 
-def bootstrap_project(db: Session, payload: ProjectWizardBootstrapRequest) -> dict[str, Any]:
-    project = _create_or_update_project(db, payload)
+def bootstrap_project(db: Session, payload: ProjectWizardBootstrapRequest, user: PlatformUser | None = None) -> dict[str, Any]:
+    project = _create_or_update_project(db, payload, user)
     if payload.account:
         _ensure_account(db, project, payload)
 
@@ -66,6 +66,7 @@ def import_bootstrap_cases(
     db: Session,
     package_id: int,
     payload: ImportBootstrapCasesRequest,
+    user: PlatformUser | None = None,
 ) -> ImportBootstrapCasesResponse:
     package = db.get(ProjectBootstrapPackage, package_id)
     if package is None:
@@ -83,7 +84,7 @@ def import_bootstrap_cases(
         if draft.index not in selected_indexes:
             skipped_indexes.append(draft.index)
             continue
-        case = create_case(db, project, _case_payload_from_draft(project, draft, activate=payload.activate))
+        case = create_case(db, project, _case_payload_from_draft(project, draft, activate=payload.activate), user)
         imported_case_ids.append(case.id)
 
     package.status = "imported" if imported_case_ids else "draft_generated"
@@ -109,7 +110,11 @@ def get_bootstrap_package(db: Session, package_id: int) -> ProjectBootstrapPacka
     return db.get(ProjectBootstrapPackage, package_id)
 
 
-def _create_or_update_project(db: Session, payload: ProjectWizardBootstrapRequest) -> TestProject:
+def _create_or_update_project(
+    db: Session,
+    payload: ProjectWizardBootstrapRequest,
+    user: PlatformUser | None = None,
+) -> TestProject:
     project_code = payload.project.project_code
     existing = None
     if project_code:
@@ -121,10 +126,10 @@ def _create_or_update_project(db: Session, payload: ProjectWizardBootstrapReques
             )
         ).first()
     if existing is not None:
-        update_project(db, existing, payload.project)
+        update_project(db, existing, payload.project, user)
         db.refresh(existing)
         return existing
-    created = create_project(db, payload.project)
+    created = create_project(db, payload.project, user)
     project = get_project_model(db, int(created["id"]))
     if project is None:
         raise ValueError("Project creation failed.")
@@ -360,4 +365,3 @@ def _confidence(goal: str, menu_path: Any) -> float:
 def _package_code() -> str:
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
     return f"BOOT-{stamp}-{uuid4().hex[:6].upper()}"
-

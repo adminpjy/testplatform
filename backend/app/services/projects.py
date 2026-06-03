@@ -8,37 +8,53 @@ from uuid import uuid4
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.models import TestAccount, TestCase, TestProject, TestRun
+from app.models import PlatformUser, ProjectMembership, TestAccount, TestCase, TestProject, TestRun
+from app.schemas.auth import ProjectMemberCreate, ProjectMemberUpdate
 from app.schemas.projects import (
     ProjectAccountCreate,
     ProjectAccountUpdate,
     TestProjectCreate,
     TestProjectUpdate,
 )
+from app.services.auth import normalize_user_role
+from app.services.permissions import (
+    DEFAULT_TESTUSER_PERMISSIONS,
+    OWNER_PERMISSIONS,
+    accessible_project_ids,
+    ensure_project_owner_membership,
+    is_admin,
+    membership_for_project,
+    normalize_permissions,
+    normalize_project_role,
+    project_permissions,
+)
 from app.utils.secrets import encrypt_secret
 
 
-def list_projects(db: Session) -> list[dict[str, Any]]:
-    projects = db.scalars(
-        select(TestProject)
-        .where(TestProject.deleted_at.is_(None), TestProject.status != "deleted")
-        .order_by(TestProject.id.desc())
-    ).all()
-    return [_project_payload(db, project) for project in projects]
+def list_projects(db: Session, user: PlatformUser | None = None) -> list[dict[str, Any]]:
+    query = select(TestProject).where(TestProject.deleted_at.is_(None), TestProject.status != "deleted")
+    if user is not None:
+        ids = accessible_project_ids(db, user)
+        if ids is not None:
+            if not ids:
+                return []
+            query = query.where(TestProject.id.in_(ids))
+    projects = db.scalars(query.order_by(TestProject.id.desc())).all()
+    return [_project_payload(db, project, user=user) for project in projects]
 
 
-def get_project(db: Session, project_id: int) -> dict[str, Any] | None:
+def get_project(db: Session, project_id: int, user: PlatformUser | None = None) -> dict[str, Any] | None:
     project = _get_project_model(db, project_id)
     if project is None:
         return None
-    return _project_payload(db, project)
+    return _project_payload(db, project, user=user)
 
 
 def get_project_model(db: Session, project_id: int) -> TestProject | None:
     return _get_project_model(db, project_id)
 
 
-def create_project(db: Session, payload: TestProjectCreate) -> dict[str, Any]:
+def create_project(db: Session, payload: TestProjectCreate, user: PlatformUser | None = None) -> dict[str, Any]:
     data = payload.model_dump(exclude_unset=True)
     _validate_project_urls(data)
     project_name = (data.get("project_name") or data.get("name") or "").strip()
@@ -63,14 +79,19 @@ def create_project(db: Session, payload: TestProjectCreate) -> dict[str, Any]:
         enable_accessibility_snapshot_default=bool(data.get("enable_accessibility_snapshot_default", True)),
         enable_vision_fallback_default=bool(data.get("enable_vision_fallback_default", False)),
         status=data.get("status") or "active",
+        owner_user_id=user.id if user else None,
+        created_by_user_id=user.id if user else None,
     )
     db.add(project)
+    db.flush()
+    if user is not None:
+        ensure_project_owner_membership(db, project, user)
     db.commit()
     db.refresh(project)
-    return _project_payload(db, project)
+    return _project_payload(db, project, user=user)
 
 
-def update_project(db: Session, project: TestProject, payload: TestProjectUpdate) -> dict[str, Any]:
+def update_project(db: Session, project: TestProject, payload: TestProjectUpdate, user: PlatformUser | None = None) -> dict[str, Any]:
     data = payload.model_dump(exclude_unset=True)
     _validate_project_urls(data)
     project_name = data.pop("project_name", None)
@@ -86,7 +107,7 @@ def update_project(db: Session, project: TestProject, payload: TestProjectUpdate
     db.add(project)
     db.commit()
     db.refresh(project)
-    return _project_payload(db, project)
+    return _project_payload(db, project, user=user)
 
 
 def soft_delete_project(db: Session, project: TestProject) -> None:
@@ -195,6 +216,110 @@ def set_default_account(db: Session, account: TestAccount) -> TestAccount:
     return account
 
 
+def list_project_members(db: Session, project_id: int) -> list[dict[str, Any]]:
+    memberships = list(
+        db.scalars(
+            select(ProjectMembership)
+            .where(ProjectMembership.project_id == project_id)
+            .order_by(ProjectMembership.role.desc(), ProjectMembership.id.desc())
+        ).all()
+    )
+    return [_membership_payload(db, membership) for membership in memberships]
+
+
+def create_project_member(
+    db: Session,
+    project: TestProject,
+    payload: ProjectMemberCreate,
+    actor: PlatformUser | None = None,
+) -> dict[str, Any]:
+    username = payload.username.strip()
+    if not username:
+        raise ValueError("username is required.")
+    user = db.scalars(select(PlatformUser).where(PlatformUser.username == username)).first()
+    member_role = normalize_project_role(payload.role)
+    if user is None:
+        user = PlatformUser(
+            username=username,
+            display_name=payload.display_name or username,
+            role=member_role if member_role == "owner" else "testuser",
+            status=payload.status or "active",
+        )
+        db.add(user)
+        db.flush()
+    else:
+        if payload.display_name is not None:
+            user.display_name = payload.display_name
+        if normalize_user_role(user.role) != "admin" and member_role == "owner":
+            user.role = "owner"
+        db.add(user)
+
+    membership = db.scalars(
+        select(ProjectMembership).where(ProjectMembership.project_id == project.id, ProjectMembership.user_id == user.id)
+    ).first()
+    permissions = normalize_permissions(member_role, payload.permissions)
+    if membership is None:
+        membership = ProjectMembership(
+            project_id=project.id,
+            user_id=user.id,
+            role=member_role,
+            permissions_json=permissions,
+            status=payload.status or "active",
+            created_by_user_id=actor.id if actor else None,
+        )
+    else:
+        membership.role = member_role
+        membership.permissions_json = permissions
+        membership.status = payload.status or "active"
+    db.add(membership)
+    if member_role == "owner" and project.owner_user_id is None:
+        project.owner_user_id = user.id
+        db.add(project)
+    db.commit()
+    db.refresh(membership)
+    return _membership_payload(db, membership)
+
+
+def update_project_member(
+    db: Session,
+    project: TestProject,
+    membership: ProjectMembership,
+    payload: ProjectMemberUpdate,
+) -> dict[str, Any]:
+    if membership.project_id != project.id:
+        raise ValueError("Project member not found.")
+    role = normalize_project_role(payload.role or membership.role)
+    if payload.role is not None:
+        membership.role = role
+    if payload.permissions is not None:
+        membership.permissions_json = normalize_permissions(role, payload.permissions)
+    elif payload.role is not None:
+        membership.permissions_json = normalize_permissions(role, membership.permissions_json)
+    if payload.status is not None:
+        membership.status = payload.status
+    db.add(membership)
+    member_user = db.get(PlatformUser, membership.user_id)
+    if member_user is not None and normalize_user_role(member_user.role) != "admin" and role == "owner":
+        member_user.role = "owner"
+        db.add(member_user)
+    db.commit()
+    db.refresh(membership)
+    return _membership_payload(db, membership)
+
+
+def get_project_member(db: Session, project_id: int, membership_id: int) -> ProjectMembership | None:
+    return db.scalars(
+        select(ProjectMembership).where(ProjectMembership.id == membership_id, ProjectMembership.project_id == project_id)
+    ).first()
+
+
+def delete_project_member(db: Session, project: TestProject, membership: ProjectMembership) -> None:
+    if project.owner_user_id == membership.user_id and membership.role == "owner":
+        raise ValueError("项目 owner 不能从成员列表删除。请先转移 owner。")
+    db.delete(membership)
+    db.commit()
+
+
 def _get_project_model(db: Session, project_id: int) -> TestProject | None:
     project = db.get(TestProject, project_id)
     if project is None or project.deleted_at is not None or project.status == "deleted":
@@ -202,13 +327,20 @@ def _get_project_model(db: Session, project_id: int) -> TestProject | None:
     return project
 
 
-def _project_payload(db: Session, project: TestProject) -> dict[str, Any]:
+def _project_payload(db: Session, project: TestProject, user: PlatformUser | None = None) -> dict[str, Any]:
     default_account = db.get(TestAccount, project.default_account_id) if project.default_account_id else None
     if default_account is not None and (default_account.deleted_at is not None or default_account.status == "deleted"):
         default_account = None
     last_run_status = db.scalar(
         select(TestRun.status).where(TestRun.project_id == project.id).order_by(TestRun.id.desc()).limit(1)
     )
+    permissions = project_permissions(db, user, project.id) if user is not None else None
+    membership = membership_for_project(db, user.id, project.id) if user is not None and not is_admin(user) else None
+    current_role = "admin" if user is not None and is_admin(user) else None
+    if current_role is None and user is not None and project.owner_user_id == user.id:
+        current_role = "owner"
+    if current_role is None and membership is not None:
+        current_role = normalize_project_role(membership.role)
     return {
         "id": project.id,
         "project_code": project.project_code,
@@ -223,6 +355,8 @@ def _project_payload(db: Session, project: TestProject) -> dict[str, Any]:
         "auth_type": project.auth_type,
         "environment": project.environment,
         "default_timeout_ms": project.default_timeout_ms,
+        "owner_user_id": project.owner_user_id,
+        "created_by_user_id": project.created_by_user_id,
         "enable_trace_default": project.enable_trace_default,
         "enable_screenshot_default": project.enable_screenshot_default,
         "enable_dom_snapshot_default": project.enable_dom_snapshot_default,
@@ -241,9 +375,28 @@ def _project_payload(db: Session, project: TestProject) -> dict[str, Any]:
         )
         or 0,
         "last_run_status": last_run_status,
+        "current_user_role": current_role,
+        "current_user_permissions": permissions,
         "created_at": project.created_at,
         "updated_at": project.updated_at,
         "deleted_at": project.deleted_at,
+    }
+
+
+def _membership_payload(db: Session, membership: ProjectMembership) -> dict[str, Any]:
+    user = db.get(PlatformUser, membership.user_id)
+    permissions = normalize_permissions(membership.role, membership.permissions_json)
+    return {
+        "id": membership.id,
+        "project_id": membership.project_id,
+        "user_id": membership.user_id,
+        "username": user.username if user else "",
+        "display_name": user.display_name if user else None,
+        "role": normalize_project_role(membership.role),
+        "permissions": permissions,
+        "status": membership.status,
+        "created_at": membership.created_at,
+        "updated_at": membership.updated_at,
     }
 
 

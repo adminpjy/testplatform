@@ -22,6 +22,7 @@ import type {
   ProjectWizardBootstrapResponse,
   TestCampaign
 } from "../types/platform";
+import { labelAuthType, labelRisk } from "../utils/displayLabels";
 
 type WizardStep = "config" | "drafts" | "prescan" | "campaign";
 
@@ -320,15 +321,15 @@ function ProjectFields({ form, onChange }: { form: ProjectCreatePayload; onChang
     <div className="form-grid">
       <Field label="项目名称" value={form.project_name || ""} onChange={(value) => onChange({ ...form, project_name: value })} />
       <Field label="被测系统" value={form.system_name || ""} onChange={(value) => onChange({ ...form, system_name: value })} />
-      <Field label="base_url" value={form.base_url || ""} onChange={(value) => onChange({ ...form, base_url: value })} />
-      <Field label="login_url" value={form.login_url || ""} onChange={(value) => onChange({ ...form, login_url: value })} />
-      <Field label="home_url" value={form.home_url || ""} onChange={(value) => onChange({ ...form, home_url: value })} />
+      <Field label="系统入口地址" value={form.base_url || ""} onChange={(value) => onChange({ ...form, base_url: value })} />
+      <Field label="登录地址" value={form.login_url || ""} onChange={(value) => onChange({ ...form, login_url: value })} />
+      <Field label="首页地址" value={form.home_url || ""} onChange={(value) => onChange({ ...form, home_url: value })} />
       <label>
         <span>认证方式</span>
         <select value={form.auth_type || "username_password"} onChange={(event) => onChange({ ...form, auth_type: event.target.value })}>
-          <option value="username_password">username_password</option>
-          <option value="sso">sso</option>
-          <option value="other">other</option>
+          <option value="username_password">{labelAuthType("username_password")}</option>
+          <option value="sso">{labelAuthType("sso")}</option>
+          <option value="other">{labelAuthType("other")}</option>
         </select>
       </label>
     </div>
@@ -388,7 +389,7 @@ function DraftTable({
         { key: "name", title: "用例名称", render: (draft) => draft.caseName },
         { key: "goal", title: "测试目标", render: (draft) => <span className="text-cell">{draft.naturalLanguageGoal}</span> },
         { key: "menu", title: "菜单路径", render: (draft) => draft.menuPath || "-" },
-        { key: "risk", title: "风险", render: (draft) => <StatusBadge value={draft.riskLevel} /> },
+        { key: "risk", title: "风险", render: (draft) => labelRisk(draft.riskLevel) },
         { key: "confidence", title: "置信度", render: (draft) => `${Math.round(draft.confidence * 100)}%` }
       ]}
     />

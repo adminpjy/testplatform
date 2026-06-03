@@ -1,5 +1,6 @@
 import type { RuntimeMessage } from "../types/runtime";
 import type { TestStepRun } from "../types/platform";
+import { labelAction, labelFailureType, labelStatus } from "./displayLabels";
 
 export type RuntimeFilter = "all" | "action" | "page" | "llm" | "vision" | "error";
 
@@ -35,9 +36,9 @@ const phaseTitles: Record<string, string> = {
   llm_request: "正在调用大模型",
   llm_chunk: "正在接收大模型流式输出",
   llm_response: "大模型回复已接收",
-  json_repair: "正在校验结构化 JSON",
+  json_repair: "正在校验结构化输出",
   analysis_result: "正在生成分析结论",
-  dsl_generated: "正在生成 DSL 步骤",
+  dsl_generated: "正在生成测试步骤",
   vision_resolver: "正在启用视觉兜底识别",
   vision: "正在启用视觉兜底识别",
   business_goal_agent: "正在执行业务目标",
@@ -88,7 +89,7 @@ const methodLabels: Record<string, string> = {
   global_interruption_handler: "中断处理",
   llm_provider: "大模型",
   natural_language_parser: "测试目标解析",
-  json_utils: "JSON 校验",
+  json_utils: "结构化数据校验",
   sandbox_provider: "执行环境",
   page_waiter: "页面加载等待",
   menu_path_navigator: "菜单路径导航"
@@ -153,12 +154,12 @@ export function readableRuntimeMessage(message: RuntimeMessage): string {
 
 export function readableStepAction(step: TestStepRun): string {
   const action = step.action || "";
-  return actionTitles[action] || phaseTitles[action] || action || "测试步骤";
+  return actionTitles[action] || phaseTitles[action] || labelAction(action) || "测试步骤";
 }
 
 export function methodLabel(method: string | null): string {
   if (!method) return "系统";
-  return methodLabels[method] || method;
+  return methodLabels[method] || "系统";
 }
 
 export function runtimeFilterOf(message: RuntimeMessage): RuntimeFilter {
@@ -211,7 +212,7 @@ export function runtimeDetailView(message: RuntimeMessage): RuntimeDetailView | 
   const visionFallback = metadataValue(metadata, "visionFallback");
 
   if (stepNumber) lines.push(`步骤编号：S${String(stepNumber).padStart(3, "0")}`);
-  if (action) lines.push(`执行动作：${actionTitles[String(action)] || String(action)}`);
+  if (action) lines.push(`执行动作：${actionTitles[String(action)] || labelAction(String(action))}`);
   if (target) lines.push(`操作目标：${target}`);
   if (pathSegments.length > 0) lines.push(`菜单路径：${pathSegments.join(" → ")}`);
   if (parent) lines.push(`一级菜单：${parent}`);
@@ -219,7 +220,7 @@ export function runtimeDetailView(message: RuntimeMessage): RuntimeDetailView | 
   if (url) lines.push(`访问地址：${url}`);
   if (provider || model) lines.push(`大模型：${[provider, model].filter(Boolean).join(" / ")}`);
   if (endpoint) lines.push(`模型接口：${endpoint}`);
-  if (stage) lines.push(`处理阶段：${stage === "plan" ? "DSL 生成" : "目标分析"}`);
+  if (stage) lines.push(`处理阶段：${stage === "plan" ? "测试步骤生成" : "目标分析"}`);
   if (stream !== null && message.method === "llm_provider") lines.push(`流式输出：${stream === "true" ? "开启" : "关闭"}`);
   if (chunkCount) lines.push(`流式片段：${chunkCount} 段`);
   if (rawLength) lines.push(`回复长度：${rawLength} 字符`);
@@ -228,21 +229,21 @@ export function runtimeDetailView(message: RuntimeMessage): RuntimeDetailView | 
   if (localBrowser !== null && message.method === "sandbox_provider") {
     lines.push(`本地浏览器承载：${localBrowser === "true" ? "是" : "否"}`);
   }
-  if (waitedMs) lines.push(`页面等待耗时：${waitedMs} ms`);
+  if (waitedMs) lines.push(`页面等待耗时：${waitedMs} 毫秒`);
   if (textLength) lines.push(`页面文本长度：${textLength}`);
   if (controlCount) lines.push(`可操作元素数量：${controlCount}`);
   if (loadingVisible !== null && message.method === "page_waiter") {
     lines.push(`加载遮罩：${loadingVisible === "true" ? "仍可见" : "未发现"}`);
   }
   if (steps) lines.push(`预计步骤数：${steps}`);
-  if (status) lines.push(`处理状态：${status}`);
+  if (status) lines.push(`处理状态：${labelStatus(status)}`);
   if (strategy) lines.push(`定位来源：${locatorStrategyLabel(String(strategy))}`);
   if (confidence) lines.push(`定位置信度：${formatConfidence(confidence)}`);
   if (fallbackReason) lines.push(`兜底原因：${fallbackReason}`);
-  if (failureType) lines.push(`失败类型：${failureType}`);
-  if (authState) lines.push(`登录状态：${authState}`);
+  if (failureType) lines.push(`失败类型：${labelFailureType(failureType)}`);
+  if (authState) lines.push(`登录状态：${labelStatus(authState)}`);
   if (remainingRetries) lines.push(`剩余重试次数：${remainingRetries}`);
-  if (visionFallback) lines.push(`视觉兜底：${visionFallback}`);
+  if (visionFallback) lines.push(`视觉兜底：${visionFallback === "true" ? "已启用" : "未启用"}`);
   if (requested !== null && message.phase === "vision") {
     lines.push(`视觉兜底配置：${requested === "true" ? "已开启" : "未开启"}`);
   }
@@ -279,7 +280,7 @@ function locatorStrategyLabel(value: string): string {
   if (value === "llm_resolver") return "大模型辅助判断";
   if (value === "vision_fallback") return "视觉兜底";
   if (value === "url") return "页面地址";
-  return value;
+  return "自定义定位策略";
 }
 
 function formatConfidence(value: string): string {

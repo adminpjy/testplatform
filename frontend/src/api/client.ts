@@ -1,4 +1,5 @@
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL as string | undefined) || "";
+const AUTH_TOKEN_KEY = "aitp_auth_token";
 
 export class ApiError extends Error {
   status: number;
@@ -42,6 +43,18 @@ export async function deleteJson<T = void>(path: string): Promise<T> {
   });
 }
 
+export function getAuthToken(): string {
+  return window.localStorage.getItem(AUTH_TOKEN_KEY) || "";
+}
+
+export function setAuthToken(token: string): void {
+  if (token) {
+    window.localStorage.setItem(AUTH_TOKEN_KEY, token);
+  } else {
+    window.localStorage.removeItem(AUTH_TOKEN_KEY);
+  }
+}
+
 export function apiUrl(path: string): string {
   if (/^https?:\/\//.test(path)) {
     return path;
@@ -55,10 +68,12 @@ export function fileUrl(filePath: string): string {
 }
 
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
+  const token = getAuthToken();
   const response = await fetch(apiUrl(path), {
     ...init,
     headers: {
       Accept: "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...(init?.headers || {})
     }
   });

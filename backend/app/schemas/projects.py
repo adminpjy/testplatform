@@ -95,11 +95,15 @@ class TestProjectRead(TestProjectBase):
     project_code: str
     project_name: str | None = None
     name: str
+    owner_user_id: int | None = None
+    created_by_user_id: int | None = None
     default_account_id: int | None = None
     default_account: ProjectAccountRead | None = None
     case_count: int = 0
     account_count: int = 0
     last_run_status: str | None = None
+    current_user_role: str | None = None
+    current_user_permissions: dict[str, Any] | None = None
     created_at: datetime
     updated_at: datetime
     deleted_at: datetime | None = None

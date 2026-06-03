@@ -4,11 +4,14 @@ import { useEffect, useRef, useState } from "react";
 import { apiUrl, fileUrl } from "../api/client";
 import {
   convertInterventionToRule,
+  createCampaign,
   createTestRun,
   executeIntervention,
+  getCampaignReportSummary,
   getCase,
   getProjects,
   getProjectCases,
+  getProjectCampaigns,
   getRunFailureSamples,
   getRunHumanInterventions,
   getTestRun,
@@ -17,6 +20,7 @@ import {
   getTestRunSteps,
   interveneStep,
   rerunTestRun,
+  startCampaign,
   streamAnalyzeAndPlan
 } from "../api/platform";
 import { AnalysisTracePanel } from "../components/AnalysisTracePanel";
@@ -28,10 +32,12 @@ import { RunHistoryTab } from "../components/RunHistoryTab";
 import { RuntimeStreamPanel } from "../components/RuntimeStreamPanel";
 import { ScreenshotPreviewModal } from "../components/ScreenshotPreviewModal";
 import { StepScreenshotList } from "../components/StepScreenshotList";
+import { StatusBadge } from "../components/StatusBadge";
 import { TestRunConfigCard } from "../components/TestRunConfigCard";
 import { TraceViewerCard } from "../components/TraceViewerCard";
 import type {
   AnalyzeResult,
+  CampaignReportSummary,
   FailureSample,
   HumanIntervention,
   RuleDraft,
@@ -41,15 +47,18 @@ import type {
   FunctionalTestCase,
   TestProject,
   TestRun,
+  TestCampaign,
   TestStepRun
 } from "../types/platform";
 import type { RuntimeMessage } from "../types/runtime";
 import { normalizeRuntimeMessage } from "../types/runtime";
+import { labelFailureType, labelStatus } from "../utils/displayLabels";
 
 const DEFAULT_TEST_DATA = `{
 }`;
 
 type TestRunTab = "steps" | "history" | "failures" | "debug" | "artifacts";
+type ExecutionMode = "single" | "project";
 
 const TEST_RUN_TABS: Array<{ id: TestRunTab; label: string }> = [
   { id: "steps", label: "步骤与截图" },
@@ -63,6 +72,7 @@ export function TestRunPage() {
   const [projects, setProjects] = useState<TestProject[]>([]);
   const [projectCases, setProjectCases] = useState<FunctionalTestCase[]>([]);
   const [runs, setRuns] = useState<TestRun[]>([]);
+  const [campaigns, setCampaigns] = useState<TestCampaign[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<number | "">("");
   const [selectedCaseId, setSelectedCaseId] = useState<number | "">("");
   const [baseUrl, setBaseUrl] = useState("");
@@ -75,6 +85,9 @@ export function TestRunPage() {
   const [plannedDsl, setPlannedDsl] = useState<TestCaseDSL | null>(null);
   const [analysisMessages, setAnalysisMessages] = useState<RuntimeMessage[]>([]);
   const [activeRun, setActiveRun] = useState<TestRun | null>(null);
+  const [executionMode, setExecutionMode] = useState<ExecutionMode>("single");
+  const [activeCampaign, setActiveCampaign] = useState<TestCampaign | null>(null);
+  const [campaignReport, setCampaignReport] = useState<CampaignReportSummary | null>(null);
   const [steps, setSteps] = useState<TestStepRun[]>([]);
   const [artifacts, setArtifacts] = useState<TestArtifact[]>([]);
   const [failureSamples, setFailureSamples] = useState<FailureSample[]>([]);
@@ -83,6 +96,7 @@ export function TestRunPage() {
   const [apiError, setApiError] = useState<string | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isExecuting, setIsExecuting] = useState(false);
+  const [isCampaignExecuting, setIsCampaignExecuting] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [interventionOpen, setInterventionOpen] = useState(false);
   const [screenshotRefreshKey, setScreenshotRefreshKey] = useState(Date.now());
@@ -118,6 +132,7 @@ export function TestRunPage() {
         setSelectedCaseId(savedCase.id);
         setSelectedProjectId(savedCase.project_id);
         await loadCasesForProject(savedCase.project_id, savedCase.id);
+        await loadCampaignsForProject(savedCase.project_id);
         applyCaseToForm(savedCase, projectList);
         return;
       }
@@ -125,6 +140,7 @@ export function TestRunPage() {
         const project = projectList[0];
         setSelectedProjectId(project.id);
         await loadCasesForProject(project.id);
+        await loadCampaignsForProject(project.id);
         if (project.base_url) setBaseUrl(project.login_url || project.base_url);
         if (project.default_account?.username) setUsername(project.default_account.username);
       }
@@ -181,8 +197,8 @@ export function TestRunPage() {
       readyToExecute: Boolean(runDsl),
       confidence: runDsl ? 1 : 0,
       understoodGoal: run.instruction_snapshot || run.instruction || runDsl?.caseName || run.run_code,
-      missingFields: runDsl ? [] : ["DSL"],
-      clarifyingQuestions: runDsl ? [] : ["该运行记录没有保存可执行 DSL，无法直接带入执行。"],
+      missingFields: runDsl ? [] : ["测试步骤"],
+      clarifyingQuestions: runDsl ? [] : ["该运行记录没有保存可执行测试步骤，无法直接带入执行。"],
       assumptions: [
         `已从运行记录 ${run.run_code} 带入配置。`,
         "密码不会从历史记录中回填；直接重跑会优先使用项目测试账号。"
@@ -202,6 +218,7 @@ export function TestRunPage() {
       setUsername(project.default_account?.username || username);
     }
     await loadCasesForProject(projectId);
+    await loadCampaignsForProject(projectId);
   }
 
   async function loadCasesForProject(projectId: number, preferredCaseId?: number) {
@@ -209,6 +226,20 @@ export function TestRunPage() {
     setProjectCases(caseList);
     if (preferredCaseId && !caseList.some((item) => item.id === preferredCaseId)) {
       setSelectedCaseId("");
+    }
+  }
+
+  async function loadCampaignsForProject(projectId: number) {
+    try {
+      const campaignList = await getProjectCampaigns(projectId);
+      setCampaigns(campaignList);
+      if (campaignList[0]) {
+        setActiveCampaign(campaignList[0]);
+        const report = await getCampaignReportSummary(campaignList[0].id).catch(() => null);
+        setCampaignReport(report);
+      }
+    } catch {
+      setCampaigns([]);
     }
   }
 
@@ -237,8 +268,8 @@ export function TestRunPage() {
       readyToExecute: Boolean(savedCase.dsl_json),
       confidence: savedCase.dsl_json ? 1 : 0,
       understoodGoal: savedCase.natural_language_goal || savedCase.case_name,
-      missingFields: savedCase.dsl_json ? [] : ["DSL"],
-      clarifyingQuestions: savedCase.dsl_json ? [] : ["该用例尚未保存 DSL，请在用例详情页生成或保存 DSL。"],
+      missingFields: savedCase.dsl_json ? [] : ["测试步骤"],
+      clarifyingQuestions: savedCase.dsl_json ? [] : ["该用例尚未保存测试步骤，请在用例详情页生成或保存测试步骤。"],
       assumptions: ["使用已保存的功能测试用例配置。"],
       riskLevel: savedCase.risk_level || "low",
       normalizedInstruction: savedCase.natural_language_goal || savedCase.case_name
@@ -290,7 +321,7 @@ export function TestRunPage() {
       return;
     }
     if (!plannedDsl) {
-      setApiError("请先完成分析并生成 DSL 后再开始执行。");
+      setApiError("请先完成分析并生成测试步骤后再开始执行。");
       return;
     }
     setApiError(null);
@@ -315,6 +346,63 @@ export function TestRunPage() {
       setApiError(error instanceof Error ? error.message : String(error));
     } finally {
       setIsExecuting(false);
+    }
+  }
+
+  async function handleProjectCampaignRun() {
+    if (!selectedProjectId) {
+      setApiError("请先选择项目。");
+      return;
+    }
+    if (!canRunProjectCampaign) {
+      setApiError("当前用户没有执行整个项目测试的权限，请联系项目负责人授权。");
+      return;
+    }
+    setApiError(null);
+    setIsCampaignExecuting(true);
+    setConfigCollapsed(true);
+    setActiveTab("history");
+    try {
+      const project = projects.find((item) => item.id === Number(selectedProjectId));
+      const campaign = await createCampaign(Number(selectedProjectId), {
+        name: `${project?.project_name || project?.name || "项目"} 全量测试 ${new Date().toLocaleString()}`,
+        description: "从测试运行页发起的整个项目功能测试。",
+        caseIds: null,
+        settings: { source: "test_run_project_mode", visionFallbackEnabled: visionFallback }
+      });
+      const started = await startCampaign(campaign.id, {
+        settingsOverride: { source: "test_run_project_mode", visionFallbackEnabled: visionFallback }
+      });
+      setActiveCampaign(started);
+      const [runList, campaignList, report] = await Promise.all([
+        getTestRuns(),
+        getProjectCampaigns(Number(selectedProjectId)),
+        getCampaignReportSummary(started.id)
+      ]);
+      setRuns(runList);
+      setCampaigns(campaignList);
+      setCampaignReport(report);
+    } catch (error) {
+      setApiError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setIsCampaignExecuting(false);
+    }
+  }
+
+  async function refreshActiveCampaign() {
+    if (!activeCampaign || !selectedProjectId) return;
+    try {
+      const [campaignList, report, runList] = await Promise.all([
+        getProjectCampaigns(Number(selectedProjectId)),
+        getCampaignReportSummary(activeCampaign.id),
+        getTestRuns()
+      ]);
+      setCampaigns(campaignList);
+      setActiveCampaign(campaignList.find((item) => item.id === activeCampaign.id) || activeCampaign);
+      setCampaignReport(report);
+      setRuns(runList);
+    } catch (error) {
+      setApiError(error instanceof Error ? error.message : String(error));
     }
   }
 
@@ -464,6 +552,10 @@ export function TestRunPage() {
     analysisMessages
   });
   const canIntervene = Boolean(activeRun && ["failed", "needs_human"].includes(activeRun.status));
+  const selectedProject = projects.find((item) => item.id === Number(selectedProjectId)) || null;
+  const canRunProjectCampaign = Boolean(
+    selectedProject?.current_user_permissions?.run_campaign || selectedProject?.current_user_role === "owner" || selectedProject?.current_user_role === "admin"
+  );
 
   return (
     <div className="test-run-workspace">
@@ -474,63 +566,91 @@ export function TestRunPage() {
             <p>选择项目、功能测试用例、账号、测试数据和自然语言测试目标。</p>
           </div>
         </div>
-        <TestRunConfigCard
-          collapsed={configCollapsed}
-          testDataOpen={testDataOpen}
-          projects={projects}
-          cases={projectCases}
-          selectedProjectId={selectedProjectId}
-          selectedCaseId={selectedCaseId}
-          baseUrl={baseUrl}
-          username={username}
-          password={password}
-          visionFallback={visionFallback}
-          instruction={instruction}
-          testDataJson={testDataJson}
-          analysis={analysis}
-          canExecute={canExecute}
-          executeDisabledReason={executeDisabledReason}
-          canIntervene={canIntervene}
-          isAnalyzing={isAnalyzing}
-          isExecuting={isExecuting}
-          hasActiveRun={Boolean(activeRun)}
-          onToggleCollapsed={() => setConfigCollapsed((value) => !value)}
-          onToggleTestData={() => setTestDataOpen((value) => !value)}
-          onProjectChange={(value) => void handleProjectChange(value)}
-          onCaseChange={(value) => void handleCaseChange(value)}
-          onBaseUrlChange={setBaseUrl}
-          onUsernameChange={setUsername}
-          onPasswordChange={setPassword}
-          onVisionFallbackChange={setVisionFallback}
-          onInstructionChange={setInstruction}
-          onTestDataChange={setTestDataJson}
-          onAnalyze={() => void handleAnalyze()}
-          onExecute={() => void handleExecute()}
-          onIntervention={() => setInterventionOpen(true)}
-          onDebug={() => setDrawerOpen(true)}
-        />
-        {apiError ? <pre className="error-detail error-detail--collapsed test-run-api-error">{apiError}</pre> : null}
+        <div className="surface-panel execution-mode-panel">
+          <div className="segmented-control">
+            <button className={executionMode === "single" ? "segmented-control__item segmented-control__item--active" : "segmented-control__item"} type="button" onClick={() => setExecutionMode("single")}>单个目标/用例</button>
+            <button className={executionMode === "project" ? "segmented-control__item segmented-control__item--active" : "segmented-control__item"} type="button" onClick={() => setExecutionMode("project")}>整个项目测试</button>
+          </div>
+        </div>
+        {executionMode === "project" ? (
+          <ProjectCampaignPanel
+            projects={projects}
+            cases={projectCases}
+            campaigns={campaigns}
+            selectedProjectId={selectedProjectId}
+            visionFallback={visionFallback}
+            activeCampaign={activeCampaign}
+            campaignReport={campaignReport}
+            canRunProjectCampaign={canRunProjectCampaign}
+            isCampaignExecuting={isCampaignExecuting}
+            onProjectChange={(value) => void handleProjectChange(value)}
+            onVisionFallbackChange={setVisionFallback}
+            onStart={() => void handleProjectCampaignRun()}
+            onRefresh={() => void refreshActiveCampaign()}
+            onSelectCampaign={(campaign) => {
+              setActiveCampaign(campaign);
+              void getCampaignReportSummary(campaign.id).then(setCampaignReport).catch((error) => setApiError(error instanceof Error ? error.message : String(error)));
+            }}
+          />
+        ) : (
+          <TestRunConfigCard
+            collapsed={configCollapsed}
+            testDataOpen={testDataOpen}
+            projects={projects}
+            cases={projectCases}
+            selectedProjectId={selectedProjectId}
+            selectedCaseId={selectedCaseId}
+            baseUrl={baseUrl}
+            username={username}
+            password={password}
+            visionFallback={visionFallback}
+            instruction={instruction}
+            testDataJson={testDataJson}
+            analysis={analysis}
+            canExecute={canExecute}
+            executeDisabledReason={executeDisabledReason}
+            canIntervene={canIntervene}
+            isAnalyzing={isAnalyzing}
+            isExecuting={isExecuting}
+            hasActiveRun={Boolean(activeRun)}
+            onToggleCollapsed={() => setConfigCollapsed((value) => !value)}
+            onToggleTestData={() => setTestDataOpen((value) => !value)}
+            onProjectChange={(value) => void handleProjectChange(value)}
+            onCaseChange={(value) => void handleCaseChange(value)}
+            onBaseUrlChange={setBaseUrl}
+            onUsernameChange={setUsername}
+            onPasswordChange={setPassword}
+            onVisionFallbackChange={setVisionFallback}
+            onInstructionChange={setInstruction}
+            onTestDataChange={setTestDataJson}
+            onAnalyze={() => void handleAnalyze()}
+            onExecute={() => void handleExecute()}
+            onIntervention={() => setInterventionOpen(true)}
+            onDebug={() => setDrawerOpen(true)}
+          />
+        )}
+        {apiError ? <pre className="error-detail error-detail--collapsed test-run-api-error">{displayErrorText(apiError)}</pre> : null}
       </section>
 
       <section className="workspace-section task-observation-section">
         <div className="workspace-section__heading">
           <div>
             <h2>任务分解观察区</h2>
-            <p>查看 LLM 交互状态、信息完整性判断和生成的 DSL 步骤。</p>
+            <p>查看大模型交互状态、信息完整性判断和生成的测试步骤。</p>
           </div>
         </div>
         {analysisMessages.length > 0 || plannedDsl || isAnalyzing ? (
           <AnalysisTracePanel messages={analysisMessages} analyzing={isAnalyzing} dsl={plannedDsl} onDslChange={setPlannedDsl} />
         ) : (
-          <div className="surface-panel empty-state">点击“分析”后显示 LLM 交互状态和 DSL 步骤预览</div>
+          <div className="surface-panel empty-state">点击“分析”后显示大模型交互状态和测试步骤预览</div>
         )}
       </section>
 
       <section className="workspace-section execution-observation-section">
         <div className="workspace-section__heading">
           <div>
-            <h2>AI 执行观察区</h2>
-            <p>实时查看执行消息、Cube 执行环境状态、当前截图和失败摘要。</p>
+            <h2>智能执行观察区</h2>
+            <p>实时查看执行消息、执行环境状态、当前截图和失败摘要。</p>
           </div>
         </div>
         {activeRun ? (
@@ -563,7 +683,7 @@ export function TestRunPage() {
           </div>
         ) : (
           <div className="surface-panel empty-state runtime-empty-state" ref={mainViewRef}>
-            AI 执行观察区仅显示当前执行或从“运行记录”中选择的运行。
+            智能执行观察区仅显示当前执行或从“运行记录”中选择的运行。
           </div>
         )}
       </section>
@@ -649,6 +769,123 @@ export function TestRunPage() {
   );
 }
 
+function ProjectCampaignPanel({
+  projects,
+  cases,
+  campaigns,
+  selectedProjectId,
+  visionFallback,
+  activeCampaign,
+  campaignReport,
+  canRunProjectCampaign,
+  isCampaignExecuting,
+  onProjectChange,
+  onVisionFallbackChange,
+  onStart,
+  onRefresh,
+  onSelectCampaign
+}: {
+  projects: TestProject[];
+  cases: FunctionalTestCase[];
+  campaigns: TestCampaign[];
+  selectedProjectId: number | "";
+  visionFallback: boolean;
+  activeCampaign: TestCampaign | null;
+  campaignReport: CampaignReportSummary | null;
+  canRunProjectCampaign: boolean;
+  isCampaignExecuting: boolean;
+  onProjectChange: (projectId: number) => void;
+  onVisionFallbackChange: (value: boolean) => void;
+  onStart: () => void;
+  onRefresh: () => void;
+  onSelectCampaign: (campaign: TestCampaign) => void;
+}) {
+  const selectedProject = projects.find((item) => item.id === Number(selectedProjectId)) || null;
+  const executableCaseCount = cases.filter((item) => item.status !== "deleted" && item.status !== "disabled").length;
+  return (
+    <section className="surface-panel project-campaign-panel">
+      <div className="panel-heading">
+        <div>
+          <h2>整个项目测试</h2>
+          <span>一次启动当前项目下所有可执行功能测试用例，最终形成项目级测试报告。</span>
+        </div>
+        <div className="action-bar">
+          <button className="secondary-button" type="button" onClick={onRefresh} disabled={!activeCampaign}>刷新报告</button>
+          <button className="primary-button" type="button" onClick={onStart} disabled={!selectedProjectId || !canRunProjectCampaign || isCampaignExecuting || executableCaseCount === 0}>
+            {isCampaignExecuting ? "启动中" : "开始整个项目测试"}
+          </button>
+        </div>
+      </div>
+      <div className="form-grid">
+        <label>
+          <span>项目</span>
+          <select value={selectedProjectId} onChange={(event) => onProjectChange(Number(event.target.value))}>
+            {projects.map((project) => (
+              <option key={project.id} value={project.id}>{project.project_name || project.name}</option>
+            ))}
+          </select>
+        </label>
+        <label>
+          <span>可执行用例数量</span>
+          <input value={`${executableCaseCount} / ${cases.length}`} readOnly />
+        </label>
+        <label>
+          <span>执行权限</span>
+          <input value={canRunProjectCampaign ? "允许执行整个项目" : "未授权执行整个项目"} readOnly />
+        </label>
+      </div>
+      <div className="toggle-grid">
+        <label className="toggle-row">
+          <input type="checkbox" checked={visionFallback} onChange={(event) => onVisionFallbackChange(event.target.checked)} />
+          <span>启用视觉识别兜底</span>
+        </label>
+      </div>
+      {!canRunProjectCampaign && selectedProject ? (
+        <div className="empty-state compact-empty-state">当前用户没有“执行整个项目”权限，可由项目负责人在项目成员中开启。</div>
+      ) : null}
+      <div className="campaign-overview-grid">
+        <div>
+          <h3>最近批次</h3>
+          <div className="campaign-list">
+            {campaigns.slice(0, 5).map((campaign) => (
+              <button
+                className={activeCampaign?.id === campaign.id ? "campaign-list__item campaign-list__item--active" : "campaign-list__item"}
+                key={campaign.id}
+                type="button"
+                onClick={() => onSelectCampaign(campaign)}
+              >
+                <span>{campaign.name}</span>
+                <StatusBadge value={campaign.status} />
+              </button>
+            ))}
+            {campaigns.length === 0 ? <div className="empty-state compact-empty-state">暂无项目批次</div> : null}
+          </div>
+        </div>
+        <div>
+          <h3>项目报告摘要</h3>
+          {campaignReport ? (
+            <div className="campaign-report-summary">
+              <div><span>批次</span><strong>{campaignReport.campaignCode}</strong></div>
+              <div><span>状态</span><StatusBadge value={campaignReport.status} /></div>
+              <div><span>总数</span><strong>{String(campaignReport.totals.total ?? 0)}</strong></div>
+              <div><span>通过</span><strong>{String(campaignReport.totals.passed ?? 0)}</strong></div>
+              <div><span>失败</span><strong>{String(campaignReport.totals.failed ?? 0)}</strong></div>
+              <div><span>阻塞</span><strong>{String(campaignReport.totals.blocked ?? 0)}</strong></div>
+            </div>
+          ) : (
+            <div className="empty-state compact-empty-state">启动或选择批次后显示项目报告摘要。</div>
+          )}
+          {campaignReport?.recommendations?.length ? (
+            <ul className="campaign-recommendations">
+              {campaignReport.recommendations.map((item, index) => <li key={`${item}-${index}`}>{item}</li>)}
+            </ul>
+          ) : null}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function FailureAnalysisTab({
   run,
   steps,
@@ -681,8 +918,8 @@ function FailureAnalysisTab({
             return (
               <article className="failure-sample" key={sample.id}>
                 <div className="panel-heading">
-                  <h2>{sample.failure_type || "失败样本"}</h2>
-                  <span>{sample.status}</span>
+                  <h2>{labelFailureType(sample.failure_type)}</h2>
+                  <span>{labelStatus(sample.status)}</span>
                 </div>
                 <p>{sample.failure_summary || "暂无摘要"}</p>
                 {screenshot ? (
@@ -691,9 +928,9 @@ function FailureAnalysisTab({
                   </button>
                 ) : null}
                 <div className="artifact-link-grid">
-                  {sample.dom_snapshot_path ? <a href={fileUrl(sample.dom_snapshot_path)} target="_blank" rel="noreferrer">DOM Snapshot</a> : null}
-                  {sample.accessibility_snapshot_path ? <a href={fileUrl(sample.accessibility_snapshot_path)} target="_blank" rel="noreferrer">Accessibility Snapshot</a> : null}
-                  {sample.locator_debug_path ? <a href={fileUrl(sample.locator_debug_path)} target="_blank" rel="noreferrer">locator-debug</a> : null}
+                  {sample.dom_snapshot_path ? <a href={fileUrl(sample.dom_snapshot_path)} target="_blank" rel="noreferrer">页面结构快照</a> : null}
+                  {sample.accessibility_snapshot_path ? <a href={fileUrl(sample.accessibility_snapshot_path)} target="_blank" rel="noreferrer">可访问性快照</a> : null}
+                  {sample.locator_debug_path ? <a href={fileUrl(sample.locator_debug_path)} target="_blank" rel="noreferrer">定位调试文件</a> : null}
                   {sample.runtime_stream_path ? <a href={fileUrl(sample.runtime_stream_path)} target="_blank" rel="noreferrer">运行消息</a> : null}
                 </div>
               </article>
@@ -723,11 +960,11 @@ function DebugDetailsTab({
   }
   return (
     <div className="debug-details-tab">
-      <JsonCollapseBlock title="查看运行 JSON" value={run} />
-      <JsonCollapseBlock title="查看步骤 JSON" value={steps} />
-      <JsonCollapseBlock title="查看产物 JSON" value={artifacts} />
-      <JsonCollapseBlock title="查看失败样本 JSON" value={failureSamples} />
-      <JsonCollapseBlock title="查看人工介入 JSON" value={interventions} />
+      <JsonCollapseBlock title="查看运行原始数据" value={run} />
+      <JsonCollapseBlock title="查看步骤原始数据" value={steps} />
+      <JsonCollapseBlock title="查看产物原始数据" value={artifacts} />
+      <JsonCollapseBlock title="查看失败样本原始数据" value={failureSamples} />
+      <JsonCollapseBlock title="查看人工介入原始数据" value={interventions} />
     </div>
   );
 }
@@ -756,19 +993,19 @@ function ReportArtifactsTab({ run, artifacts }: { run: TestRun | null; artifacts
 }
 
 function artifactLabel(type: string): string {
-  if (type === "dom_snapshot") return "DOM Snapshot";
-  if (type === "accessibility_snapshot") return "Accessibility Snapshot";
-  if (type === "locator_debug") return "locator-debug";
+  if (type === "dom_snapshot") return "页面结构快照";
+  if (type === "accessibility_snapshot") return "可访问性快照";
+  if (type === "locator_debug") return "定位调试文件";
   if (type === "runtime_stream") return "运行消息";
   if (type === "execution_trace") return "执行轨迹";
   if (type === "process_screenshots") return "过程截图清单";
   if (type === "process_screenshot") return "过程截图";
-  if (type === "playwright_trace") return "trace.zip";
-  if (type === "summary") return "summary.json";
-  if (type === "report") return "report.html";
+  if (type === "playwright_trace") return "执行轨迹文件";
+  if (type === "summary") return "运行摘要";
+  if (type === "report") return "测试报告";
   if (type === "screenshot") return "步骤截图";
   if (type === "sandbox_screenshot") return "执行环境启动截图";
-  return type;
+  return "其他产物";
 }
 
 function appendRuntimeMessage(current: RuntimeMessage[], next: RuntimeMessage): RuntimeMessage[] {
@@ -798,24 +1035,24 @@ function executionGateReason({
 }): string | null {
   if (isExecuting) return "当前正在执行。";
   if (plannedDsl) return null;
-  if (isAnalyzing) return "正在分析，等待 DSL 生成后才能开始执行。";
+  if (isAnalyzing) return "正在分析，等待测试步骤生成后才能开始执行。";
   if (!selectedProjectId) return "请选择项目后再分析。";
   if (!instruction.trim()) return "请输入自然语言测试目标。";
   const errorMessage = [...analysisMessages].reverse().find((message) => message.type === "error");
   if (errorMessage?.content) {
-    return `DSL 未生成：${compactText(errorMessage.content)}`;
+    return `测试步骤未生成：${compactText(errorMessage.content)}`;
   }
   const analysis = latestAnalysisResult(analysisMessages);
   if (analysis && analysis.readyToExecute === false) {
     const missingFields = Array.isArray(analysis.missingFields) ? analysis.missingFields.map(String) : [];
     const questions = Array.isArray(analysis.clarifyingQuestions) ? analysis.clarifyingQuestions.map(String) : [];
     const reasons = [...missingFields.map((field) => `缺少 ${field}`), ...questions];
-    return reasons.length > 0 ? `DSL 未生成：${reasons[0]}` : "DSL 未生成：当前信息不足。";
+    return reasons.length > 0 ? `测试步骤未生成：${reasons[0]}` : "测试步骤未生成：当前信息不足。";
   }
   if (analysisMessages.length > 0) {
-    return "DSL 未生成：请查看任务分解观察区中的失败原因。";
+    return "测试步骤未生成：请查看任务分解观察区中的失败原因。";
   }
-  return "请先点击“分析”，生成 DSL 后再开始执行。";
+  return "请先点击“分析”，生成测试步骤后再开始执行。";
 }
 
 function latestAnalysisResult(messages: RuntimeMessage[]): Record<string, unknown> | null {
@@ -824,8 +1061,17 @@ function latestAnalysisResult(messages: RuntimeMessage[]): Record<string, unknow
 }
 
 function compactText(value: string): string {
-  const normalized = value.replace(/\s+/g, " ").trim();
+  const normalized = value.replace(/\s+/g, " ").trim().replace(/LLM/g, "大模型").replace(/DSL/g, "测试步骤").replace(/JSON/g, "结构化输出");
   return normalized.length > 90 ? `${normalized.slice(0, 90)}...` : normalized;
+}
+
+function displayErrorText(value: string): string {
+  return value
+    .replace(/LLM provider/g, "大模型服务")
+    .replace(/LLM/g, "大模型")
+    .replace(/DSL/g, "测试步骤")
+    .replace(/JSON/g, "结构化输出")
+    .replace(/HTTP/g, "网络请求");
 }
 
 function materializeDsl(
@@ -1092,7 +1338,7 @@ function parseTestDataFromJson(value: string): Record<string, unknown> {
   }
   const parsed = JSON.parse(value) as unknown;
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error("测试数据 JSON 必须是对象。");
+    throw new Error("测试数据必须是结构化对象。");
   }
   return parsed as Record<string, unknown>;
 }

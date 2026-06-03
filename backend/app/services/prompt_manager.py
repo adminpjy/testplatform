@@ -48,6 +48,20 @@ class PromptManager:
             self._prompts = before
         return {"loaded": len(self._prompts), "last_error": self._last_error}
 
+    def disable_prompt(self, prompt_key: str) -> dict[str, Any]:
+        if not self.registry_path.exists():
+            raise PromptError("当前使用内置 Prompt，不能删除；请先在 config/prompts/prompt-registry.yaml 中注册可维护 Prompt。")
+        registry_doc = yaml.safe_load(self.registry_path.read_text(encoding="utf-8")) or {}
+        registry = registry_doc.get("registry") or {}
+        entry = registry.get(prompt_key)
+        if entry is None:
+            raise PromptError(f"Prompt is built-in or not registered, cannot delete: {prompt_key}")
+        entry["enabled"] = False
+        registry_doc["registry"] = registry
+        self.registry_path.write_text(yaml.safe_dump(registry_doc, allow_unicode=True, sort_keys=False), encoding="utf-8")
+        self.reload()
+        return {"prompt_key": prompt_key, "status": "disabled"}
+
     def get_prompt(self, prompt_key: str) -> dict[str, Any]:
         prompt = self._prompts.get(prompt_key) or self._fallback_prompts().get(prompt_key)
         if prompt is None:
@@ -93,8 +107,10 @@ class PromptManager:
         registry_doc = yaml.safe_load(self.registry_path.read_text(encoding="utf-8")) or {}
         registry = registry_doc.get("registry") or {}
         prompts: dict[str, dict[str, Any]] = {}
+        disabled_keys: set[str] = set()
         for registry_key, entry in registry.items():
             if not entry.get("enabled", True):
+                disabled_keys.add(str(registry_key))
                 continue
             file_path = self.root / str(entry["file"])
             doc = yaml.safe_load(file_path.read_text(encoding="utf-8")) or {}
@@ -110,7 +126,8 @@ class PromptManager:
                 raise PromptError(f"Prompt {registry_key} version is required.")
             prompts[str(registry_key)] = prompt
         for key, fallback in self._fallback_prompts().items():
-            prompts.setdefault(key, fallback)
+            if key not in disabled_keys:
+                prompts.setdefault(key, fallback)
         return prompts
 
     def _fallback_prompts(self) -> dict[str, dict[str, Any]]:

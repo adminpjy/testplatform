@@ -42,7 +42,7 @@ const FILTERS: Array<{ value: RuntimeFilter; label: string }> = [
   { value: "all", label: "全部" },
   { value: "action", label: "执行动作" },
   { value: "page", label: "页面分析" },
-  { value: "llm", label: "LLM" },
+  { value: "llm", label: "大模型" },
   { value: "vision", label: "视觉兜底" },
   { value: "error", label: "错误" }
 ];
@@ -124,8 +124,8 @@ export function RuntimeStreamPanel({
     <section className={["runtime-stream-panel", className].filter(Boolean).join(" ")}>
       <header className="runtime-stream-panel__header">
         <div>
-          <h2>AI 执行过程</h2>
-          <span>Run #{runId}</span>
+          <h2>智能执行过程</h2>
+          <span>运行编号 #{runId}</span>
         </div>
         <div className="runtime-stream-panel__header-actions">
           <button className="ghost-button" type="button" onClick={() => setAutoScroll((value) => !value)}>

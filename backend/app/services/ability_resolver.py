@@ -22,9 +22,10 @@ class AbilityResolveRequest:
 class AbilityResolver:
     def resolve(self, db: Session | None, request: AbilityResolveRequest | dict[str, Any]) -> dict[str, Any]:
         payload = _request_from_any(request)
-        source = "database"
-        rules = self._load_database_rules(db, payload) if db is not None else []
-        if not rules:
+        if db is not None:
+            source = "database"
+            rules = self._load_database_rules(db, payload)
+        else:
             source = "builtin"
             rules = self._load_builtin_rules(payload)
 
@@ -90,36 +91,156 @@ def annotate_dsl_with_abilities(
     classifier = OperationIntentClassifier()
     resolver = AbilityResolver()
     annotated = dict(dsl)
+    runtime_context = dict(annotated.get("runtimeContext") or annotated.get("runtime_context") or {})
+    if project_id is not None:
+        runtime_context["projectId"] = project_id
+    if system_id is not None:
+        runtime_context["systemId"] = system_id
+    if environment:
+        runtime_context["environment"] = environment
+    if runtime_context:
+        annotated["runtimeContext"] = runtime_context
+
     steps = []
     for step in annotated.get("steps") or []:
         if not isinstance(step, dict):
             continue
-        current = dict(step)
-        classification = classifier.classify(
-            action=current.get("action"),
-            target=current.get("target"),
-            stepName=current.get("name") or current.get("step_name"),
-            instruction=instruction,
-            context=current,
-        )
-        rule_types = _rule_types_for_intent(classification.intent, str(current.get("action") or ""))
-        resolution = resolver.resolve(
-            db,
-            AbilityResolveRequest(
-                intent=classification.intent,
-                ruleTypes=rule_types,
-                systemId=system_id,
-                projectId=project_id,
-                pageContext={"step": current, "instruction": instruction or ""},
+        steps.append(
+            _annotate_step_with_abilities(
+                db,
+                step,
+                classifier=classifier,
+                resolver=resolver,
+                instruction=instruction,
+                project_id=project_id,
+                system_id=system_id,
                 environment=environment,
-            ),
+                parent_context=None,
+            )
         )
-        current["operationIntent"] = classification.model_dump()
-        current["abilityResolution"] = resolution
-        current["ruleHints"] = [rule["rule_code"] for rule in resolution.get("selectedRules") or []]
-        steps.append(current)
     annotated["steps"] = steps
     return annotated
+
+
+_NESTED_STEP_KEYS = ("rowSteps", "row_steps", "subSteps", "sub_steps", "bodySteps", "body_steps")
+
+
+def _annotate_step_with_abilities(
+    db: Session | None,
+    step: dict[str, Any],
+    *,
+    classifier: OperationIntentClassifier,
+    resolver: AbilityResolver,
+    instruction: str | None,
+    project_id: int | None,
+    system_id: int | None,
+    environment: str,
+    parent_context: dict[str, Any] | None,
+) -> dict[str, Any]:
+    current = dict(step)
+    classification = classifier.classify(
+        action=current.get("action"),
+        target=current.get("target"),
+        stepName=current.get("name") or current.get("step_name"),
+        instruction=instruction,
+        context={"step": current, "parent": parent_context or {}},
+    )
+    rule_types = _rule_types_for_intent(classification.intent, str(current.get("action") or ""))
+    resolution = resolver.resolve(
+        db,
+        AbilityResolveRequest(
+            intent=classification.intent,
+            ruleTypes=rule_types,
+            systemId=system_id,
+            projectId=project_id,
+            pageContext={"step": current, "instruction": instruction or "", "parent": parent_context or {}},
+            environment=environment,
+        ),
+    )
+    current["operationIntent"] = classification.model_dump()
+    current["abilityResolution"] = resolution
+    current["ruleHints"] = [rule["rule_code"] for rule in resolution.get("selectedRules") or []]
+    _annotate_nested_steps(
+        current,
+        db,
+        classifier=classifier,
+        resolver=resolver,
+        instruction=instruction,
+        project_id=project_id,
+        system_id=system_id,
+        environment=environment,
+        parent_context=_step_context_for_nested(current),
+    )
+    return current
+
+
+def _annotate_nested_steps(
+    container: dict[str, Any],
+    db: Session | None,
+    *,
+    classifier: OperationIntentClassifier,
+    resolver: AbilityResolver,
+    instruction: str | None,
+    project_id: int | None,
+    system_id: int | None,
+    environment: str,
+    parent_context: dict[str, Any] | None,
+) -> None:
+    for key in _NESTED_STEP_KEYS:
+        if isinstance(container.get(key), list):
+            container[key] = [
+                _annotate_step_with_abilities(
+                    db,
+                    item,
+                    classifier=classifier,
+                    resolver=resolver,
+                    instruction=instruction,
+                    project_id=project_id,
+                    system_id=system_id,
+                    environment=environment,
+                    parent_context=parent_context,
+                )
+                for item in container[key]
+                if isinstance(item, dict)
+            ]
+
+    loop_policy = container.get("loopPolicy") or container.get("loop_policy")
+    if not isinstance(loop_policy, dict):
+        return
+    loop_policy = dict(loop_policy)
+    for key in _NESTED_STEP_KEYS:
+        if not isinstance(loop_policy.get(key), list):
+            continue
+        loop_policy[key] = [
+            _annotate_step_with_abilities(
+                db,
+                item,
+                classifier=classifier,
+                resolver=resolver,
+                instruction=instruction,
+                project_id=project_id,
+                system_id=system_id,
+                environment=environment,
+                parent_context=parent_context,
+            )
+            for item in loop_policy[key]
+            if isinstance(item, dict)
+        ]
+        if key in {"rowSteps", "subSteps", "bodySteps"}:
+            container[key] = loop_policy[key]
+    if "loopPolicy" in container:
+        container["loopPolicy"] = loop_policy
+    else:
+        container["loop_policy"] = loop_policy
+
+
+def _step_context_for_nested(step: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "action": step.get("action"),
+        "target": step.get("target"),
+        "intent": (step.get("operationIntent") or {}).get("intent"),
+        "ruleHints": step.get("ruleHints") or [],
+    }
 
 
 def _request_from_any(value: AbilityResolveRequest | dict[str, Any]) -> AbilityResolveRequest:
@@ -220,7 +341,11 @@ def _select_rules(intent: str, matched: list[dict[str, Any]]) -> list[dict[str, 
     if not matched:
         return []
     preferred = _preferred_codes(intent)
-    selected = [rule for rule in matched if rule["rule_code"] in preferred]
+    selected = [
+        rule
+        for rule in matched
+        if rule["rule_code"] in preferred or _has_executable_action_config(rule) or str(rule.get("source") or "").startswith("rule_draft:")
+    ]
     if selected:
         return selected[:5]
     top_score = matched[0].get("score") or 0
@@ -231,10 +356,12 @@ def _scope_matches(rule: AbilityRule, payload: AbilityResolveRequest) -> bool:
     match_config = rule.match_config_json or {}
     project_scope = match_config.get("project_id") or match_config.get("projectId")
     system_scope = match_config.get("system_id") or match_config.get("systemId")
-    if project_scope is not None and payload.projectId is not None and int(project_scope) != int(payload.projectId):
-        return False
-    if system_scope is not None and payload.systemId is not None and int(system_scope) != int(payload.systemId):
-        return False
+    if project_scope is not None:
+        if payload.projectId is None or int(project_scope) != int(payload.projectId):
+            return False
+    if system_scope is not None:
+        if payload.systemId is None or int(system_scope) != int(payload.systemId):
+            return False
     return True
 
 
@@ -275,12 +402,39 @@ def _public_rule(rule: dict[str, Any]) -> dict[str, Any]:
         "priority": rule.get("priority"),
         "risk_level": rule.get("risk_level"),
         "version": rule.get("version") or "1.0.0",
+        "source": rule.get("source"),
         "score": rule.get("_score", 0),
         "reason": rule.get("_reason", ""),
         "runtimeMessage": runtime_message,
         "failurePatterns": (rule.get("failure_patterns_json") or {}).get("patterns", []),
         "recoveryStrategies": (rule.get("recovery_strategies_json") or {}).get("strategies", []),
+        "matchConfig": rule.get("match_config_json") or {},
+        "actionConfig": rule.get("action_config_json") or {},
+        "successCriteria": rule.get("success_criteria_json") or {},
+        "fallbackStrategies": rule.get("fallback_strategies_json") or {},
     }
+
+
+def _has_executable_action_config(rule: dict[str, Any]) -> bool:
+    action_config = rule.get("action_config_json") or rule.get("actionConfig") or {}
+    if not isinstance(action_config, dict):
+        return False
+    executable_keys = {
+        "tableRowSelector",
+        "rowLinkSelectors",
+        "entrySelectors",
+        "clickStrategies",
+        "openSuccessTexts",
+        "openSuccessSelectors",
+        "entryLabels",
+        "submitLabels",
+        "submitSelectors",
+        "opinionLabels",
+        "opinionSelectors",
+        "formReadyTexts",
+        "formReadySelectors",
+    }
+    return any(key in action_config for key in executable_keys)
 
 
 def _intent_matches(rule_intent: str, requested: str) -> bool:

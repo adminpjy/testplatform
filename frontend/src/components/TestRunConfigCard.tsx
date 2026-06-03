@@ -114,7 +114,7 @@ export function TestRunConfigCard({
               </select>
             </label>
             <label className="compact-form-grid__wide">
-              <span>baseUrl</span>
+              <span>系统入口地址</span>
               <input value={baseUrl} onChange={(event) => onBaseUrlChange(event.target.value)} />
             </label>
             <label>
@@ -139,7 +139,7 @@ export function TestRunConfigCard({
           <div className="json-editor-toggle">
             <button className="ghost-button" type="button" onClick={onToggleTestData}>
               {testDataOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-              {testDataOpen ? "收起测试数据 JSON" : "展开测试数据 JSON"}
+              {testDataOpen ? "收起测试数据补充" : "展开测试数据补充"}
             </button>
           </div>
           {testDataOpen ? (

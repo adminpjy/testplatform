@@ -58,11 +58,11 @@ export function TraceViewerCard({ run, artifacts }: { run: TestRun | null; artif
     <section className="trace-viewer-card">
       <div className="trace-viewer-card__heading">
         <div>
-          <h3>Playwright Trace 回放</h3>
-          <p>Trace 可能包含页面截图、DOM、Network 请求和业务数据。请仅在内网或本机查看，不要上传到公网。</p>
+          <h3>浏览器执行轨迹回放</h3>
+          <p>执行轨迹可能包含页面截图、页面结构、网络请求和业务数据。请仅在内网或本机查看，不要上传到公网。</p>
         </div>
         <span data-status={status?.status || (traceArtifact ? "ready" : "missing")}>
-          {traceArtifact ? "trace.zip 已生成" : "未检测到 trace.zip"}
+          {traceArtifact ? "执行轨迹已生成" : "未检测到执行轨迹"}
         </span>
       </div>
 
@@ -76,7 +76,7 @@ export function TraceViewerCard({ run, artifacts }: { run: TestRun | null; artif
           <strong>{formatFileSize(traceArtifact?.metadata_json?.file_size_bytes)}</strong>
         </div>
         <div>
-          <span>Viewer 状态</span>
+          <span>查看器状态</span>
           <strong>{statusLabel(status?.status)}</strong>
         </div>
       </div>
@@ -87,21 +87,21 @@ export function TraceViewerCard({ run, artifacts }: { run: TestRun | null; artif
         {traceArtifact ? (
           <a className="secondary-link" href={fileUrl(traceArtifact.file_path)} target="_blank" rel="noreferrer">
             <Download size={14} />
-            下载 Trace
+            下载执行轨迹
           </a>
         ) : null}
         <button className="primary-button" type="button" onClick={() => void handlePlay()} disabled={!run || loading}>
           <Play size={14} />
-          {loading ? "处理中" : "播放 Trace"}
+          {loading ? "处理中" : "播放执行轨迹"}
         </button>
         <button className="secondary-button" type="button" onClick={() => void handleStop()} disabled={!run || loading}>
           <Square size={14} />
-          停止 Viewer
+          停止查看器
         </button>
         {status?.viewerUrl ? (
           <a className="secondary-link" href={status.viewerUrl} target="_blank" rel="noreferrer">
             <ExternalLink size={14} />
-            打开 Viewer
+            打开查看器
           </a>
         ) : null}
         <button className="ghost-button" type="button" onClick={() => setCommandOpen((value) => !value)}>
@@ -133,12 +133,12 @@ function statusLabel(value: string | null | undefined): string {
 
 function traceErrorMessage(response: TraceViewerResponse): string {
   if (response.error === "trace_viewer_dependency_missing") {
-    return response.message || "服务器未安装 Playwright CLI，请安装 Node.js 后执行 npm install -g playwright。";
+    return response.message || "服务器未安装 Playwright 命令行工具，请安装 Node.js 后执行 npm install -g playwright。";
   }
   if (response.error === "trace_file_not_found") {
-    return "当前运行未生成 trace.zip，请确认该运行已完成且 Trace 录制已开启。";
+    return "当前运行未生成执行轨迹文件，请确认该运行已完成且执行轨迹录制已开启。";
   }
-  return response.message || response.error || "Trace Viewer 启动失败。";
+  return response.message || response.error || "执行轨迹查看器启动失败。";
 }
 
 function formatFileSize(value: unknown): string {

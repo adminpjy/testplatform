@@ -5,6 +5,7 @@ import { getHealth, getLLMSettings, getPrompts, getSystemInfo, previewPrompt, re
 import { JsonCollapseBlock } from "../components/JsonCollapseBlock";
 import { StatusBadge } from "../components/StatusBadge";
 import type { HealthInfo, LLMProfile, LLMSettings, PromptInfo, PromptPreview, SystemInfo } from "../types/platform";
+import { labelBoolean, labelEnvironment, labelPromptVariable } from "../utils/displayLabels";
 
 export function SystemSettingsPage() {
   const [health, setHealth] = useState<HealthInfo | null>(null);
@@ -153,10 +154,10 @@ export function SystemSettingsPage() {
             运行设置
           </button>
           <button className={activeTab === "llm" ? "tab-button tab-button--active" : "tab-button"} type="button" onClick={() => setActiveTab("llm")}>
-            LLM 服务
+            大模型服务
           </button>
           <button className={activeTab === "prompts" ? "tab-button tab-button--active" : "tab-button"} type="button" onClick={() => setActiveTab("prompts")}>
-            LLM 提示词
+            大模型提示词
           </button>
         </div>
       </section>
@@ -173,7 +174,7 @@ export function SystemSettingsPage() {
             <dt>版本</dt>
             <dd>{systemInfo?.version || "-"}</dd>
             <dt>环境</dt>
-            <dd>{systemInfo?.environment || "-"}</dd>
+            <dd>{systemInfo?.environment ? labelEnvironment(systemInfo.environment) : "-"}</dd>
           </dl>
         </div>
 
@@ -199,7 +200,7 @@ export function SystemSettingsPage() {
             <h2>前端运行</h2>
           </div>
           <dl className="settings-list">
-            <dt>API Base</dt>
+            <dt>前端接口地址</dt>
             <dd>{(import.meta.env.VITE_API_BASE_URL as string | undefined) || "同源代理"}</dd>
             <dt>视觉兜底</dt>
             <dd>执行时按测试运行页开关传入</dd>
@@ -211,8 +212,8 @@ export function SystemSettingsPage() {
         <section className="surface-panel llm-settings-panel">
           <div className="panel-heading">
             <div>
-              <h2>LLM 服务</h2>
-              <span>选择自然语言分析、DSL 生成、失败分析和人工介入方案使用的模型服务。</span>
+              <h2>大模型服务</h2>
+              <span>选择自然语言分析、测试步骤生成、失败分析和人工介入方案使用的模型服务。</span>
             </div>
             <div className="action-bar">
               <button className="secondary-button" type="button" onClick={addLlmProfile}>新增服务</button>
@@ -228,10 +229,10 @@ export function SystemSettingsPage() {
               <dd>{llmSettings.effective.name}</dd>
               <dt>模型</dt>
               <dd>{llmSettings.effective.model}</dd>
-              <dt>Endpoint</dt>
-              <dd>{llmSettings.effective.baseUrl}</dd>
-              <dt>流式</dt>
-              <dd>{llmSettings.effective.stream ? "开启" : "关闭"}</dd>
+            <dt>服务地址</dt>
+            <dd>{llmSettings.effective.baseUrl}</dd>
+            <dt>流式</dt>
+            <dd>{llmSettings.effective.stream ? "开启" : "关闭"}</dd>
             </dl>
           ) : null}
           <div className="llm-profile-list">
@@ -252,7 +253,7 @@ export function SystemSettingsPage() {
                 </div>
                 <div className="form-grid">
                   <label>
-                    <span>服务 ID</span>
+                    <span>服务编号</span>
                     <input value={profile.id} readOnly />
                   </label>
                   <label>
@@ -260,16 +261,16 @@ export function SystemSettingsPage() {
                     <input value={profile.name} onChange={(event) => updateLlmProfile(profile.id, { name: event.target.value })} />
                   </label>
                   <label className="form-grid__wide">
-                    <span>Base URL / Chat Completions URL</span>
+                    <span>服务地址</span>
                     <input value={profile.baseUrl} onChange={(event) => updateLlmProfile(profile.id, { baseUrl: event.target.value })} />
                   </label>
                   <label>
-                    <span>API Key</span>
+                    <span>接口密钥</span>
                     <input
                       type="password"
                       value={profile.apiKey || ""}
                       onChange={(event) => updateLlmProfile(profile.id, { apiKey: event.target.value })}
-                      placeholder={profile.apiKeyMasked ? `已保存：${profile.apiKeyMasked}` : "请输入 API Key"}
+                      placeholder={profile.apiKeyMasked ? `已保存：${profile.apiKeyMasked}` : "请输入接口密钥"}
                     />
                   </label>
                   <label>
@@ -277,15 +278,15 @@ export function SystemSettingsPage() {
                     <input value={profile.model} onChange={(event) => updateLlmProfile(profile.id, { model: event.target.value })} />
                   </label>
                   <label className="form-grid__wide">
-                    <span>CA Bundle 文件路径</span>
+                    <span>企业根证书文件路径</span>
                     <input
                       value={profile.caBundle || ""}
                       onChange={(event) => updateLlmProfile(profile.id, { caBundle: event.target.value })}
-                      placeholder="可选：企业根证书 PEM 文件路径"
+                      placeholder="可选：企业根证书文件路径"
                     />
                   </label>
                   <label>
-                    <span>最大 Token</span>
+                    <span>最大输出长度</span>
                     <input type="number" value={profile.maxTokens} onChange={(event) => updateLlmProfile(profile.id, { maxTokens: Number(event.target.value) })} />
                   </label>
                   <label>
@@ -293,16 +294,16 @@ export function SystemSettingsPage() {
                     <input type="number" value={profile.timeoutSeconds} onChange={(event) => updateLlmProfile(profile.id, { timeoutSeconds: Number(event.target.value) })} />
                   </label>
                   <label>
-                    <span>Temperature</span>
+                    <span>随机性</span>
                     <input type="number" step="0.1" value={profile.temperature} onChange={(event) => updateLlmProfile(profile.id, { temperature: Number(event.target.value) })} />
                   </label>
                   <label>
-                    <span>Top P</span>
+                    <span>采样范围</span>
                     <input type="number" step="0.01" value={profile.topP} onChange={(event) => updateLlmProfile(profile.id, { topP: Number(event.target.value) })} />
                   </label>
                   <label className="switch-row">
                     <input type="checkbox" checked={profile.stream} onChange={(event) => updateLlmProfile(profile.id, { stream: event.target.checked })} />
-                    <span>启用 LLM 流式输出</span>
+                    <span>启用大模型流式输出</span>
                   </label>
                   <label className="switch-row">
                     <input type="checkbox" checked={profile.verifySsl} onChange={(event) => updateLlmProfile(profile.id, { verifySsl: event.target.checked })} />
@@ -322,14 +323,14 @@ export function SystemSettingsPage() {
       {activeTab === "prompts" ? (
         <section className="surface-panel prompt-manager-panel">
           <div className="panel-heading">
-            <h2>LLM 提示词</h2>
+            <h2>大模型提示词</h2>
             <button className="secondary-button" type="button" onClick={() => void handleReloadPrompts()}>
               <RefreshCw size={16} />
-              重新加载 Prompt
+              重新加载提示词
             </button>
           </div>
           <div className="prompt-toolbar">
-            <input value={promptSearch} onChange={(event) => setPromptSearch(event.target.value)} placeholder="搜索 prompt_key / 名称" />
+            <input value={promptSearch} onChange={(event) => setPromptSearch(event.target.value)} placeholder="搜索提示词编码或名称" />
             <select value={promptFileFilter} onChange={(event) => setPromptFileFilter(event.target.value)}>
               <option value="">全部文件</option>
               {promptFiles.map((file) => <option key={file} value={file}>{file}</option>)}
@@ -365,15 +366,17 @@ export function SystemSettingsPage() {
                   </div>
                   <dl className="settings-list">
                     <dt>变量</dt>
-                    <dd>{selectedPrompt.variables.join(", ") || "-"}</dd>
+                    <dd>{selectedPrompt.variables.map(labelPromptVariable).join("，") || "-"}</dd>
                     <dt>模型配置</dt>
-                    <dd>{selectedPrompt.model_profile} / {selectedPrompt.output_format}</dd>
+                    <dd>{selectedPrompt.model_profile} / {labelOutputFormat(selectedPrompt.output_format)}</dd>
+                    <dt>是否启用</dt>
+                    <dd>{labelBoolean(selectedPrompt.enabled)}</dd>
                   </dl>
-                  <JsonCollapseBlock title="system prompt" value={selectedPrompt.system} />
-                  <JsonCollapseBlock title="user prompt" value={selectedPrompt.user} />
+                  <JsonCollapseBlock title="系统提示词" value={selectedPrompt.system} />
+                  <JsonCollapseBlock title="用户提示词" value={selectedPrompt.user} />
                   {promptPreview ? <JsonCollapseBlock title="渲染预览" value={promptPreview} /> : null}
                 </>
-              ) : <div className="empty-state">没有匹配的 Prompt</div>}
+          ) : <div className="empty-state">没有匹配的提示词</div>}
             </div>
           </div>
         </section>
@@ -392,9 +395,18 @@ function cloneLlmSettings(value: LLMSettings): LLMSettings {
 
 function samplePromptVariable(name: string): unknown {
   if (name.endsWith("_json") || name.includes("context") || name.includes("data") || name.includes("systems")) return {};
-  if (name === "allowed_actions") return "open_url, navigate_path, business_goal, assert_text_exists";
+  if (name === "allowed_actions") return "打开地址、按路径导航、业务目标、校验文本存在";
   if (name === "instruction") return "登录系统，进入工作台/我的待办，确认页面存在我的待办。";
   if (name === "path_segments") return ["工作台", "我的待办"];
   if (name === "target") return "工作台/我的待办";
   return "";
+}
+
+function labelOutputFormat(value: string): string {
+  const labels: Record<string, string> = {
+    json: "结构化输出",
+    text: "文本输出",
+    markdown: "Markdown 文本"
+  };
+  return labels[value] || "自定义输出";
 }

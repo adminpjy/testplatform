@@ -6,6 +6,12 @@ import type { TestArtifact, TestRun, TestStepRun } from "../types/platform";
 import { readableStepAction } from "../utils/runtimeDisplay";
 import { StatusBadge } from "./StatusBadge";
 
+type DisplayImage = {
+  src: string;
+  title: string;
+  label: string;
+};
+
 export function CurrentScreenshotCard({
   run,
   steps,
@@ -22,6 +28,8 @@ export function CurrentScreenshotCard({
   onPreview: (src: string, title: string) => void;
 }) {
   const [imageFailed, setImageFailed] = useState(false);
+  const [displayedImage, setDisplayedImage] = useState<DisplayImage | null>(null);
+  const [pendingImage, setPendingImage] = useState<DisplayImage | null>(null);
 
   useEffect(() => {
     if (run?.status !== "running") return;
@@ -32,20 +40,58 @@ export function CurrentScreenshotCard({
   const currentStep = useMemo(() => {
     return steps.find((step) => step.status === "running") || steps.find((step) => step.status === "failed") || steps[steps.length - 1] || null;
   }, [steps]);
-  const screenshotSrc = run
-    ? currentStep?.status === "failed" && currentStep.screenshot_path
-      ? fileUrl(currentStep.screenshot_path)
-      : apiUrl(`/api/test-runs/${run.id}/latest-screenshot?t=${refreshKey}`)
-    : null;
   const processScreenshots = useMemo(() => {
     return artifacts
       .filter((artifact) => artifact.artifact_type === "process_screenshot" && artifact.file_path)
       .sort(compareProcessScreenshots);
   }, [artifacts]);
+  const latestProcessScreenshot = processScreenshots[processScreenshots.length - 1] || null;
+  const candidateImage = useMemo<DisplayImage | null>(() => {
+    if (!run) return null;
+    if (latestProcessScreenshot?.file_path) {
+      const label = processScreenshotLabel(latestProcessScreenshot);
+      return {
+        src: fileUrl(latestProcessScreenshot.file_path),
+        title: `${currentStep?.step_name || currentStep?.target || "当前步骤"} - ${label}`,
+        label
+      };
+    }
+    if (currentStep?.screenshot_path) {
+      return {
+        src: fileUrl(currentStep.screenshot_path),
+        title: currentStep.step_name || currentStep.target || "步骤截图",
+        label: currentStep.status === "failed" ? "异常现场" : "步骤截图"
+      };
+    }
+    return {
+      src: apiUrl(`/api/test-runs/${run.id}/latest-screenshot?t=${refreshKey}`),
+      title: currentStep?.step_name || "当前截图",
+      label: "实时截图"
+    };
+  }, [currentStep, latestProcessScreenshot, refreshKey, run]);
 
   useEffect(() => {
+    setDisplayedImage(null);
+    setPendingImage(null);
     setImageFailed(false);
-  }, [screenshotSrc]);
+  }, [run?.id]);
+
+  useEffect(() => {
+    if (!candidateImage) {
+      setPendingImage(null);
+      if (!run) setDisplayedImage(null);
+      return;
+    }
+    if (candidateImage.src === displayedImage?.src) {
+      return;
+    }
+    setPendingImage(candidateImage);
+    if (!displayedImage) {
+      setImageFailed(false);
+    }
+  }, [candidateImage, displayedImage, run]);
+
+  const visibleImage = displayedImage;
 
   return (
     <section className="surface-panel current-screenshot-card">
@@ -80,19 +126,38 @@ export function CurrentScreenshotCard({
         </div>
       ) : null}
 
-      {screenshotSrc && !imageFailed ? (
-        <button className="screenshot-card__image-button" type="button" onClick={() => onPreview(screenshotSrc, currentStep?.step_name || "当前截图")}>
+      {pendingImage && pendingImage.src !== visibleImage?.src ? (
+        <img
+          alt=""
+          className="screenshot-card__preloader"
+          src={pendingImage.src}
+          onLoad={() => {
+            setDisplayedImage(pendingImage);
+            setPendingImage(null);
+            setImageFailed(false);
+          }}
+          onError={() => {
+            setPendingImage(null);
+            setImageFailed((failed) => (visibleImage ? failed : true));
+          }}
+        />
+      ) : null}
+
+      {visibleImage && !imageFailed ? (
+        <button className="screenshot-card__image-button" type="button" onClick={() => onPreview(visibleImage.src, visibleImage.title)}>
           <img
             alt="当前执行截图"
-            src={screenshotSrc}
-            onError={(event) => {
-              event.currentTarget.style.display = "none";
+            src={visibleImage.src}
+            onError={() => {
               setImageFailed(true);
             }}
           />
+          <span className="screenshot-card__status">
+            {pendingImage ? "正在刷新，当前保留最后有效截图" : visibleImage.label}
+          </span>
         </button>
       ) : (
-        <div className="empty-state">{run ? "暂无截图" : "执行后显示当前截图"}</div>
+        <div className="empty-state">{run ? "正在获取执行截图" : "执行后显示当前截图"}</div>
       )}
 
       {processScreenshots.length > 0 ? (

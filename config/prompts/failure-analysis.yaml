@@ -1,7 +1,7 @@
 prompts:
   - key: failure_analysis
     name: 失败原因分析
-    version: "1.0.0"
+    version: "2.0.0"
     enabled: true
     model_profile: default
     temperature: 0.1
@@ -20,7 +20,13 @@ prompts:
       定位调试：{{ locator_debug }}
       完整证据包：{{ evidence_package }}
 
-      请返回 JSON：
+      请返回 JSON。要求：
+      1. 先解释当前失败，但必须进一步抽象为“同类问题模式”，避免只修这一个样本。
+      2. 规则草案必须能被系统管理员理解和调整，内部 key 可以是英文，但值和说明要用中文。
+      3. 验证计划必须包含证据预验证和回归验证建议，不能假装已经跑通。
+      4. 用户回复必须包含项目、用例、运行记录、执行人、执行时间、原因、处理方案和下一步。
+
+      JSON 结构：
       {
         "failureCategory": "",
         "rootCause": "",
@@ -29,6 +35,40 @@ prompts:
         "impact": "",
         "suggestions": [],
         "recommendedActions": [],
+        "generalizedPattern": {
+          "patternName": "",
+          "failureType": "",
+          "description": "",
+          "applicability": {},
+          "exclusions": [],
+          "evidenceSchema": []
+        },
+        "solution": {
+          "summary": "",
+          "scope": "",
+          "steps": [],
+          "riskControls": []
+        },
+        "ruleDraft": {
+          "ruleType": "",
+          "ruleName": "",
+          "reason": "",
+          "content": {
+            "rule_code_suggestion": "",
+            "match_config": {},
+            "action_config": {},
+            "success_criteria": [],
+            "failure_patterns": {},
+            "recovery_strategies": {}
+          }
+        },
+        "validationPlan": {
+          "type": "evidence_static_precheck",
+          "checks": [],
+          "sampleIds": []
+        },
+        "userReply": "",
+        "internalNotes": "",
         "riskLevel": "low",
         "requiresHumanReview": true
       }

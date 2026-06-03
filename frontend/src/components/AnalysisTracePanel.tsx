@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { TestCaseDSL, TestCaseStep } from "../types/platform";
 import type { RuntimeMessage } from "../types/runtime";
+import { labelAction } from "../utils/displayLabels";
 import { methodLabel, readableRuntimeTitle } from "../utils/runtimeDisplay";
 import { JsonCollapseBlock } from "./JsonCollapseBlock";
 
@@ -58,8 +59,8 @@ export function AnalysisTracePanel({
 
       <div className="llm-status-grid">
         <div>
-          <span>LLM 交互</span>
-          <strong>{status.provider} / {status.model}</strong>
+          <span>大模型交互</span>
+          <strong>{providerLabel(status.provider)} / {status.model}</strong>
           <small>{status.endpoint || "未配置模型接口"}</small>
         </div>
         <div>
@@ -68,7 +69,7 @@ export function AnalysisTracePanel({
           <small>{status.latestMessage}</small>
         </div>
         <div>
-          <span>DSL 步骤</span>
+          <span>测试步骤</span>
           <strong>{status.dslSteps > 0 ? `${status.dslSteps} 步` : "待生成"}</strong>
           <small>{status.dslDetail}</small>
         </div>
@@ -99,14 +100,14 @@ export function AnalysisTracePanel({
         <aside className="dsl-preview-panel">
           <div className="dsl-preview-panel__heading">
             <div>
-              <strong>DSL 步骤预览</strong>
+              <strong>测试步骤预览</strong>
               {dsl ? <span>{dsl.steps.length} 步</span> : <span>等待生成</span>}
             </div>
             {dsl && onDslChange ? (
               <div className="dsl-preview-panel__actions">
                 <button className="ghost-button dsl-add-step-button" type="button" onClick={() => openDslEditor("edit")}>
                   <Edit3 size={14} />
-                  编辑 DSL
+                  编辑测试步骤
                 </button>
                 <button className="ghost-button dsl-add-step-button" type="button" onClick={() => openDslEditor("add")}>
                   <Plus size={14} />
@@ -119,7 +120,7 @@ export function AnalysisTracePanel({
             <>
               <datalist id="dsl-action-options">
                 {DSL_ACTION_OPTIONS.map((action) => (
-                  <option value={action} key={action} />
+                  <option value={labelAction(action)} key={action} />
                 ))}
               </datalist>
               <dl className="settings-list">
@@ -148,12 +149,12 @@ export function AnalysisTracePanel({
                   <strong>仍需补充</strong>
                   <ul>
                     {dsl.missingFields.map((field) => (
-                      <li key={field}>{field}</li>
+                      <li key={field}>{fieldLabel(field)}</li>
                     ))}
                   </ul>
                 </div>
               ) : null}
-              <JsonCollapseBlock title="查看完整 DSL JSON" value={dsl} />
+              <JsonCollapseBlock title="查看完整原始步骤数据" value={dsl} />
             </>
           ) : (
             <div className="dsl-empty-reason">
@@ -237,7 +238,7 @@ function DslEditorModal({
       <div className="dsl-editor-modal" role="dialog" aria-modal="true" aria-labelledby="dsl-editor-title">
         <div className="dsl-editor-modal__header">
           <div>
-            <h3 id="dsl-editor-title">编辑 DSL</h3>
+            <h3 id="dsl-editor-title">编辑测试步骤</h3>
             <span>{draft.steps.length} 步</span>
           </div>
           <button className="icon-button" type="button" onClick={onCancel} title="关闭">
@@ -344,7 +345,11 @@ function EditableDslStep({
       <div className="dsl-step-editor-grid">
         <label>
           <span>动作</span>
-          <input list="dsl-action-options" value={String(step.action || "")} onChange={(event) => updateAction(event.target.value)} />
+          <select value={String(step.action || "")} onChange={(event) => updateAction(event.target.value)}>
+            {DSL_ACTION_OPTIONS.map((action) => (
+              <option value={action} key={action}>{labelAction(action)}</option>
+            ))}
+          </select>
         </label>
         <label>
           <span>目标</span>
@@ -356,7 +361,7 @@ function EditableDslStep({
         </label>
         {step.action === "wait" ? (
           <label>
-            <span>等待 ms</span>
+            <span>等待时间（毫秒）</span>
             <input
               min={100}
               step={100}
@@ -490,7 +495,7 @@ function readableDslStepType(step: Record<string, unknown>): string {
   if (intent === "update_record") return "修改记录";
   if (intent === "delete_record") return "删除记录";
   if (action === "assert_result" || action === "summary_assert" || intent === "assert_result") return "断言验证";
-  return action || "测试步骤";
+  return action ? labelAction(action) : "测试步骤";
 }
 
 function readableIntent(intent: string): string {
@@ -504,7 +509,7 @@ function readableIntent(intent: string): string {
     query_list: "查询列表",
     fill_form: "填写表单"
   };
-  return labels[intent] || intent;
+  return labels[intent] || "业务意图";
 }
 
 function dslStepSummary(step: Record<string, unknown>): string {
@@ -517,21 +522,21 @@ function dslStepSummary(step: Record<string, unknown>): string {
 }
 
 function readableTitle(message: RuntimeMessage): string {
-  if (message.phase === "llm_request") return message.metadata.stage === "plan" ? "正在调用 LLM 生成 DSL" : "正在调用 LLM 分析目标";
-  if (message.phase === "llm_response") return message.metadata.stage === "plan" ? "DSL 回复已接收" : "分析回复已接收";
-  if (message.phase === "json_repair") return "正在校验 LLM JSON 输出";
+  if (message.phase === "llm_request") return message.metadata.stage === "plan" ? "正在调用大模型生成测试步骤" : "正在调用大模型分析目标";
+  if (message.phase === "llm_response") return message.metadata.stage === "plan" ? "测试步骤回复已接收" : "分析回复已接收";
+  if (message.phase === "json_repair") return "正在校验大模型结构化输出";
   if (message.phase === "analysis_result") return "分析结果已生成";
-  if (message.phase === "dsl_generated") return "DSL 已生成";
+  if (message.phase === "dsl_generated") return "测试步骤已生成";
   return readableRuntimeTitle(message);
 }
 
 function phaseLabel(phase: string): string {
-  if (phase === "llm_request") return "LLM 请求";
-  if (phase === "llm_response") return "LLM 回复";
-  if (phase === "json_repair") return "JSON 提取/修复";
+  if (phase === "llm_request") return "大模型请求";
+  if (phase === "llm_response") return "大模型回复";
+  if (phase === "json_repair") return "结构化输出提取/修复";
   if (phase === "analysis_result") return "信息完整性判断";
-  if (phase === "dsl_generated") return "DSL 生成";
-  return phase;
+  if (phase === "dsl_generated") return "测试步骤生成";
+  return "自定义阶段";
 }
 
 function buildAnalysisStatus(messages: RuntimeMessage[], dsl: TestCaseDSL | null, analyzing: boolean) {
@@ -543,7 +548,7 @@ function buildAnalysisStatus(messages: RuntimeMessage[], dsl: TestCaseDSL | null
     model: metadataValue(providerMessage, "model") || "DeepSeek-V4",
     endpoint: metadataValue(providerMessage, "endpoint"),
     currentStage: latest ? readableTitle(latest) : "等待分析",
-    latestMessage: latest?.content || "点击分析后显示 LLM 交互状态",
+    latestMessage: latest?.content ? readableAnalysisContent(latest.content) : "点击分析后显示大模型交互状态",
     dslSteps: dsl?.steps.length || 0,
     ...dslStatus
   };
@@ -552,24 +557,24 @@ function buildAnalysisStatus(messages: RuntimeMessage[], dsl: TestCaseDSL | null
 function buildDslStatus(messages: RuntimeMessage[], dsl: TestCaseDSL | null, analyzing: boolean) {
   if (dsl && dsl.steps.length > 0) {
     return {
-      dslTitle: "DSL 已生成",
+      dslTitle: "测试步骤已生成",
       dslDetail: "已生成可执行步骤，可以开始执行。",
       dslReasons: []
     };
   }
   if (analyzing) {
     return {
-      dslTitle: "正在生成 DSL",
-      dslDetail: "正在等待 LLM 返回并校验结构化步骤。",
+      dslTitle: "正在生成测试步骤",
+      dslDetail: "正在等待大模型返回并校验结构化步骤。",
       dslReasons: []
     };
   }
   const errorMessage = [...messages].reverse().find((message) => message.type === "error");
   if (errorMessage) {
     return {
-      dslTitle: "DSL 未生成",
-      dslDetail: "分析流程失败，未获得可执行 DSL。",
-      dslReasons: [errorMessage.content || "分析失败，但后端未返回具体错误。"]
+      dslTitle: "测试步骤未生成",
+      dslDetail: "分析流程失败，未获得可执行测试步骤。",
+      dslReasons: [errorMessage.content ? readableAnalysisContent(errorMessage.content) : "分析失败，但后端未返回具体错误。"]
     };
   }
   const analysis = latestAnalysis(messages);
@@ -578,22 +583,58 @@ function buildDslStatus(messages: RuntimeMessage[], dsl: TestCaseDSL | null, ana
     const questions = Array.isArray(analysis.clarifyingQuestions) ? analysis.clarifyingQuestions.map(String) : [];
     return {
       dslTitle: "需要补充信息",
-      dslDetail: "当前信息不足，暂不生成 DSL。",
-      dslReasons: [...missingFields.map((item) => `缺少字段：${item}`), ...questions]
+      dslDetail: "当前信息不足，暂不生成测试步骤。",
+      dslReasons: [...missingFields.map((item) => `缺少字段：${fieldLabel(item)}`), ...questions]
     };
   }
   if (messages.length > 0) {
     return {
-      dslTitle: "DSL 未生成",
-      dslDetail: "LLM 未返回符合平台 DSL 结构的结果。",
+      dslTitle: "测试步骤未生成",
+      dslDetail: "大模型未返回符合平台要求的结构化测试步骤。",
       dslReasons: ["请查看左侧分析消息中的错误，补充信息后重新分析。"]
     };
   }
   return {
     dslTitle: "等待分析",
-    dslDetail: "点击“分析”后生成 DSL。",
+    dslDetail: "点击“分析”后生成测试步骤。",
     dslReasons: []
   };
+}
+
+function providerLabel(value: string | null | undefined): string {
+  const labels: Record<string, string> = {
+    openai_compatible: "兼容 OpenAI 接口",
+    deepseek: "DeepSeek",
+    azure_openai: "Azure OpenAI"
+  };
+  if (!value) return "未配置";
+  return labels[value] || (/[\u4e00-\u9fa5]/.test(value) ? value : "自定义模型服务");
+}
+
+function readableAnalysisContent(value: string): string {
+  return value.replace(/LLM/g, "大模型").replace(/DSL/g, "测试步骤").replace(/JSON/g, "结构化输出");
+}
+
+function fieldLabel(value: string): string {
+  const labels: Record<string, string> = {
+    dsl: "测试步骤",
+    dsl_json: "测试步骤",
+    caseName: "用例名称",
+    baseUrl: "系统入口地址",
+    credentials: "登录账号",
+    username: "用户名",
+    password: "密码",
+    testData: "测试数据",
+    menuPath: "菜单路径",
+    naturalLanguageGoal: "自然语言测试目标",
+    steps: "执行步骤",
+    target: "目标",
+    action: "动作",
+    pathSegments: "路径分段",
+    successCriteria: "成功判断",
+    settings: "执行设置"
+  };
+  return labels[value] || (/[\u4e00-\u9fa5]/.test(value) ? value : "自定义字段");
 }
 
 function latestAnalysis(messages: RuntimeMessage[]): Record<string, unknown> | null {

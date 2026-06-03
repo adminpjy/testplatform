@@ -1,5 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from math import ceil
+
+from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -10,10 +12,13 @@ from app.schemas.abilities import (
     AbilityRuleCreate,
     AbilityRuleRead,
     AbilityRuleUpdate,
+    AbilityRuleValidationRead,
+    AbilityRuleValidationRequest,
     RuleResolverRequest,
     RuleResolverResponse,
 )
-from app.services.abilities import create_rule, get_rule, list_rules, set_rule_enabled, update_rule
+from app.schemas.maturity import PageResponse
+from app.services.abilities import create_rule, get_rule, list_rules, set_rule_enabled, update_rule, validate_rule_config
 from app.services.rule_resolver import resolve_rule
 
 router = APIRouter()
@@ -54,9 +59,35 @@ def read_rules(
     )
 
 
+@router.get("/rules/paged", response_model=PageResponse)
+def read_rules_paged(
+    page: int = 1,
+    page_size: int = 20,
+    q: str | None = None,
+    rule_type: str | None = None,
+    rule_status: str | None = None,
+    production_enabled: bool | None = None,
+    db: Session = Depends(get_db),
+) -> PageResponse:
+    stmt = select(AbilityRule)
+    if q:
+        like = f"%{q}%"
+        stmt = stmt.where(or_(AbilityRule.rule_code.like(like), AbilityRule.rule_name.like(like), AbilityRule.intent.like(like)))
+    if rule_type:
+        stmt = stmt.where(AbilityRule.rule_type == rule_type)
+    if rule_status:
+        stmt = stmt.where(AbilityRule.status == rule_status)
+    else:
+        stmt = stmt.where(AbilityRule.status != "archived")
+    if production_enabled is not None:
+        stmt = stmt.where(AbilityRule.production_enabled == production_enabled)
+    stmt = stmt.order_by(AbilityRule.rule_type, AbilityRule.priority, AbilityRule.id)
+    return _paged_response(db, stmt, page, page_size, lambda rule: AbilityRuleRead.model_validate(rule).model_dump(mode="json"))
+
+
 @router.get("/stats")
 def read_ability_stats(db: Session = Depends(get_db)) -> dict:
-    rules = list(db.scalars(select(AbilityRule)).all())
+    rules = list(db.scalars(select(AbilityRule).where(AbilityRule.status != "archived")).all())
     failures = list(db.scalars(select(FailureSample)).all())
     interventions = list(db.scalars(select(HumanIntervention)).all())
     drafts = list(db.scalars(select(RuleDraft)).all())
@@ -169,6 +200,26 @@ def disable_ability_rule(rule_id: int, db: Session = Depends(get_db)) -> Ability
     return set_rule_enabled(db, _get_rule_or_404(db, rule_id), False)
 
 
+@router.post("/rules/{rule_id}/validate", response_model=AbilityRuleValidationRead)
+def validate_ability_rule(
+    rule_id: int,
+    payload: AbilityRuleValidationRequest | None = None,
+    db: Session = Depends(get_db),
+) -> AbilityRuleValidationRead:
+    rule = _get_rule_or_404(db, rule_id)
+    result = validate_rule_config(db, rule, sample_ids=(payload.sampleIds if payload else None))
+    return AbilityRuleValidationRead(**result)
+
+
+@router.delete("/rules/{rule_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_ability_rule(rule_id: int, db: Session = Depends(get_db)) -> None:
+    rule = _get_rule_or_404(db, rule_id)
+    rule.status = "archived"
+    rule.production_enabled = False
+    db.add(rule)
+    db.commit()
+
+
 @router.post("/resolve", response_model=RuleResolverResponse)
 def resolve_ability_rule(
     payload: RuleResolverRequest,
@@ -189,6 +240,36 @@ def read_ability_knowledge(
     if project_id is not None:
         stmt = stmt.where(AbilityKnowledge.project_id == project_id)
     return list(db.scalars(stmt).all())
+
+
+@router.get("/knowledge/paged", response_model=PageResponse)
+def read_ability_knowledge_paged(
+    page: int = 1,
+    page_size: int = 20,
+    q: str | None = None,
+    system_id: int | None = None,
+    project_id: int | None = None,
+    db: Session = Depends(get_db),
+) -> PageResponse:
+    stmt = select(AbilityKnowledge)
+    if q:
+        like = f"%{q}%"
+        stmt = stmt.where(or_(AbilityKnowledge.semantic_target.like(like), AbilityKnowledge.business_intent.like(like), AbilityKnowledge.page_url_pattern.like(like)))
+    if system_id is not None:
+        stmt = stmt.where(AbilityKnowledge.system_id == system_id)
+    if project_id is not None:
+        stmt = stmt.where(AbilityKnowledge.project_id == project_id)
+    stmt = stmt.order_by(AbilityKnowledge.id.desc())
+    return _paged_response(db, stmt, page, page_size, lambda item: AbilityKnowledgeRead.model_validate(item).model_dump(mode="json"))
+
+
+@router.delete("/knowledge/{knowledge_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_ability_knowledge(knowledge_id: int, db: Session = Depends(get_db)) -> None:
+    item = db.get(AbilityKnowledge, knowledge_id)
+    if item is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ability knowledge not found.")
+    db.delete(item)
+    db.commit()
 
 
 def _failure_category(failure_type: str) -> str:
@@ -222,3 +303,20 @@ def _get_rule_or_404(db: Session, rule_id: int):
     if rule is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ability rule not found.")
     return rule
+
+
+def _paged_response(db: Session, stmt, page: int, page_size: int, serializer) -> PageResponse:
+    page = max(1, int(page or 1))
+    page_size = max(1, min(int(page_size or 20), 200))
+    total = int(db.scalar(select(func.count()).select_from(stmt.order_by(None).subquery())) or 0)
+    items = list(db.scalars(stmt.offset((page - 1) * page_size).limit(page_size)).all())
+    total_pages = ceil(total / page_size) if total else 0
+    return PageResponse(
+        items=[serializer(item) for item in items],
+        page=page,
+        pageSize=page_size,
+        total=total,
+        totalPages=total_pages,
+        hasNext=page < total_pages,
+        hasPrev=page > 1,
+    )

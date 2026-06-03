@@ -138,6 +138,13 @@ class FailureAnalysisRead(BaseModel):
     evidence_json: dict[str, Any] | None = None
     suggestions_json: dict[str, Any] | None = None
     recommended_actions_json: dict[str, Any] | None = None
+    generalized_pattern_json: dict[str, Any] | None = None
+    solution_json: dict[str, Any] | None = None
+    rule_draft_json: dict[str, Any] | None = None
+    validation_plan_json: dict[str, Any] | None = None
+    user_reply: str | None = None
+    internal_notes: str | None = None
+    llm_raw_response_json: dict[str, Any] | None = None
     risk_level: str
     requires_human_review: bool
     error_summary: str | None = None

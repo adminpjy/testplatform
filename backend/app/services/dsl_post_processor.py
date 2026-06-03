@@ -35,7 +35,7 @@ class DslPostProcessor:
             _relax_brittle_login_success_assertions(normalized_steps),
             normalized["testData"],
         )
-        normalized["steps"] = _normalize_query_row_context(folded_steps)
+        normalized["steps"] = _ensure_todo_list_navigation(_normalize_query_row_context(folded_steps))
         for step in normalized["steps"]:
             _merge_step_test_data(normalized["testData"], step)
         missing_fields = list(normalized.get("missingFields") or [])
@@ -137,6 +137,73 @@ def _normalize_query_row_context(steps: list[dict[str, Any]]) -> list[dict[str, 
             last_query_criteria = dict(criteria)
         normalized.append(current)
     return normalized
+
+
+def _ensure_todo_list_navigation(steps: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    normalized: list[dict[str, Any]] = []
+    todo_navigation_seen = False
+    inserted = False
+    for index, step in enumerate(steps):
+        current = dict(step)
+        if _is_todo_navigation_step(current):
+            todo_navigation_seen = True
+        if (_is_todo_list_action(current) or _is_query_before_todo_list_action(steps, index)) and not todo_navigation_seen and not inserted:
+            nav_step = {
+                "action": "navigate_path",
+                "target": "工作台/我的待办",
+                "pathSegments": ["工作台", "我的待办"],
+                "navigationType": "menu_path",
+                "readableDescription": "进入我的待办列表",
+                "normalizedBy": "DslPostProcessor",
+                "normalizationReason": "todo list operation requires entering 工作台/我的待办 first",
+            }
+            _ensure_navigation_defaults(nav_step, nav_step["pathSegments"])
+            _ensure_auth_precondition(nav_step)
+            normalized.append(nav_step)
+            todo_navigation_seen = True
+            inserted = True
+        normalized.append(current)
+    return normalized
+
+
+def _is_todo_navigation_step(step: dict[str, Any]) -> bool:
+    action = str(step.get("action") or "")
+    target = _flatten(
+        {
+            "target": step.get("target"),
+            "pathSegments": step.get("pathSegments") or step.get("path_segments"),
+            "description": step.get("description"),
+            "readableDescription": step.get("readableDescription"),
+        }
+    )
+    return action in {"navigate_path", "navigate_menu", "business_goal", "click"} and "待办" in target
+
+
+def _is_todo_list_action(step: dict[str, Any]) -> bool:
+    action = str(step.get("action") or "")
+    intent = str((step.get("operationIntent") or {}).get("intent") or step.get("intent") or "")
+    if action not in {"query_table", "query_table_count", "process_table_rows", "open_table_row", "open_row_link_or_detail", "click_table_row_action"}:
+        return False
+    if intent and intent not in {"query_list", "process_table_rows", "open_table_row", "click_table_row_action"}:
+        return False
+    return "待办" in _flatten(step)
+
+
+def _is_query_before_todo_list_action(steps: list[dict[str, Any]], index: int) -> bool:
+    step = steps[index]
+    if str(step.get("action") or "") not in {"query_table", "query_table_count"}:
+        return False
+    if "待办" in _flatten(step):
+        return False
+    for next_step in steps[index + 1 :]:
+        next_action = str(next_step.get("action") or "")
+        if _is_todo_navigation_step(next_step):
+            return False
+        if _is_todo_list_action(next_step):
+            return True
+        if next_action in {"query_table", "query_table_count", "business_goal", "navigate_path", "navigate_menu"}:
+            return False
+    return False
 
 
 def _extract_query_criteria(step: dict[str, Any]) -> dict[str, Any]:
@@ -256,11 +323,17 @@ def _opinion_from_mapping(mapping: dict[str, Any]) -> str | None:
 
 def _configure_table_loop_for_approval(step: dict[str, Any], *, opinion: str | None) -> None:
     loop_policy = dict(step.get("loopPolicy") or step.get("loop_policy") or {})
-    loop_policy.setdefault("maxRows", int(step.get("maxRows") or step.get("max_rows") or 200))
+    loop_policy.setdefault("maxRows", int(step.get("maxRows") or step.get("max_rows") or 30))
     loop_policy.setdefault("emptyStrategy", step.get("emptyStrategy") or step.get("empty_strategy") or "pass")
     loop_policy.setdefault("rowAction", "open_todo")
     loop_policy.setdefault("openMode", "new_page_or_same_page")
     loop_policy.setdefault("closeStrategy", "close_new_page_or_return_to_list")
+    loop_policy.setdefault("maxDurationMs", 600_000)
+    loop_policy.setdefault("rowProbeTimeoutMs", 250)
+    loop_policy.setdefault("maxConsecutiveFailures", 3)
+    loop_policy.setdefault("continueOnRowFailure", True)
+    loop_policy.setdefault("stopAfterInitialRows", True)
+    loop_policy.setdefault("followNewRows", False)
     loop_policy.setdefault(
         "rowEntryLabels",
         ["相关办理人处理", "办理人处理", "待办处理", "办理", "处理", "审批", "审核", "标题", "文号", "单号"],
@@ -634,10 +707,13 @@ def _remember_original(step: dict[str, Any], action: str, target: str, reason: s
 
 def _loop_policy_from_step(step: dict[str, Any]) -> dict[str, Any]:
     return {
-        "maxRows": int(step.get("maxRows") or step.get("max_rows") or 200),
+        "maxRows": int(step.get("maxRows") or step.get("max_rows") or 30),
         "emptyStrategy": step.get("emptyStrategy") or step.get("empty_strategy") or "pass",
         "rowAction": step.get("rowAction") or step.get("row_action") or "open_link_or_detail",
         "closeStrategy": step.get("closeStrategy") or step.get("close_strategy") or "common_dialog_controls",
+        "maxDurationMs": int(step.get("maxDurationMs") or step.get("timeoutMs") or 600_000),
+        "rowProbeTimeoutMs": int(step.get("rowProbeTimeoutMs") or step.get("candidateTimeoutMs") or 250),
+        "maxConsecutiveFailures": int(step.get("maxConsecutiveFailures") or 2),
     }
 
 

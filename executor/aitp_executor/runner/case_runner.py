@@ -1,5 +1,6 @@
 import os
 import re
+import time
 from datetime import datetime, timezone
 from typing import Any, Callable
 
@@ -970,7 +971,7 @@ class CaseRunner:
             credentials.update(dict(step.get("credentials") or {}))
             if credentials:
                 goal_step["credentials"] = credentials
-            return self.goal_executor.execute(page, target=str(target), step=goal_step, execution_context=execution_context)
+            return self.goal_executor.execute(page, target=str(target), step=goal_step, dsl=dsl, execution_context=execution_context)
 
         raise ValueError(f"Unsupported DSL action: {action}")
 
@@ -1051,6 +1052,17 @@ class CaseRunner:
             "vision_requested": bool((dsl.get("settings") or {}).get("visionFallbackEnabled")),
             "ability_resolution": step.get("abilityResolution") or {},
         }
+        runtime_context = dsl.get("runtimeContext") or dsl.get("runtime_context") or {}
+        if isinstance(runtime_context, dict):
+            for source_key, target_key in [
+                ("projectId", "projectId"),
+                ("project_id", "projectId"),
+                ("systemId", "systemId"),
+                ("system_id", "systemId"),
+                ("environment", "environment"),
+            ]:
+                if runtime_context.get(source_key) not in (None, ""):
+                    execution_context[target_key] = runtime_context.get(source_key)
         if page_holder is not None:
             execution_context["get_active_page"] = lambda: _active_page(page_holder, current_page)
 
@@ -1363,7 +1375,18 @@ class CaseRunner:
         return best
 
     def _for_each_table_row(self, page: Any, step: dict[str, Any]) -> dict[str, Any]:
-        max_rows = int(step.get("maxRows") or step.get("max_rows") or 200)
+        loop_policy = step.get("loopPolicy") if isinstance(step.get("loopPolicy"), dict) else {}
+        max_rows = int(step.get("maxRows") or step.get("max_rows") or loop_policy.get("maxRows") or loop_policy.get("max_rows") or 30)
+        loop_timeout_ms = int(
+            step.get("maxDurationMs")
+            or step.get("timeoutMs")
+            or loop_policy.get("maxDurationMs")
+            or loop_policy.get("timeoutMs")
+            or 90_000
+        )
+        max_consecutive_failures = int(
+            step.get("maxConsecutiveFailures") or loop_policy.get("maxConsecutiveFailures") or 2
+        )
         empty_strategy = str(step.get("emptyStrategy") or step.get("empty_strategy") or "pass")
         row_count = self._table_row_count(page)
         if row_count == 0:
@@ -1373,8 +1396,28 @@ class CaseRunner:
 
         processed = 0
         failures: list[dict[str, Any]] = []
+        consecutive_failures = 0
+        started = time.monotonic()
+        abort_reason: dict[str, Any] | None = None
         limit = min(row_count, max_rows)
         for index in range(limit):
+            elapsed_ms = int((time.monotonic() - started) * 1000)
+            if elapsed_ms >= loop_timeout_ms:
+                abort_reason = {
+                    "reason": "timeout",
+                    "message": "表格行循环超过安全时间预算，已停止以避免死循环。",
+                    "processed_rows": processed,
+                    "attempted_rows": index,
+                    "row_count": row_count,
+                    "failures": failures[:5],
+                    "guard": {
+                        "max_rows": max_rows,
+                        "loop_timeout_ms": loop_timeout_ms,
+                        "max_consecutive_failures": max_consecutive_failures,
+                    },
+                    "elapsed_ms": elapsed_ms,
+                }
+                break
             try:
                 rows = self._table_rows(page)
                 row = rows.nth(index)
@@ -1390,11 +1433,31 @@ class CaseRunner:
                     wait_for_page_ready(page)
                     closed = True
                 processed += 1
+                consecutive_failures = 0
                 if dialog_opened and not closed:
                     failures.append({"row": index + 1, "error": "dialog_close_failed"})
             except Exception as exc:
+                consecutive_failures += 1
                 failures.append({"row": index + 1, "error": str(exc)})
+                if consecutive_failures >= max_consecutive_failures:
+                    abort_reason = {
+                        "reason": "consecutive_failures",
+                        "message": f"连续 {consecutive_failures} 行处理失败，已停止以避免在错误表格或错误入口上循环。",
+                        "processed_rows": processed,
+                        "attempted_rows": index + 1,
+                        "row_count": row_count,
+                        "failures": failures[:5],
+                        "guard": {
+                            "max_rows": max_rows,
+                            "loop_timeout_ms": loop_timeout_ms,
+                            "max_consecutive_failures": max_consecutive_failures,
+                        },
+                        "elapsed_ms": int((time.monotonic() - started) * 1000),
+                    }
+                    break
         if failures:
+            if abort_reason:
+                raise RuntimeError("table_row_loop_guard_triggered:" + _json_dumps(abort_reason))
             raise RuntimeError("table_row_loop_failed:" + _json_dumps({"processed_rows": processed, "failures": failures[:5]}))
         return {"row_count": row_count, "processed_rows": processed, "status": "processed"}
 

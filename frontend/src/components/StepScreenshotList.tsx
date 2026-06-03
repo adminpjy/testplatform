@@ -80,7 +80,7 @@ export function StepScreenshotList({
                   ) : null}
                 </div>
                 {step.error_summary ? <pre className="error-detail error-detail--collapsed">{step.error_summary}</pre> : null}
-                <JsonCollapseBlock title="查看原始步骤 JSON" value={step} />
+                <JsonCollapseBlock title="查看原始步骤数据" value={step} />
               </div>
             ) : null}
           </article>
@@ -102,11 +102,11 @@ function artifactLinks(artifacts: TestArtifact[]) {
 }
 
 function artifactLabel(type: string): string {
-  if (type === "dom_snapshot") return "DOM Snapshot";
-  if (type === "accessibility_snapshot") return "Accessibility Snapshot";
-  if (type === "locator_debug") return "locator-debug";
+  if (type === "dom_snapshot") return "页面结构快照";
+  if (type === "accessibility_snapshot") return "可访问性快照";
+  if (type === "locator_debug") return "定位调试文件";
   if (type === "process_screenshot") return "过程截图";
-  return type;
+  return "其他产物";
 }
 
 function compareProcessScreenshots(left: TestArtifact, right: TestArtifact): number {
@@ -137,5 +137,5 @@ function processScreenshotLabel(artifact: TestArtifact): string {
 
 function durationText(step: TestStepRun): string {
   if (!step.started_at || !step.ended_at) return "-";
-  return `${Math.max(0, new Date(step.ended_at).getTime() - new Date(step.started_at).getTime())} ms`;
+  return `${Math.max(0, new Date(step.ended_at).getTime() - new Date(step.started_at).getTime())} 毫秒`;
 }

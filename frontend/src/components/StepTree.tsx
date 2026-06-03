@@ -1,6 +1,7 @@
 import { CheckCircle2, CircleDashed, XCircle } from "lucide-react";
 
 import type { TestStepRun } from "../types/platform";
+import { readableStepAction } from "../utils/runtimeDisplay";
 import { StatusBadge } from "./StatusBadge";
 
 export interface StepTreeProps {
@@ -27,9 +28,9 @@ export function StepTree({ steps }: StepTreeProps) {
                   <StatusBadge value={step.status} />
                 </div>
                 <div className="step-tree__meta">
-                  <span>{step.action || "action"}</span>
+                  <span>{readableStepAction(step)}</span>
                   {step.target ? <span>{step.target}</span> : null}
-                  {step.locator_strategy ? <span>{step.locator_strategy}</span> : null}
+                  {step.locator_strategy ? <span>{locatorStrategyText(step.locator_strategy)}</span> : null}
                   {step.confidence !== null && step.confidence !== undefined ? (
                     <span>置信度 {Math.round(step.confidence * 100)}%</span>
                   ) : null}
@@ -42,6 +43,15 @@ export function StepTree({ steps }: StepTreeProps) {
       )}
     </section>
   );
+}
+
+function locatorStrategyText(value: string): string {
+  if (value.includes("llm")) return "大模型辅助定位";
+  if (value.includes("vision")) return "视觉兜底定位";
+  if (value.includes("semantic")) return "页面语义定位";
+  if (value.includes("playwright")) return "页面结构定位";
+  if (value.includes("knowledge")) return "知识库定位";
+  return "系统定位";
 }
 
 function statusIcon(status: string) {

@@ -3,6 +3,8 @@ export interface TestProject {
   project_code: string;
   project_name: string | null;
   name: string;
+  owner_user_id?: number | null;
+  created_by_user_id?: number | null;
   description: string | null;
   system_id: number | null;
   system_name: string | null;
@@ -22,9 +24,49 @@ export interface TestProject {
   account_count?: number;
   case_count?: number;
   last_run_status?: string | null;
+  current_user_role?: string | null;
+  current_user_permissions?: Record<string, boolean> | null;
   status: string;
   created_at: string;
   updated_at: string;
+}
+
+export interface CurrentUser {
+  id: number;
+  username: string;
+  display_name: string | null;
+  role: "admin" | "owner" | "testuser" | string;
+  status: string;
+  permissions: Record<string, unknown>;
+  navigation: string[];
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface LoginResponse {
+  token: string;
+  user: CurrentUser;
+}
+
+export interface ProjectMember {
+  id: number;
+  project_id: number;
+  user_id: number;
+  username: string;
+  display_name: string | null;
+  role: "owner" | "testuser" | string;
+  permissions: Record<string, boolean>;
+  status: string;
+  created_at: string;
+  updated_at: string | null;
+}
+
+export interface ProjectMemberPayload {
+  username?: string;
+  display_name?: string | null;
+  role?: "owner" | "testuser" | string;
+  permissions?: Record<string, boolean>;
+  status?: string;
 }
 
 export interface ProjectAccount {
@@ -161,6 +203,13 @@ export interface FailureAnalysis {
   evidence_json: Record<string, unknown> | null;
   suggestions_json: Record<string, unknown> | null;
   recommended_actions_json: Record<string, unknown> | null;
+  generalized_pattern_json?: Record<string, unknown> | null;
+  solution_json?: Record<string, unknown> | null;
+  rule_draft_json?: Record<string, unknown> | null;
+  validation_plan_json?: Record<string, unknown> | null;
+  user_reply?: string | null;
+  internal_notes?: string | null;
+  llm_raw_response_json?: Record<string, unknown> | null;
   risk_level: string;
   requires_human_review: boolean;
   error_summary: string | null;
@@ -331,6 +380,7 @@ export interface TestCampaign {
   failed_count: number;
   blocked_count: number;
   summary_json: Record<string, unknown> | null;
+  created_by_user_id?: number | null;
   started_at: string | null;
   ended_at: string | null;
   created_at: string;
@@ -453,7 +503,9 @@ export interface TestRun {
   system_id: number | null;
   case_id: number | null;
   case_version_id: number | null;
+  campaign_id?: number | null;
   account_id: number | null;
+  created_by_user_id?: number | null;
   instruction: string | null;
   instruction_snapshot?: string | null;
   base_url: string | null;
@@ -597,10 +649,14 @@ export interface TraceViewerResponse {
 
 export interface FailureSample {
   id: number;
+  project_id?: number | null;
+  case_id?: number | null;
+  case_version_id?: number | null;
   run_id: number;
   step_id: number | null;
   failure_type: string | null;
   failure_summary: string | null;
+  evidence_json?: Record<string, unknown> | null;
   screenshot_path: string | null;
   dom_snapshot_path: string | null;
   accessibility_snapshot_path: string | null;
@@ -613,6 +669,16 @@ export interface FailureSample {
   status: string;
   created_at: string;
   updated_at: string;
+}
+
+export interface PageResponse<T = Record<string, unknown>> {
+  items: T[];
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+  hasNext: boolean;
+  hasPrev: boolean;
 }
 
 export type InterventionAction =
@@ -666,6 +732,89 @@ export interface RuleDraft {
   reason: string | null;
   status: string;
   created_at: string;
+  updated_at: string;
+}
+
+export interface FailureContext {
+  failureSampleId: number;
+  context: Record<string, unknown>;
+  latestAnalysis: Record<string, unknown> | null;
+  latestSolution: Record<string, unknown> | null;
+  latestValidation: Record<string, unknown> | null;
+  maintenanceResponse: Record<string, unknown> | null;
+}
+
+export interface FailureSolution {
+  id: number;
+  solution_code: string;
+  failure_sample_id: number;
+  failure_analysis_id: number | null;
+  pattern_id: number | null;
+  project_id: number | null;
+  case_id: number | null;
+  run_id: number | null;
+  rule_draft_id: number | null;
+  root_cause: string | null;
+  solution_summary: string | null;
+  generalized_pattern_json: Record<string, unknown> | null;
+  strategy_json: Record<string, unknown> | null;
+  suggested_rule_json: Record<string, unknown> | null;
+  validation_plan_json: Record<string, unknown> | null;
+  context_snapshot_json: Record<string, unknown> | null;
+  user_reply: string | null;
+  internal_notes: string | null;
+  admin_adjustment_json: Record<string, unknown> | null;
+  status: string;
+  created_by_user_id: number | null;
+  updated_by_user_id: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface RuleValidation {
+  id: number;
+  validation_code: string;
+  solution_id: number | null;
+  rule_draft_id: number | null;
+  ability_rule_id: number | null;
+  project_id: number | null;
+  case_id: number | null;
+  run_id: number | null;
+  validation_type: string;
+  sample_ids_json: Record<string, unknown> | null;
+  status: string;
+  passed_count: number;
+  failed_count: number;
+  false_positive_count: number;
+  result_json: Record<string, unknown> | null;
+  report_json: Record<string, unknown> | null;
+  created_by_user_id: number | null;
+  started_at: string | null;
+  ended_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MaintenanceResponse {
+  id: number;
+  response_code: string;
+  failure_sample_id: number | null;
+  solution_id: number | null;
+  validation_id: number | null;
+  project_id: number | null;
+  case_id: number | null;
+  run_id: number | null;
+  submitted_by_user_id: number | null;
+  handled_by_user_id: number | null;
+  status: string;
+  root_cause: string | null;
+  fix_summary: string | null;
+  validation_result: string | null;
+  user_reply: string | null;
+  internal_notes: string | null;
+  evidence_summary_json: Record<string, unknown> | null;
+  created_at: string;
+  resolved_at: string | null;
   updated_at: string;
 }
 

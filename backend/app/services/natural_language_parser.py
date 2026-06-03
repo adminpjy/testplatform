@@ -420,9 +420,11 @@ class NaturalLanguageParser:
             return False
         if not any(token in compact for token in ["逐一", "逐条", "逐个", "每一条", "所有", "全部", "循环"]):
             return False
-        if not any(token in compact for token in ["审批", "提交", "同意", "通过", "办理", "处理"]):
+        if any(token in compact for token in ["打开后关闭", "查看后关闭", "只打开", "只查看"]) and not any(
+            token in compact for token in ["审批", "提交", "同意", "通过", "办理"]
+        ):
             return False
-        return any(token in compact for token in ["意见", "填写", "填入", "输入"])
+        return any(token in compact for token in ["审批", "提交", "同意", "通过", "办理", "处理"])
 
     @classmethod
     def _ensure_todo_batch_approval_dsl(cls, repaired: dict[str, Any], payload: NaturalLanguageTestRequest) -> None:
@@ -479,12 +481,15 @@ class NaturalLanguageParser:
         loop_policy = dict(current.get("loopPolicy") or current.get("loop_policy") or {})
         loop_policy.update(
             {
-                "maxRows": int(current.get("maxRows") or loop_policy.get("maxRows") or loop_policy.get("max_rows") or 200),
+                "maxRows": int(current.get("maxRows") or loop_policy.get("maxRows") or loop_policy.get("max_rows") or 30),
                 "emptyStrategy": current.get("emptyStrategy") or loop_policy.get("emptyStrategy") or loop_policy.get("empty_strategy") or "pass",
                 "rowAction": "open_todo",
                 "openMode": "new_page_or_same_page",
                 "closeStrategy": "close_new_page_or_return_to_list",
                 "rowEntryLabels": ["相关办理人处理", "办理人处理", "待办处理", "办理", "处理", "审批", "审核", "标题", "文号", "单号"],
+                "maxDurationMs": int(loop_policy.get("maxDurationMs") or loop_policy.get("timeoutMs") or 600_000),
+                "rowProbeTimeoutMs": int(loop_policy.get("rowProbeTimeoutMs") or loop_policy.get("candidateTimeoutMs") or 250),
+                "maxConsecutiveFailures": int(loop_policy.get("maxConsecutiveFailures") or 2),
                 "rowSteps": [row_step],
             }
         )
@@ -683,10 +688,13 @@ class NaturalLanguageParser:
                     "action": "process_table_rows",
                     "target": "我的待办列表",
                     "loopPolicy": {
-                        "maxRows": 200,
+                        "maxRows": 30,
                         "emptyStrategy": "pass",
                         "rowAction": "open_link_or_detail",
                         "closeStrategy": "common_dialog_controls",
+                        "maxDurationMs": 600000,
+                        "rowProbeTimeoutMs": 250,
+                        "maxConsecutiveFailures": 2,
                     },
                     "description": "逐行点击待办链接，验证弹窗可打开，并用返回/取消/关闭/X/Esc 关闭。",
                 },

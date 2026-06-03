@@ -1,6 +1,7 @@
 import {
   Activity,
   AlertTriangle,
+  Building2,
   Database,
   FileText,
   FolderKanban,
@@ -8,6 +9,7 @@ import {
   Settings
 } from "lucide-react";
 import type { ComponentType } from "react";
+import type { CurrentUser } from "../types/platform";
 
 export type AppRoute =
   | "projects"
@@ -16,6 +18,7 @@ export type AppRoute =
   | "case-detail"
   | "test-run"
   | "ability-center"
+  | "enterprise-center"
   | "failure-samples"
   | "reports"
   | "settings";
@@ -51,6 +54,12 @@ export const navigationItems: AppNavItem[] = [
     label: "能力中心",
     description: "规则、知识与草案沉淀",
     icon: Database
+  },
+  {
+    id: "enterprise-center",
+    label: "企业中心",
+    description: "资产、缺陷、学习治理和插件",
+    icon: Building2
   },
   {
     id: "failure-samples",
@@ -94,4 +103,23 @@ export function navRouteFor(route: AppRoute): AppRoute {
     return "projects";
   }
   return route;
+}
+
+export function navigationForUser(user: CurrentUser | null): AppNavItem[] {
+  if (!user) {
+    return [];
+  }
+  if (user.role === "admin") {
+    return navigationItems;
+  }
+  const allowed = new Set(user.navigation?.length ? user.navigation : ["projects", "project-wizard", "test-run"]);
+  return navigationItems.filter((item) => allowed.has(item.id));
+}
+
+export function canAccessRoute(route: AppRoute, user: CurrentUser | null): boolean {
+  if (!user) {
+    return false;
+  }
+  const routeKey = navRouteFor(route);
+  return navigationForUser(user).some((item) => item.id === routeKey);
 }

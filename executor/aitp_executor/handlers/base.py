@@ -27,7 +27,7 @@ class HandlerContext:
 
 
 class RuntimeAbilityResolver:
-    """Consumes pre-resolved AbilityResolver output and falls back to builtin rules."""
+    """Consumes pre-resolved rules and resolves dynamic steps through the database rule library."""
 
     def resolve(self, ctx: HandlerContext, *, intent: str, rule_types: list[str]) -> dict[str, Any]:
         resolution = ctx.step.get("abilityResolution") or ctx.execution_context.get("ability_resolution") or {}
@@ -39,23 +39,30 @@ class RuntimeAbilityResolver:
         return {"matchedRules": [], "selectedRules": [], "reason": "未找到能力规则。", "source": "none"}
 
     def _resolve_from_backend(self, *, intent: str, rule_types: list[str], ctx: HandlerContext) -> dict[str, Any] | None:
+        payload = {
+            "intent": intent,
+            "ruleTypes": rule_types,
+            "pageContext": {"step": redact_sensitive(ctx.step)},
+            "environment": _runtime_value(ctx, "environment") or "test",
+            "projectId": _runtime_value(ctx, "projectId"),
+            "systemId": _runtime_value(ctx, "systemId"),
+        }
         try:
             backend_dir = Path(__file__).resolve().parents[3] / "backend"
             if backend_dir.exists() and str(backend_dir) not in sys.path:
                 sys.path.insert(0, str(backend_dir))
+            from app.db.session import SessionLocal
             from app.services.ability_resolver import resolve_abilities
 
-            return resolve_abilities(
-                None,
-                {
-                    "intent": intent,
-                    "ruleTypes": rule_types,
-                    "pageContext": {"step": redact_sensitive(ctx.step)},
-                    "environment": str((ctx.dsl.get("environment") or "test")),
-                },
-            )
+            with SessionLocal() as db:
+                return resolve_abilities(db, payload)
         except Exception:
-            return None
+            try:
+                from app.services.ability_resolver import resolve_abilities
+
+                return resolve_abilities(None, payload)
+            except Exception:
+                return None
 
 
 class CommonOperationHandler:
@@ -143,7 +150,12 @@ class CommonOperationHandler:
                 "ability_resolve",
                 str(rule.get("runtimeMessage") or f"命中规则 {code}：将按{name}处理。"),
                 "ability_resolver",
-                {"rule_code": code, "rule_type": rule.get("rule_type"), "rule_name": name},
+                {
+                    "rule_code": code,
+                    "rule_type": rule.get("rule_type"),
+                    "rule_name": name,
+                    "rule_source": resolution.get("source"),
+                },
             )
 
 
@@ -159,6 +171,25 @@ def handler_outcome(strategy: str, element_ref: Any, confidence: float, reason: 
     }
     payload.update(extra)
     return payload
+
+
+def _runtime_value(ctx: HandlerContext, key: str) -> Any:
+    runtime_context = ctx.dsl.get("runtimeContext") or ctx.dsl.get("runtime_context") or {}
+    if isinstance(runtime_context, dict):
+        for candidate in {key, _snake_case(key)}:
+            if runtime_context.get(candidate) not in (None, ""):
+                return runtime_context.get(candidate)
+    for container in (ctx.dsl, ctx.execution_context):
+        if not isinstance(container, dict):
+            continue
+        for candidate in {key, _snake_case(key)}:
+            if container.get(candidate) not in (None, ""):
+                return container.get(candidate)
+    return None
+
+
+def _snake_case(value: str) -> str:
+    return re.sub(r"(?<!^)([A-Z])", r"_\1", value).lower()
 
 
 def redact_sensitive(value: Any) -> Any:

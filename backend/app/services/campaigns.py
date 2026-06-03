@@ -16,7 +16,13 @@ from app.services.test_run_execution import create_and_execute_case_run, get_run
 TERMINAL_STATUSES = {"passed", "failed", "stopped", "cancelled", "aborted"}
 
 
-def create_campaign(db: Session, project_id: int, payload: CampaignCreateRequest) -> TestCampaignRead:
+def create_campaign(
+    db: Session,
+    project_id: int,
+    payload: CampaignCreateRequest,
+    *,
+    actor_user_id: int | None = None,
+) -> TestCampaignRead:
     project = db.get(TestProject, project_id)
     if project is None or project.deleted_at is not None or project.status == "deleted":
         raise ValueError("Project not found.")
@@ -38,6 +44,7 @@ def create_campaign(db: Session, project_id: int, payload: CampaignCreateRequest
         failed_count=0,
         blocked_count=0,
         summary_json={"message": "批次已创建，尚未开始执行。"},
+        created_by_user_id=actor_user_id,
     )
     db.add(campaign)
     db.flush()
@@ -74,7 +81,13 @@ def get_campaign(db: Session, campaign_id: int) -> TestCampaignRead:
     return payload
 
 
-def start_campaign(db: Session, campaign_id: int, payload: CampaignStartRequest) -> TestCampaignRead:
+def start_campaign(
+    db: Session,
+    campaign_id: int,
+    payload: CampaignStartRequest,
+    *,
+    actor_user_id: int | None = None,
+) -> TestCampaignRead:
     campaign = db.get(TestCampaign, campaign_id)
     if campaign is None:
         raise ValueError("Campaign not found.")
@@ -97,6 +110,8 @@ def start_campaign(db: Session, campaign_id: int, payload: CampaignStartRequest)
                     settingsOverride=payload.settingsOverride,
                     runName=f"campaign:{campaign.campaign_code}:case:{item.case_id}",
                 ),
+                actor_user_id=actor_user_id,
+                campaign_id=campaign.id,
             )
             item.run_id = run.id
             item.status = "running"
@@ -249,4 +264,3 @@ def _campaign_code() -> str:
 
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
-

@@ -86,7 +86,9 @@ class TestRunCreate(BaseModel):
     system_id: int | None = None
     case_id: int | None = None
     case_version_id: int | None = None
+    campaign_id: int | None = None
     account_id: int | None = None
+    created_by_user_id: int | None = None
     instruction: str | None = None
     base_url: str | None = None
     dsl_json: TestCaseDSL | None = None
@@ -186,10 +188,14 @@ class TraceViewerResponse(BaseModel):
 
 class FailureSampleRead(BaseModel):
     id: int
+    project_id: int | None = None
+    case_id: int | None = None
+    case_version_id: int | None = None
     run_id: int
     step_id: int | None = None
     failure_type: str | None = None
     failure_summary: str | None = None
+    evidence_json: dict[str, Any] | None = None
     screenshot_path: str | None = None
     dom_snapshot_path: str | None = None
     accessibility_snapshot_path: str | None = None

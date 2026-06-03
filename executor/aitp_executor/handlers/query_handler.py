@@ -5,6 +5,7 @@ from playwright.sync_api import Error as PlaywrightError
 
 from executor.aitp_executor.handlers.base import CommonOperationHandler, handler_outcome
 from executor.aitp_executor.handlers.dropdown_handler import DropdownHandler
+from executor.aitp_executor.handlers.list_page_evidence import assert_target_list_page_ready_for_empty_result
 from executor.aitp_executor.handlers.table_handler import TableHandler
 from executor.aitp_executor.locator.element_locator import ElementLocator
 from executor.aitp_executor.runner.page_waiter import wait_for_page_ready
@@ -48,6 +49,8 @@ class QueryHandler(CommonOperationHandler):
         table_outcome = self.table_handler.wait_for_table(page, step=step, dsl=dsl, execution_context=execution_context)
         row_count = self.table_handler.row_count(page)
         empty_strategy = str(step.get("emptyStrategy") or step.get("empty_strategy") or "pass")
+        if row_count == 0:
+            assert_target_list_page_ready_for_empty_result(page, step)
         if row_count == 0 and empty_strategy != "pass":
             raise AssertionError("table_no_data_rows: 查询结果没有数据行。")
         matched_rows = self._matched_row_count(page, criteria)
@@ -88,6 +91,8 @@ class QueryHandler(CommonOperationHandler):
         self.emit_rule_hits(ctx, resolution)
         row_count = self.table_handler.row_count(page)
         empty_strategy = str(step.get("emptyStrategy") or step.get("empty_strategy") or "pass")
+        if row_count == 0:
+            assert_target_list_page_ready_for_empty_result(page, step)
         if row_count == 0 and empty_strategy != "pass":
             raise AssertionError("table_no_data_rows: 查询结果没有数据行。")
         self.debug(ctx, {"strategy": "query_table_count", "rowCount": row_count, "emptyStrategy": empty_strategy})

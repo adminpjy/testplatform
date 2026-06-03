@@ -2,6 +2,7 @@ import { PanelRightClose } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import type { FailureSample, HumanIntervention, RuleDraft, TestArtifact, TestRun, TestStepRun } from "../types/platform";
+import { labelAction, labelStatus } from "../utils/displayLabels";
 
 export interface DebugDrawerProps {
   open: boolean;
@@ -85,7 +86,7 @@ export function DebugDrawer({
           <section className="debug-section">
             <h3>人工介入</h3>
             <p className="debug-section__hint">
-              先用 LLM 把人工判断生成受控方案，再一键执行。执行时会启动恢复运行；原失败运行的浏览器会话结束后不能在原页面继续。
+              先用大模型把人工判断生成受控方案，再一键执行。执行时会启动恢复运行；原失败运行的浏览器会话结束后不能在原页面继续。
             </p>
             <div className="intervention-presets" aria-label="常用介入说明">
               {INTERVENTION_PRESETS.map((preset) => (
@@ -106,9 +107,9 @@ export function DebugDrawer({
                 className="primary-button"
                 type="button"
                 disabled={busy || !run || !onCreateIntervention}
-                onClick={() => onCreateIntervention && void runAction("用 LLM 生成方案", () => onCreateIntervention(instruction))}
+                onClick={() => onCreateIntervention && void runAction("用大模型生成方案", () => onCreateIntervention(instruction))}
               >
-                {busy ? "处理中" : "用 LLM 生成方案"}
+                {busy ? "处理中" : "用大模型生成方案"}
               </button>
               <button
                 className="secondary-button"
@@ -139,15 +140,15 @@ export function DebugDrawer({
             {latestIntervention ? (
               <div className="intervention-plan-card">
                 <div className="intervention-plan-card__meta">
-                  <strong>当前方案：{latestIntervention.status}</strong>
+                  <strong>当前方案：{labelStatus(latestIntervention.status)}</strong>
                   <span>#{latestIntervention.id}</span>
                 </div>
                 <p>{latestIntervention.llm_plan_json?.summary || "已生成介入方案。"}</p>
                 <ol>
                   {(latestIntervention.llm_plan_json?.steps || []).map((step, index) => (
                     <li key={`${step.action}-${index}`}>
-                      <strong>{step.action}</strong>
-                      {step.value ? <span> {step.value} ms</span> : null}
+                      <strong>{labelAction(String(step.action || ""))}</strong>
+                      {step.value ? <span> {step.value} 毫秒</span> : null}
                       {step.target ? <span> - {step.target}</span> : null}
                       {step.reason ? <small>{step.reason}</small> : null}
                     </li>
@@ -162,7 +163,12 @@ export function DebugDrawer({
               </div>
             ) : null}
             {latestRuleDraft ? (
-              <pre>{JSON.stringify({ id: latestRuleDraft.id, status: latestRuleDraft.status, name: latestRuleDraft.rule_name }, null, 2)}</pre>
+              <dl className="settings-list">
+                <dt>规则草案</dt>
+                <dd>#{latestRuleDraft.id} {latestRuleDraft.rule_name}</dd>
+                <dt>状态</dt>
+                <dd>{labelStatus(latestRuleDraft.status)}</dd>
+              </dl>
             ) : null}
           </section>
         ) : null}
@@ -186,7 +192,7 @@ export function DebugDrawer({
           <pre>{JSON.stringify(run?.summary_json || {}, null, 2)}</pre>
         </section>
         <section className="debug-section">
-          <h3>执行 DSL</h3>
+          <h3>执行测试步骤</h3>
           <pre>{JSON.stringify(run?.dsl_json || {}, null, 2)}</pre>
         </section>
         <section className="debug-section">

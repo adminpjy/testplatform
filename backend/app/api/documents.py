@@ -2,6 +2,8 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
+from app.dependencies.auth import get_current_user
+from app.models import PlatformUser
 from app.schemas.cases import FunctionalTestCaseRead
 from app.schemas.documents import DocumentSourceRead, DocumentUploadRequest, ExtractDraftUpdate, ExtractedCaseDraftRead
 from app.services.documents import (
@@ -16,14 +18,20 @@ from app.services.documents import (
     reject_draft,
     update_draft,
 )
+from app.services.permissions import require_project_permission
 from app.services.projects import get_project_model
 
 router = APIRouter()
 
 
 @router.get("/api/projects/{project_id}/documents", response_model=list[DocumentSourceRead])
-def read_project_documents(project_id: int, db: Session = Depends(get_db)) -> list[DocumentSourceRead]:
+def read_project_documents(
+    project_id: int,
+    db: Session = Depends(get_db),
+    current_user: PlatformUser = Depends(get_current_user),
+) -> list[DocumentSourceRead]:
     _project_or_404(db, project_id)
+    require_project_permission(db, current_user, project_id, "view_cases")
     return list_project_documents(db, project_id)
 
 
@@ -32,8 +40,10 @@ def upload_project_document(
     project_id: int,
     payload: DocumentUploadRequest,
     db: Session = Depends(get_db),
+    current_user: PlatformUser = Depends(get_current_user),
 ) -> DocumentSourceRead:
     project = _project_or_404(db, project_id)
+    require_project_permission(db, current_user, project_id, "edit_cases")
     try:
         return create_document(db, project, payload)
     except ValueError as exc:
@@ -41,32 +51,52 @@ def upload_project_document(
 
 
 @router.get("/api/documents/{document_id}", response_model=DocumentSourceRead)
-def read_document(document_id: int, db: Session = Depends(get_db)) -> DocumentSourceRead:
+def read_document(
+    document_id: int,
+    db: Session = Depends(get_db),
+    current_user: PlatformUser = Depends(get_current_user),
+) -> DocumentSourceRead:
     document = get_document(db, document_id)
     if document is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found.")
+    require_project_permission(db, current_user, document.project_id, "view_cases")
     return document
 
 
 @router.delete("/api/documents/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
-def remove_document(document_id: int, db: Session = Depends(get_db)) -> None:
+def remove_document(
+    document_id: int,
+    db: Session = Depends(get_db),
+    current_user: PlatformUser = Depends(get_current_user),
+) -> None:
     document = get_document(db, document_id)
     if document is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found.")
+    require_project_permission(db, current_user, document.project_id, "edit_cases")
     delete_document(db, document)
 
 
 @router.post("/api/documents/{document_id}/extract-test-cases", response_model=list[ExtractedCaseDraftRead])
-def extract_document_test_cases(document_id: int, db: Session = Depends(get_db)) -> list[ExtractedCaseDraftRead]:
+def extract_document_test_cases(
+    document_id: int,
+    db: Session = Depends(get_db),
+    current_user: PlatformUser = Depends(get_current_user),
+) -> list[ExtractedCaseDraftRead]:
     document = get_document(db, document_id)
     if document is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found.")
+    require_project_permission(db, current_user, document.project_id, "edit_cases")
     return extract_test_case_drafts(db, document)
 
 
 @router.get("/api/projects/{project_id}/extracted-case-drafts", response_model=list[ExtractedCaseDraftRead])
-def read_project_case_drafts(project_id: int, db: Session = Depends(get_db)) -> list[ExtractedCaseDraftRead]:
+def read_project_case_drafts(
+    project_id: int,
+    db: Session = Depends(get_db),
+    current_user: PlatformUser = Depends(get_current_user),
+) -> list[ExtractedCaseDraftRead]:
     _project_or_404(db, project_id)
+    require_project_permission(db, current_user, project_id, "view_cases")
     return list_project_drafts(db, project_id)
 
 
@@ -75,20 +105,32 @@ def update_extracted_draft(
     draft_id: int,
     payload: ExtractDraftUpdate,
     db: Session = Depends(get_db),
+    current_user: PlatformUser = Depends(get_current_user),
 ) -> ExtractedCaseDraftRead:
     draft = _draft_or_404(db, draft_id)
+    require_project_permission(db, current_user, draft.project_id, "edit_cases")
     return update_draft(db, draft, payload)
 
 
 @router.post("/api/extracted-case-drafts/{draft_id}/accept", response_model=FunctionalTestCaseRead)
-def accept_extracted_draft(draft_id: int, db: Session = Depends(get_db)) -> FunctionalTestCaseRead:
+def accept_extracted_draft(
+    draft_id: int,
+    db: Session = Depends(get_db),
+    current_user: PlatformUser = Depends(get_current_user),
+) -> FunctionalTestCaseRead:
     draft = _draft_or_404(db, draft_id)
+    require_project_permission(db, current_user, draft.project_id, "edit_cases")
     return accept_draft(db, draft)
 
 
 @router.post("/api/extracted-case-drafts/{draft_id}/reject", response_model=ExtractedCaseDraftRead)
-def reject_extracted_draft(draft_id: int, db: Session = Depends(get_db)) -> ExtractedCaseDraftRead:
+def reject_extracted_draft(
+    draft_id: int,
+    db: Session = Depends(get_db),
+    current_user: PlatformUser = Depends(get_current_user),
+) -> ExtractedCaseDraftRead:
     draft = _draft_or_404(db, draft_id)
+    require_project_permission(db, current_user, draft.project_id, "edit_cases")
     return reject_draft(db, draft)
 
 

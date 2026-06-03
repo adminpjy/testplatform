@@ -32,13 +32,13 @@ class TableHandler(CommonOperationHandler):
     def row_count(self, page: Any) -> int:
         return len(self.data_row_indices(page))
 
-    def data_rows(self, page: Any, *, max_rows: int = 200) -> list[Any]:
-        rows = self.row_locator(page)
-        indices = self.data_row_indices(page, max_rows=max_rows)
+    def data_rows(self, page: Any, *, max_rows: int = 200, row_selector: str | None = None) -> list[Any]:
+        rows = self.row_locator(page, selector=row_selector)
+        indices = self.data_row_indices(page, max_rows=max_rows, row_selector=row_selector)
         return [rows.nth(index) for index in indices]
 
-    def data_row_indices(self, page: Any, *, max_rows: int = 200) -> list[int]:
-        rows = self.row_locator(page)
+    def data_row_indices(self, page: Any, *, max_rows: int = 200, row_selector: str | None = None) -> list[int]:
+        rows = self.row_locator(page, selector=row_selector)
         indices: list[int] = []
         try:
             count = min(rows.count(), max_rows)
@@ -50,7 +50,9 @@ class TableHandler(CommonOperationHandler):
                 indices.append(index)
         return indices
 
-    def row_locator(self, page: Any) -> Any:
+    def row_locator(self, page: Any, *, selector: str | None = None) -> Any:
+        if selector:
+            return page.locator(selector)
         selectors = [
             "table tbody tr",
             ".ant-table-tbody tr",
@@ -83,7 +85,7 @@ class TableHandler(CommonOperationHandler):
             class_name = str(row.get_attribute("class") or "").lower()
             if any(token in class_name for token in ["summary", "pagination", "placeholder", "skeleton", "loading", "expanded"]):
                 return False
-            if any(token in text for token in ["合计", "总计", "暂无数据", "无数据", "加载中", "上一页", "下一页", "每页", "条/页"]):
+            if any(token in text for token in ["合计", "总计", "暂无数据", "无数据", "没有可显示", "没有显示的记录", "加载中", "上一页", "下一页", "每页", "条/页"]):
                 return False
             cells = row.locator("td, [role='cell'], .cell")
             if cells.count() == 0 and row.locator("th, [role='columnheader']").count() > 0:

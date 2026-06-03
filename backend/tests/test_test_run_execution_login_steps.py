@@ -63,6 +63,24 @@ def test_intervention_plan_steps_are_translated_to_recovery_dsl() -> None:
     assert not any(step.get("sourceAction") == "retry_step" for step in steps)
 
 
+def test_intervention_plan_keeps_table_row_loop_recovery_structured() -> None:
+    plan = {
+        "steps": [
+            {"action": "wait", "value": "2000", "reason": "等待页面稳定"},
+            {"action": "click", "target": "列表第一行", "reason": "打开待办"},
+            {"action": "input", "target": "意见输入框", "value": "按要求执行"},
+            {"action": "click", "target": "提交按钮"},
+            {"action": "retry_step", "target": "S003"},
+        ]
+    }
+    failed_step = SimpleNamespace(action="process_table_rows", error_summary="table_row_loop_failed")
+
+    steps = _intervention_plan_steps_to_dsl(plan, failed_step=failed_step)
+
+    assert [step["action"] for step in steps] == ["wait"]
+    assert all(step.get("sourceAction") not in {"click", "input"} for step in steps)
+
+
 def test_insert_intervention_steps_before_failed_step() -> None:
     dsl = {
         "steps": [

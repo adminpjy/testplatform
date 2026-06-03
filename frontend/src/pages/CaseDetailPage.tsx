@@ -34,12 +34,13 @@ import type {
   TestCaseVersion,
   TestRun
 } from "../types/platform";
+import { labelAction, labelFailureType, labelRisk } from "../utils/displayLabels";
 
 type CaseTab = "info" | "dsl" | "test-data" | "runs" | "failures" | "fixes" | "knowledge";
 
 const CASE_TABS: Array<{ id: CaseTab; label: string }> = [
   { id: "info", label: "用例信息" },
-  { id: "dsl", label: "DSL 设计" },
+  { id: "dsl", label: "测试步骤设计" },
   { id: "test-data", label: "测试数据" },
   { id: "runs", label: "执行记录" },
   { id: "failures", label: "失败分析" },
@@ -128,7 +129,7 @@ export function CaseDetailPage({ caseId }: { caseId: number | null }) {
     try {
       const formatted = await formatCaseDsl(caseId, parseDsl());
       setDslText(JSON.stringify(formatted, null, 2));
-      setMessage("DSL 已格式化。");
+      setMessage("测试步骤已格式化。");
     } catch (requestError) {
       setError(formatError(requestError));
     }
@@ -137,16 +138,16 @@ export function CaseDetailPage({ caseId }: { caseId: number | null }) {
   async function handleValidateDsl() {
     if (!caseId) return;
     const result = await validateCaseDsl(caseId, parseDsl());
-    setMessage(result.valid ? "DSL 校验通过。" : `DSL 校验失败：${result.errors.join("；")}`);
+    setMessage(result.valid ? "测试步骤校验通过。" : `测试步骤校验失败：${result.errors.join("；")}`);
   }
 
   async function handleSaveDsl() {
     if (!caseId) return;
     setLoading(true);
     try {
-      await saveCaseDsl(caseId, parseDsl(), "Frontend DSL edit");
+      await saveCaseDsl(caseId, parseDsl(), "前端编辑测试步骤");
       await load(caseId);
-      setMessage("DSL 已保存为新版本。");
+      setMessage("测试步骤已保存为新版本。");
     } catch (requestError) {
       setError(formatError(requestError));
     } finally {
@@ -160,12 +161,12 @@ export function CaseDetailPage({ caseId }: { caseId: number | null }) {
     try {
       const analysis = await analyzeCase(caseId, infoForm.natural_language_goal);
       if (!analysis.readyToExecute) {
-        setMessage(`暂未生成 DSL：${analysis.clarifyingQuestions[0] || "信息不足"}`);
+        setMessage(`暂未生成测试步骤：${analysis.clarifyingQuestions[0] || "信息不足"}`);
         return;
       }
       const dsl = await generateCaseDsl(caseId, infoForm.natural_language_goal, parseObject(jsonText.testData));
       setDslText(JSON.stringify(dsl, null, 2));
-      setMessage("已生成 DSL，确认后可保存为新版本。");
+      setMessage("已生成测试步骤，确认后可保存为新版本。");
     } catch (requestError) {
       setError(formatError(requestError));
     } finally {
@@ -175,9 +176,9 @@ export function CaseDetailPage({ caseId }: { caseId: number | null }) {
 
   async function handleSaveGeneratedDsl() {
     if (!caseId) return;
-    await saveGeneratedCaseDsl(caseId, parseDsl(), parseObject(jsonText.testData), "Generated from case detail page");
+    await saveGeneratedCaseDsl(caseId, parseDsl(), parseObject(jsonText.testData), "从用例详情页生成");
     await load(caseId);
-    setMessage("生成的 DSL 已保存。");
+    setMessage("生成的测试步骤已保存。");
   }
 
   async function saveTestData() {
@@ -216,7 +217,7 @@ export function CaseDetailPage({ caseId }: { caseId: number | null }) {
   async function runFailureAnalysis(sampleId: number) {
     if (!caseId) return;
     const analysis = await analyzeFailureSample(sampleId);
-    setMessage(`AI 分析完成：${analysis.root_cause || analysis.failure_category}`);
+    setMessage(`智能分析完成：${analysis.root_cause || labelFailureType(analysis.failure_category)}`);
     await load(caseId);
   }
 
@@ -285,9 +286,9 @@ export function CaseDetailPage({ caseId }: { caseId: number | null }) {
               <label>
                 <span>状态</span>
                 <select value={infoForm.status} onChange={(event) => setInfoForm({ ...infoForm, status: event.target.value })}>
-                  <option value="draft">draft</option>
-                  <option value="active">active</option>
-                  <option value="disabled">disabled</option>
+                  <option value="draft">草稿</option>
+                  <option value="active">启用</option>
+                  <option value="disabled">停用</option>
                 </select>
               </label>
             </div>
@@ -312,11 +313,11 @@ export function CaseDetailPage({ caseId }: { caseId: number | null }) {
           <div className="case-dsl-layout">
             <section>
               <div className="panel-heading">
-                <h2>DSL JSON</h2>
+                <h2>测试步骤设计</h2>
                 <div className="action-bar">
                   <button className="secondary-button" type="button" onClick={() => void handleFormatDsl()}>格式化</button>
                   <button className="secondary-button" type="button" onClick={() => void handleValidateDsl()}><CheckCircle2 size={16} />校验</button>
-                  <button className="secondary-button" type="button" onClick={() => void handleGenerateDsl()}><Wand2 size={16} />重新生成 DSL</button>
+                  <button className="secondary-button" type="button" onClick={() => void handleGenerateDsl()}><Wand2 size={16} />重新生成测试步骤</button>
                   <button className="primary-button" type="button" onClick={() => void handleSaveDsl()} disabled={loading}><Save size={16} />保存新版本</button>
                   <button className="secondary-button" type="button" onClick={() => void handleSaveGeneratedDsl()}>保存生成结果</button>
                 </div>
@@ -330,10 +331,10 @@ export function CaseDetailPage({ caseId }: { caseId: number | null }) {
 
         {activeTab === "test-data" ? (
           <div className="case-json-grid">
-            <JsonEditor title="test_data_json" value={jsonText.testData} onChange={(value) => setJsonText({ ...jsonText, testData: value })} />
-            <JsonEditor title="preconditions_json" value={jsonText.preconditions} onChange={(value) => setJsonText({ ...jsonText, preconditions: value })} />
-            <JsonEditor title="success_criteria_json" value={jsonText.success} onChange={(value) => setJsonText({ ...jsonText, success: value })} />
-            <JsonEditor title="settings_json" value={jsonText.settings} onChange={(value) => setJsonText({ ...jsonText, settings: value })} />
+            <JsonEditor title="测试数据" value={jsonText.testData} onChange={(value) => setJsonText({ ...jsonText, testData: value })} />
+            <JsonEditor title="前置条件" value={jsonText.preconditions} onChange={(value) => setJsonText({ ...jsonText, preconditions: value })} />
+            <JsonEditor title="成功判断" value={jsonText.success} onChange={(value) => setJsonText({ ...jsonText, success: value })} />
+            <JsonEditor title="执行设置" value={jsonText.settings} onChange={(value) => setJsonText({ ...jsonText, settings: value })} />
             <div className="action-bar">
               <button className="primary-button" type="button" onClick={() => void saveTestData()}>保存为新版本</button>
             </div>
@@ -364,7 +365,7 @@ function DslStepPreview({ dslText }: { dslText: string }) {
       </ol>
     );
   } catch {
-    return <div className="dsl-empty-reason">DSL JSON 暂时无法解析，请修正后再校验。</div>;
+    return <div className="dsl-empty-reason">测试步骤暂时无法解析，请修正后再校验。</div>;
   }
 }
 
@@ -387,7 +388,7 @@ function VersionHistory({
       <div className="run-history__list">
         {versions.map((version) => (
           <div className="run-history__item" key={version.id}>
-            <span>v{version.version_no} {version.change_type}</span>
+            <span>v{version.version_no} {labelVersionChangeType(version.change_type)}</span>
             <div className="table-actions">
               {version.id === currentVersionId ? <StatusBadge value="active" /> : <button className="table-link-button" type="button" onClick={() => void onActivate(version.id)}>激活</button>}
               <button className="table-link-button" type="button" onClick={() => void onRun(version.id)}>运行</button>
@@ -407,10 +408,10 @@ function RunTable({ runs, onRerun }: { runs: TestRun[]; onRerun: (runId: number)
       emptyText="该用例暂无执行记录"
       getRowKey={(run) => run.id}
       columns={[
-        { key: "code", title: "run_code", render: (run) => run.run_code },
+        { key: "code", title: "运行编号", render: (run) => run.run_code },
         { key: "status", title: "状态", render: (run) => <StatusBadge value={run.status} /> },
         { key: "start", title: "开始时间", render: (run) => run.started_at || run.created_at },
-        { key: "duration", title: "耗时", render: (run) => run.ended_at && run.started_at ? `${Date.parse(run.ended_at) - Date.parse(run.started_at)} ms` : "-" },
+        { key: "duration", title: "耗时", render: (run) => run.ended_at && run.started_at ? `${Date.parse(run.ended_at) - Date.parse(run.started_at)} 毫秒` : "-" },
         { key: "account", title: "账号", render: (run) => String(run.account_snapshot?.username || "-") },
         { key: "report", title: "操作", render: (run) => (
           <div className="table-actions">
@@ -441,28 +442,28 @@ function FailurePanel({
         emptyText="该用例暂无失败样本"
         getRowKey={(sample) => sample.id}
         columns={[
-          { key: "type", title: "failureType", render: (sample) => sample.failure_type || "-" },
+          { key: "type", title: "失败类型", render: (sample) => labelFailureType(sample.failure_type) },
           { key: "summary", title: "摘要", render: (sample) => sample.failure_summary || "-" },
           { key: "status", title: "状态", render: (sample) => <StatusBadge value={sample.status} /> },
-          { key: "actions", title: "操作", render: (sample) => <button className="table-link-button" type="button" onClick={() => void onAnalyze(sample.id)}>AI 分析错误</button> }
+          { key: "actions", title: "操作", render: (sample) => <button className="table-link-button" type="button" onClick={() => void onAnalyze(sample.id)}>智能分析错误</button> }
         ]}
       />
       <div className="failure-analysis-card-list">
         {analyses.map((analysis) => (
           <article className="surface-panel ability-stat-card" key={analysis.id}>
-            <span>FailureAnalysis #{analysis.id}</span>
-            <strong>{analysis.failure_category || "unknown"}</strong>
+            <span>失败分析 #{analysis.id}</span>
+            <strong>{labelFailureType(analysis.failure_category)}</strong>
             <p>{analysis.root_cause || analysis.error_summary || "暂无根因说明"}</p>
             <dl className="settings-list">
               <dt>置信度</dt>
               <dd>{analysis.confidence == null ? "-" : `${Math.round(analysis.confidence * 100)}%`}</dd>
               <dt>风险</dt>
-              <dd>{analysis.risk_level}</dd>
+              <dd>{labelRisk(analysis.risk_level)}</dd>
               <dt>人工复核</dt>
               <dd>{analysis.requires_human_review ? "需要" : "不需要"}</dd>
             </dl>
-            <JsonCollapseBlock title="查看 evidence" value={analysis.evidence_json || {}} />
-            <JsonCollapseBlock title="查看 suggestions" value={analysis.suggestions_json || {}} />
+            <JsonCollapseBlock title="查看证据" value={analysis.evidence_json || {}} />
+            <JsonCollapseBlock title="查看建议" value={analysis.suggestions_json || {}} />
             <div className="suggestion-action-list">
               {suggestions(analysis).map((item, index) => (
                 <button className="secondary-button" type="button" key={`${item.type}-${index}`} onClick={() => void onApply(analysis.id, index, actionForSuggestion(item.type))}>
@@ -472,7 +473,7 @@ function FailurePanel({
             </div>
           </article>
         ))}
-        {analyses.length === 0 ? <div className="empty-state">暂无 AI 失败分析，选择失败样本后点击“AI 分析错误”。</div> : null}
+        {analyses.length === 0 ? <div className="empty-state">暂无智能失败分析，选择失败样本后点击“智能分析错误”。</div> : null}
       </div>
     </div>
   );
@@ -485,7 +486,7 @@ function FixPanel({ fixes, onVerify }: { fixes: FixApplication[]; onVerify: (fix
       emptyText="暂无修复历史"
       getRowKey={(fix) => fix.id}
       columns={[
-        { key: "type", title: "修复类型", render: (fix) => fix.fix_type },
+        { key: "type", title: "修复类型", render: (fix) => labelFixType(fix.fix_type) },
         { key: "status", title: "状态", render: (fix) => <StatusBadge value={fix.status} /> },
         { key: "version", title: "新版本", render: (fix) => fix.created_case_version_id || "-" },
         { key: "verify", title: "验证运行", render: (fix) => fix.verify_run_id || "-" },
@@ -517,7 +518,7 @@ function Field({ label, value, onChange }: { label: string; value: string; onCha
 function parseObject(value: string): Record<string, unknown> {
   const parsed = JSON.parse(value || "{}") as unknown;
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error("JSON 必须是对象。");
+    throw new Error("结构化数据必须是对象。");
   }
   return parsed as Record<string, unknown>;
 }
@@ -535,7 +536,7 @@ function readableAction(action: string): string {
     fill_form: "填写表单",
     business_goal: "业务目标"
   };
-  return mapping[action] || action;
+  return mapping[action] || labelAction(action);
 }
 
 function suggestions(analysis: FailureAnalysis): Array<{ type: string }> {
@@ -545,7 +546,7 @@ function suggestions(analysis: FailureAnalysis): Array<{ type: string }> {
 
 function suggestionActionLabel(type: string): string {
   const mapping: Record<string, string> = {
-    modify_dsl: "应用到 DSL",
+    modify_dsl: "应用到测试步骤",
     add_rule: "生成规则草案",
     update_rule: "更新规则",
     modify_test_data: "修改测试数据",
@@ -556,7 +557,7 @@ function suggestionActionLabel(type: string): string {
     environment_issue: "标记为环境问题",
     defect_candidate: "标记为缺陷"
   };
-  return mapping[type] || type || "查看建议";
+  return mapping[type] || "查看建议";
 }
 
 function actionForSuggestion(type: string): string {
@@ -573,6 +574,29 @@ function actionForSuggestion(type: string): string {
     defect_candidate: "create_defect_candidate"
   };
   return mapping[type] || "create_human_intervention";
+}
+
+function labelVersionChangeType(value: string): string {
+  const labels: Record<string, string> = {
+    create: "创建",
+    update: "更新",
+    generated: "自动生成",
+    rollback: "回滚",
+    manual_edit: "人工编辑"
+  };
+  return labels[value] || "版本变更";
+}
+
+function labelFixType(value: string): string {
+  const labels: Record<string, string> = {
+    dsl_patch: "步骤修复",
+    test_data_patch: "测试数据修复",
+    rule_patch: "规则修复",
+    account_patch: "账号修复",
+    precondition_patch: "前置条件修复",
+    success_criteria_patch: "成功判断修复"
+  };
+  return labels[value] || "其他修复";
 }
 
 function formatError(error: unknown): string {

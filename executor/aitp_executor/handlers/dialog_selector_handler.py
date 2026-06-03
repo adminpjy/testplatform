@@ -46,9 +46,8 @@ class DialogSelectorHandler(CommonOperationHandler):
         selectors = ["[role='dialog']", "[aria-modal='true']", ".ant-modal", ".el-dialog", ".modal", ".drawer", ".ant-drawer", ".el-drawer"]
         for selector in selectors:
             try:
-                locator = page.locator(selector).first
-                if locator.count() > 0:
-                    locator.wait_for(state="visible", timeout=timeout_ms)
+                locator = page.locator(selector)
+                if self._any_visible(locator, timeout_ms=timeout_ms):
                     return True
             except PlaywrightError:
                 continue
@@ -72,8 +71,9 @@ class DialogSelectorHandler(CommonOperationHandler):
         for selector in [".ant-modal-close", ".el-dialog__headerbtn", ".modal .close", "[aria-label='Close']", "[aria-label='关闭']", "[title='关闭']"]:
             try:
                 candidate = page.locator(selector)
-                if candidate.count() > 0:
-                    candidate.first.click()
+                visible = self._first_visible(candidate, timeout_ms=300)
+                if visible is not None:
+                    visible.click()
                     page.wait_for_timeout(300)
                     return True
             except PlaywrightError:
@@ -95,3 +95,20 @@ class DialogSelectorHandler(CommonOperationHandler):
                     return
             except PlaywrightError:
                 continue
+
+    def _any_visible(self, locator: Any, *, timeout_ms: int, limit: int = 12) -> bool:
+        return self._first_visible(locator, timeout_ms=timeout_ms, limit=limit) is not None
+
+    def _first_visible(self, locator: Any, *, timeout_ms: int, limit: int = 12) -> Any | None:
+        try:
+            count = min(locator.count(), limit)
+        except PlaywrightError:
+            return None
+        for index in range(count):
+            try:
+                item = locator.nth(index)
+                if item.is_visible(timeout=timeout_ms):
+                    return item
+            except PlaywrightError:
+                continue
+        return None

@@ -9,22 +9,26 @@ import {
   createProject,
   createProjectAccount,
   createProjectCase,
+  createProjectMember,
   deleteCase,
   deleteProject,
   deleteProjectAccount,
+  deleteProjectMember,
   disableCase,
   extractDocumentTestCases,
   getProjectDocuments,
   getProjectExtractedDrafts,
   getProjectAccounts,
   getProjectCases,
+  getProjectMembers,
   getProjects,
   getTestRuns,
   rejectExtractedDraft,
   setProjectDefaultAccount,
   uploadProjectDocument,
   updateProject,
-  updateProjectAccount
+  updateProjectAccount,
+  updateProjectMember
 } from "../api/platform";
 import { DataTable } from "../components/DataTable";
 import { StatusBadge } from "../components/StatusBadge";
@@ -35,14 +39,18 @@ import type {
   ProjectAccount,
   ProjectAccountPayload,
   ProjectCreatePayload,
+  ProjectMember,
+  ProjectMemberPayload,
   TestProject,
   TestRun
 } from "../types/platform";
+import { labelAuthType, labelBoolean } from "../utils/displayLabels";
 
-type ProjectTab = "config" | "accounts" | "cases" | "runs" | "failures" | "documents" | "knowledge";
+type ProjectTab = "config" | "members" | "accounts" | "cases" | "runs" | "failures" | "documents" | "knowledge";
 
 const PROJECT_TABS: Array<{ id: ProjectTab; label: string }> = [
   { id: "config", label: "项目配置" },
+  { id: "members", label: "项目成员" },
   { id: "accounts", label: "测试账号" },
   { id: "cases", label: "功能测试用例" },
   { id: "runs", label: "运行记录" },
@@ -82,6 +90,20 @@ const emptyAccountForm: ProjectAccountPayload = {
   status: "active"
 };
 
+const emptyMemberForm: ProjectMemberPayload = {
+  username: "",
+  display_name: "",
+  role: "testuser",
+  status: "active",
+  permissions: {
+    view_project: true,
+    view_cases: true,
+    run_case: true,
+    view_runs: true,
+    view_reports: true
+  }
+};
+
 const emptyCaseForm = {
   case_name: "",
   description: "",
@@ -96,6 +118,7 @@ const emptyCaseForm = {
 export function ProjectsPage({ initialProjectId }: { initialProjectId?: number | null }) {
   const [projects, setProjects] = useState<TestProject[]>([]);
   const [accounts, setAccounts] = useState<ProjectAccount[]>([]);
+  const [members, setMembers] = useState<ProjectMember[]>([]);
   const [cases, setCases] = useState<FunctionalTestCase[]>([]);
   const [documents, setDocuments] = useState<DocumentSource[]>([]);
   const [drafts, setDrafts] = useState<ExtractedCaseDraft[]>([]);
@@ -105,6 +128,8 @@ export function ProjectsPage({ initialProjectId }: { initialProjectId?: number |
   const [projectForm, setProjectForm] = useState<ProjectCreatePayload>(emptyProjectForm);
   const [accountForm, setAccountForm] = useState<ProjectAccountPayload>(emptyAccountForm);
   const [editingAccountId, setEditingAccountId] = useState<number | null>(null);
+  const [memberForm, setMemberForm] = useState<ProjectMemberPayload>(emptyMemberForm);
+  const [editingMemberId, setEditingMemberId] = useState<number | null>(null);
   const [caseForm, setCaseForm] = useState(emptyCaseForm);
   const [documentFile, setDocumentFile] = useState<File | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -133,6 +158,7 @@ export function ProjectsPage({ initialProjectId }: { initialProjectId?: number |
       setSelectedProjectId(null);
       setProjectForm(emptyProjectForm);
       setAccounts([]);
+      setMembers([]);
       setCases([]);
       setDocuments([]);
       setDrafts([]);
@@ -145,13 +171,15 @@ export function ProjectsPage({ initialProjectId }: { initialProjectId?: number |
     setSelectedProjectId(projectId);
     setProjectForm(projectToForm(project));
     window.history.replaceState(null, "", `#projects/${projectId}`);
-    const [accountList, caseList, documentList, draftList] = await Promise.all([
+    const [accountList, memberList, caseList, documentList, draftList] = await Promise.all([
       getProjectAccounts(projectId),
+      getProjectMembers(projectId),
       getProjectCases(projectId),
       getProjectDocuments(projectId),
       getProjectExtractedDrafts(projectId)
     ]);
     setAccounts(accountList);
+    setMembers(memberList);
     setCases(caseList);
     setDocuments(documentList);
     setDrafts(draftList);
@@ -161,6 +189,7 @@ export function ProjectsPage({ initialProjectId }: { initialProjectId?: number |
     setSelectedProjectId(null);
     setProjectForm(emptyProjectForm);
     setAccounts([]);
+    setMembers([]);
     setCases([]);
     window.history.replaceState(null, "", "#projects");
   }
@@ -209,7 +238,7 @@ export function ProjectsPage({ initialProjectId }: { initialProjectId?: number |
       const result = type === "connectivity"
         ? await checkSystemConnectivity(selectedProject.system_id)
         : await checkSystemLogin(selectedProject.system_id);
-      setMessage(`${type === "connectivity" ? "连通性检查" : "登录检查"}：${result.status}，${result.message}`);
+      setMessage(`${type === "connectivity" ? "连通性检查" : "登录检查"}：${result.message}`);
     } catch (requestError) {
       setError(formatError(requestError));
     } finally {
@@ -236,6 +265,41 @@ export function ProjectsPage({ initialProjectId }: { initialProjectId?: number |
       setError(formatError(requestError));
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function saveMember(event: FormEvent) {
+    event.preventDefault();
+    if (!selectedProjectId) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const payload = sanitizeMember(memberForm);
+      if (editingMemberId) {
+        await updateProjectMember(selectedProjectId, editingMemberId, payload);
+      } else {
+        await createProjectMember(selectedProjectId, payload);
+      }
+      setMemberForm(emptyMemberForm);
+      setEditingMemberId(null);
+      await selectProject(selectedProjectId);
+      setMessage("项目成员已保存。");
+    } catch (requestError) {
+      setError(formatError(requestError));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function removeMember(membershipId: number) {
+    if (!selectedProjectId) return;
+    if (!window.confirm("确认移除该项目成员？")) return;
+    try {
+      await deleteProjectMember(selectedProjectId, membershipId);
+      await selectProject(selectedProjectId);
+      setMessage("项目成员已移除。");
+    } catch (requestError) {
+      setError(formatError(requestError));
     }
   }
 
@@ -348,7 +412,7 @@ export function ProjectsPage({ initialProjectId }: { initialProjectId?: number |
             columns={[
               { key: "name", title: "项目名称", render: (project) => <button className="link-button" type="button" onClick={() => void selectProject(project.id)}>{project.project_name || project.name}</button> },
               { key: "system", title: "被测系统", render: (project) => project.system_name || "-" },
-              { key: "url", title: "base_url", render: (project) => <span className="text-cell">{project.base_url || "-"}</span> },
+              { key: "url", title: "系统入口地址", render: (project) => <span className="text-cell">{project.base_url || "-"}</span> },
               { key: "account", title: "默认账号", render: (project) => project.default_account?.username || "-" },
               { key: "case_count", title: "用例", render: (project) => project.case_count ?? 0 },
               { key: "run", title: "最近运行", render: (project) => project.last_run_status ? <StatusBadge value={project.last_run_status} /> : "-" },
@@ -391,6 +455,42 @@ export function ProjectsPage({ initialProjectId }: { initialProjectId?: number |
               </div>
               <ProjectForm form={projectForm} onChange={setProjectForm} />
             </form>
+          ) : null}
+
+          {activeTab === "members" ? (
+            <div className="project-tab-panel">
+              <form className="sub-panel" onSubmit={saveMember}>
+                <h3>{editingMemberId ? "编辑项目成员授权" : "新增项目成员"}</h3>
+                <MemberForm
+                  form={memberForm}
+                  editing={Boolean(editingMemberId)}
+                  disabled={!canManageMembers(selectedProject)}
+                  onChange={setMemberForm}
+                />
+                <div className="action-bar">
+                  <button className="primary-button" type="submit" disabled={!selectedProjectId || !memberForm.username || loading || !canManageMembers(selectedProject)}>保存成员</button>
+                  {editingMemberId ? <button className="secondary-button" type="button" onClick={() => { setEditingMemberId(null); setMemberForm(emptyMemberForm); }}>取消编辑</button> : null}
+                </div>
+                {!canManageMembers(selectedProject) ? <div className="empty-state compact-empty-state">当前用户只能查看成员，不能调整授权。</div> : null}
+              </form>
+              <DataTable
+                rows={members}
+                emptyText="当前项目还没有成员"
+                getRowKey={(member) => member.id}
+                columns={[
+                  { key: "user", title: "成员", render: (member) => member.display_name ? `${member.display_name}（${member.username}）` : member.username },
+                  { key: "role", title: "项目角色", render: (member) => member.role === "owner" ? "项目负责人" : "测试用户" },
+                  { key: "permissions", title: "授权范围", render: (member) => memberPermissionText(member) },
+                  { key: "status", title: "状态", render: (member) => <StatusBadge value={member.status} /> },
+                  { key: "actions", title: "操作", render: (member) => (
+                    <div className="table-actions">
+                      <button className="table-link-button" type="button" disabled={!canManageMembers(selectedProject)} onClick={() => { setEditingMemberId(member.id); setMemberForm(memberToForm(member)); }}>编辑</button>
+                      <button className="table-link-button" type="button" disabled={!canManageMembers(selectedProject)} onClick={() => void removeMember(member.id)}>移除</button>
+                    </div>
+                  ) }
+                ]}
+              />
+            </div>
           ) : null}
 
           {activeTab === "accounts" ? (
@@ -488,27 +588,27 @@ function ProjectForm({ form, onChange }: { form: ProjectCreatePayload; onChange:
       <div className="form-grid">
         <Field label="项目名称" value={form.project_name || ""} onChange={(value) => onChange({ ...form, project_name: value })} />
         <Field label="被测系统名称" value={form.system_name || ""} onChange={(value) => onChange({ ...form, system_name: value })} />
-        <Field label="base_url" value={form.base_url || ""} onChange={(value) => onChange({ ...form, base_url: value })} />
-        <Field label="login_url" value={form.login_url || ""} onChange={(value) => onChange({ ...form, login_url: value })} />
-        <Field label="home_url" value={form.home_url || ""} onChange={(value) => onChange({ ...form, home_url: value })} />
+        <Field label="系统入口地址" value={form.base_url || ""} onChange={(value) => onChange({ ...form, base_url: value })} />
+        <Field label="登录地址" value={form.login_url || ""} onChange={(value) => onChange({ ...form, login_url: value })} />
+        <Field label="首页地址" value={form.home_url || ""} onChange={(value) => onChange({ ...form, home_url: value })} />
         <label>
           <span>认证方式</span>
           <select value={form.auth_type || "username_password"} onChange={(event) => onChange({ ...form, auth_type: event.target.value })}>
-            <option value="username_password">username_password</option>
-            <option value="sso">sso</option>
-            <option value="token">token</option>
-            <option value="other">other</option>
+            <option value="username_password">{labelAuthType("username_password")}</option>
+            <option value="sso">{labelAuthType("sso")}</option>
+            <option value="token">{labelAuthType("token")}</option>
+            <option value="other">{labelAuthType("other")}</option>
           </select>
         </label>
         <label>
-          <span>默认超时 ms</span>
+          <span>默认超时（毫秒）</span>
           <input type="number" value={form.default_timeout_ms || 15000} onChange={(event) => onChange({ ...form, default_timeout_ms: Number(event.target.value) })} />
         </label>
         <label>
           <span>状态</span>
           <select value={form.status || "active"} onChange={(event) => onChange({ ...form, status: event.target.value })}>
-            <option value="active">active</option>
-            <option value="disabled">disabled</option>
+            <option value="active">启用</option>
+            <option value="disabled">停用</option>
           </select>
         </label>
       </div>
@@ -517,11 +617,11 @@ function ProjectForm({ form, onChange }: { form: ProjectCreatePayload; onChange:
         <textarea value={form.description || ""} onChange={(event) => onChange({ ...form, description: event.target.value })} />
       </label>
       <div className="toggle-grid">
-        <Toggle label="Trace" checked={Boolean(form.enable_trace_default)} onChange={(value) => onChange({ ...form, enable_trace_default: value })} />
-        <Toggle label="Screenshot" checked={Boolean(form.enable_screenshot_default)} onChange={(value) => onChange({ ...form, enable_screenshot_default: value })} />
-        <Toggle label="DOM Snapshot" checked={Boolean(form.enable_dom_snapshot_default)} onChange={(value) => onChange({ ...form, enable_dom_snapshot_default: value })} />
-        <Toggle label="Accessibility Snapshot" checked={Boolean(form.enable_accessibility_snapshot_default)} onChange={(value) => onChange({ ...form, enable_accessibility_snapshot_default: value })} />
-        <Toggle label="Vision Fallback" checked={Boolean(form.enable_vision_fallback_default)} onChange={(value) => onChange({ ...form, enable_vision_fallback_default: value })} />
+        <Toggle label="记录执行轨迹" checked={Boolean(form.enable_trace_default)} onChange={(value) => onChange({ ...form, enable_trace_default: value })} />
+        <Toggle label="保存截图" checked={Boolean(form.enable_screenshot_default)} onChange={(value) => onChange({ ...form, enable_screenshot_default: value })} />
+        <Toggle label="保存页面结构快照" checked={Boolean(form.enable_dom_snapshot_default)} onChange={(value) => onChange({ ...form, enable_dom_snapshot_default: value })} />
+        <Toggle label="保存可访问性快照" checked={Boolean(form.enable_accessibility_snapshot_default)} onChange={(value) => onChange({ ...form, enable_accessibility_snapshot_default: value })} />
+        <Toggle label="启用视觉兜底" checked={Boolean(form.enable_vision_fallback_default)} onChange={(value) => onChange({ ...form, enable_vision_fallback_default: value })} />
       </div>
     </>
   );
@@ -546,6 +646,61 @@ function AccountForm({ form, onChange }: { form: ProjectAccountPayload; onChange
         <Toggle label="审批" checked={Boolean(form.allow_approval)} onChange={(value) => onChange({ ...form, allow_approval: value })} />
         <Toggle label="删除" checked={Boolean(form.allow_delete)} onChange={(value) => onChange({ ...form, allow_delete: value })} />
       </div>
+    </>
+  );
+}
+
+function MemberForm({
+  form,
+  editing,
+  disabled,
+  onChange
+}: {
+  form: ProjectMemberPayload;
+  editing: boolean;
+  disabled: boolean;
+  onChange: (next: ProjectMemberPayload) => void;
+}) {
+  const permissions = form.permissions || {};
+  const isOwner = form.role === "owner";
+  return (
+    <>
+      <div className="form-grid">
+        <label>
+          <span>登录用户名</span>
+          <input value={form.username || ""} disabled={editing || disabled} onChange={(event) => onChange({ ...form, username: event.target.value })} />
+        </label>
+        <label>
+          <span>显示名称</span>
+          <input value={form.display_name || ""} disabled={disabled} onChange={(event) => onChange({ ...form, display_name: event.target.value })} />
+        </label>
+        <label>
+          <span>项目角色</span>
+          <select value={form.role || "testuser"} disabled={disabled} onChange={(event) => onChange({ ...form, role: event.target.value })}>
+            <option value="testuser">测试用户</option>
+            <option value="owner">项目负责人</option>
+          </select>
+        </label>
+        <label>
+          <span>状态</span>
+          <select value={form.status || "active"} disabled={disabled} onChange={(event) => onChange({ ...form, status: event.target.value })}>
+            <option value="active">启用</option>
+            <option value="disabled">停用</option>
+          </select>
+        </label>
+      </div>
+      <div className="toggle-grid member-permission-grid">
+        {PROJECT_PERMISSION_LABELS.map((item) => (
+          <Toggle
+            key={item.key}
+            label={item.label}
+            checked={isOwner || Boolean(permissions[item.key])}
+            disabled={disabled || isOwner}
+            onChange={(value) => onChange({ ...form, permissions: { ...permissions, [item.key]: value } })}
+          />
+        ))}
+      </div>
+      {isOwner ? <div className="empty-state compact-empty-state">项目负责人默认拥有全部项目权限。</div> : null}
     </>
   );
 }
@@ -583,7 +738,7 @@ function ProjectRuns({ runs }: { runs: TestRun[] }) {
       emptyText="当前项目暂无运行记录"
       getRowKey={(run) => run.id}
       columns={[
-        { key: "code", title: "run_code", render: (run) => run.run_code },
+        { key: "code", title: "运行编号", render: (run) => run.run_code },
         { key: "status", title: "状态", render: (run) => <StatusBadge value={run.status} /> },
         { key: "started", title: "开始时间", render: (run) => run.started_at || run.created_at },
         { key: "case", title: "用例", render: (run) => run.case_id || "-" },
@@ -618,7 +773,7 @@ function DocumentExtractionPanel({
         <h3>上传文档</h3>
         <div className="compact-form-grid">
           <label className="compact-form-grid__wide">
-            <span>选择 txt / md / docx / pdf</span>
+            <span>选择文本、Word 或 PDF 文件</span>
             <input type="file" accept=".txt,.md,.docx,.pdf" onChange={(event) => onFileChange(event.target.files?.[0] || null)} />
           </label>
           <button className="primary-button" type="button" disabled={!selectedFile} onClick={onUpload}>
@@ -669,10 +824,10 @@ function Field({ label, value, onChange }: { label: string; value: string; onCha
   );
 }
 
-function Toggle({ label, checked, onChange }: { label: string; checked: boolean; onChange: (value: boolean) => void }) {
+function Toggle({ label, checked, disabled, onChange }: { label: string; checked: boolean; disabled?: boolean; onChange: (value: boolean) => void }) {
   return (
     <label className="toggle-row">
-      <input type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} />
+      <input type="checkbox" checked={checked} disabled={disabled} onChange={(event) => onChange(event.target.checked)} />
       <span>{label}</span>
     </label>
   );
@@ -735,6 +890,56 @@ function sanitizeAccount(form: ProjectAccountPayload): ProjectAccountPayload {
   };
 }
 
+const PROJECT_PERMISSION_LABELS: Array<{ key: string; label: string }> = [
+  { key: "view_project", label: "查看项目" },
+  { key: "manage_project", label: "维护项目配置" },
+  { key: "manage_members", label: "维护项目成员" },
+  { key: "manage_accounts", label: "维护测试账号" },
+  { key: "view_cases", label: "查看功能测试用例" },
+  { key: "edit_cases", label: "新增和编辑用例" },
+  { key: "delete_cases", label: "删除用例" },
+  { key: "run_case", label: "执行单个用例" },
+  { key: "run_campaign", label: "执行整个项目" },
+  { key: "view_runs", label: "查看运行记录" },
+  { key: "view_reports", label: "查看测试报告" }
+];
+
+function memberToForm(member: ProjectMember): ProjectMemberPayload {
+  return {
+    username: member.username,
+    display_name: member.display_name || "",
+    role: member.role || "testuser",
+    permissions: { ...(member.permissions || {}) },
+    status: member.status || "active"
+  };
+}
+
+function sanitizeMember(form: ProjectMemberPayload): ProjectMemberPayload {
+  const role = form.role || "testuser";
+  const permissions = role === "owner"
+    ? Object.fromEntries(PROJECT_PERMISSION_LABELS.map((item) => [item.key, true]))
+    : { ...(form.permissions || {}) };
+  return {
+    username: form.username?.trim(),
+    display_name: form.display_name || null,
+    role,
+    permissions,
+    status: form.status || "active"
+  };
+}
+
+function canManageMembers(project: TestProject | null): boolean {
+  return Boolean(project?.current_user_permissions?.manage_members || project?.current_user_role === "admin" || project?.current_user_role === "owner");
+}
+
+function memberPermissionText(member: ProjectMember): string {
+  if (member.role === "owner") return "全部权限";
+  const labels = PROJECT_PERMISSION_LABELS
+    .filter((item) => member.permissions?.[item.key])
+    .map((item) => item.label);
+  return labels.length ? labels.join(" / ") : "仅已加入项目";
+}
+
 function minimalDsl(caseName: string, baseUrl: string, menuPath: string) {
   const steps = menuPath
     ? [{ action: "navigate_path", target: menuPath, pathSegments: menuPath.split(/[/>→\\-]/).map((item) => item.trim()).filter(Boolean), navigationType: "menu_path" }]
@@ -744,10 +949,10 @@ function minimalDsl(caseName: string, baseUrl: string, menuPath: string) {
 
 function permissionText(account: ProjectAccount): string {
   return [
-    account.allow_read ? "读" : null,
-    account.allow_write ? "写" : null,
-    account.allow_approval ? "审批" : null,
-    account.allow_delete ? "删除" : null
+    account.allow_read ? `读：${labelBoolean(true)}` : null,
+    account.allow_write ? `写：${labelBoolean(true)}` : null,
+    account.allow_approval ? `审批：${labelBoolean(true)}` : null,
+    account.allow_delete ? `删除：${labelBoolean(true)}` : null
   ].filter(Boolean).join(" / ") || "-";
 }
 

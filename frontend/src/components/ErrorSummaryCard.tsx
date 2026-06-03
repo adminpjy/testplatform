@@ -2,6 +2,7 @@ import { AlertTriangle, Bug, ChevronDown, ChevronUp, ClipboardCopy, UserRoundChe
 import { useMemo, useState } from "react";
 
 import type { TestRun, TestStepRun } from "../types/platform";
+import { labelFailureType, labelStatus } from "../utils/displayLabels";
 import { readableStepAction } from "../utils/runtimeDisplay";
 
 export interface ErrorSummaryCardProps {
@@ -62,7 +63,7 @@ export function ErrorSummaryCard({ run, steps, apiError, onIntervention, onDebug
         </div>
         <div>
           <span>失败类型</span>
-          <strong>{loginFailure ? "login_failed" : failedStep ? readableStepAction(failedStep) : apiError ? "接口错误" : run?.status || "failed"}</strong>
+          <strong>{loginFailure ? labelFailureType("login_failed") : failedStep ? readableStepAction(failedStep) : apiError ? "接口错误" : labelStatus(run?.status || "failed")}</strong>
         </div>
       </div>
       <p>{summaryText}</p>
@@ -80,7 +81,7 @@ export function ErrorSummaryCard({ run, steps, apiError, onIntervention, onDebug
             <ul>
               <li>用户名或密码错误；</li>
               <li>账号被禁用、锁定或未绑定；</li>
-              <li>AD 密码未同步；</li>
+              <li>企业域账号密码未同步；</li>
               <li>测试账号无效或无权访问目标系统。</li>
             </ul>
           </div>
@@ -189,11 +190,11 @@ function remainingRetriesFrom(value: string): number | null {
 function loginEvidence(value: string): string[] {
   const lower = value.toLowerCase();
   const evidence: string[] = [];
-  if (lower.includes("login was failed") || value.includes("登录失败")) evidence.push("Login was failed");
+  if (lower.includes("login was failed") || value.includes("登录失败")) evidence.push("页面提示登录失败");
   if (lower.includes("wrong user name or password") || lower.includes("wrong username or password") || value.includes("用户名或密码错误")) {
-    evidence.push("Wrong user name or password");
+    evidence.push("页面提示用户名或密码错误");
   }
-  if (lower.includes("authentication center") || value.includes("认证中心")) evidence.push("Authentication Center / 用户认证中心可见");
+  if (lower.includes("authentication center") || value.includes("认证中心")) evidence.push("用户认证中心可见");
   evidence.push("登录表单仍可见");
   evidence.push("未检测到业务系统主菜单");
   return Array.from(new Set(evidence));

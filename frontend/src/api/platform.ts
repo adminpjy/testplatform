@@ -1,15 +1,18 @@
-import { ApiError, apiUrl, deleteJson, getJson, postJson, putJson } from "./client";
+import { ApiError, apiUrl, deleteJson, getAuthToken, getJson, postJson, putJson, setAuthToken } from "./client";
 import type {
   AbilityRule,
   AbilityStats,
   AbilityKnowledge,
   AnalyzeResult,
   CampaignReportSummary,
+  CurrentUser,
   DslValidationResult,
   DocumentSource,
   ExtractedCaseDraft,
+  FailureContext,
   FailureSample,
   FailureAnalysis,
+  FailureSolution,
   FixApplication,
   FunctionalTestCase,
   FunctionalTestCasePayload,
@@ -18,16 +21,22 @@ import type {
   HumanInterventionCreate,
   LLMSettings,
   MaintenanceFeedback,
+  MaintenanceResponse,
   NaturalLanguageTestRequest,
+  PageResponse,
+  LoginResponse,
   ProjectAccount,
   ProjectAccountPayload,
   ProjectCreatePayload,
+  ProjectMember,
+  ProjectMemberPayload,
   ProjectWizardBootstrapRequest,
   ProjectWizardBootstrapResponse,
   PrescanResponse,
   PromptInfo,
   PromptPreview,
   RuleDraft,
+  RuleValidation,
   SystemInfo,
   SystemCheckResult,
   TestArtifact,
@@ -48,6 +57,24 @@ export function getHealth(): Promise<HealthInfo> {
   return getJson<HealthInfo>("/health");
 }
 
+export async function login(username: string, password: string): Promise<LoginResponse> {
+  const response = await postJson<LoginResponse>("/api/auth/login", { username, password });
+  setAuthToken(response.token);
+  return response;
+}
+
+export async function logout(): Promise<void> {
+  try {
+    await postJson<{ status: string }>("/api/auth/logout", {});
+  } finally {
+    setAuthToken("");
+  }
+}
+
+export function getCurrentUser(): Promise<CurrentUser> {
+  return getJson<CurrentUser>("/api/auth/me");
+}
+
 export function getSystemInfo(): Promise<SystemInfo> {
   return getJson<SystemInfo>("/api/system/info");
 }
@@ -66,6 +93,10 @@ export function reloadPrompts(): Promise<{ loaded: number; last_error: string | 
 
 export function previewPrompt(promptKey: string, variables: Record<string, unknown>): Promise<PromptPreview> {
   return postJson<PromptPreview>(`/api/prompts/${encodeURIComponent(promptKey)}/preview`, { variables });
+}
+
+export function deletePrompt(promptKey: string): Promise<{ prompt_key: string; status: string }> {
+  return deleteJson<{ prompt_key: string; status: string }>(`/api/prompts/${encodeURIComponent(promptKey)}`);
 }
 
 export function getLLMSettings(): Promise<LLMSettings> {
@@ -102,6 +133,22 @@ export async function deleteProject(projectId: number): Promise<void> {
 
 export function getProjectAccounts(projectId: number): Promise<ProjectAccount[]> {
   return getJson<ProjectAccount[]>(`/api/projects/${projectId}/accounts`);
+}
+
+export function getProjectMembers(projectId: number): Promise<ProjectMember[]> {
+  return getJson<ProjectMember[]>(`/api/projects/${projectId}/members`);
+}
+
+export function createProjectMember(projectId: number, payload: ProjectMemberPayload): Promise<ProjectMember> {
+  return postJson<ProjectMember>(`/api/projects/${projectId}/members`, payload);
+}
+
+export function updateProjectMember(projectId: number, membershipId: number, payload: ProjectMemberPayload): Promise<ProjectMember> {
+  return putJson<ProjectMember>(`/api/projects/${projectId}/members/${membershipId}`, payload);
+}
+
+export function deleteProjectMember(projectId: number, membershipId: number): Promise<void> {
+  return deleteJson<void>(`/api/projects/${projectId}/members/${membershipId}`);
 }
 
 export function createProjectAccount(projectId: number, payload: ProjectAccountPayload): Promise<ProjectAccount> {
@@ -172,6 +219,10 @@ export function createCampaign(
   payload: { name: string; description?: string | null; caseIds?: number[] | null; settings?: Record<string, unknown> }
 ): Promise<TestCampaign> {
   return postJson<TestCampaign>(`/api/projects/${projectId}/campaigns`, payload);
+}
+
+export function getProjectCampaigns(projectId: number): Promise<TestCampaign[]> {
+  return getJson<TestCampaign[]>(`/api/projects/${projectId}/campaigns`);
 }
 
 export function startCampaign(
@@ -319,7 +370,8 @@ export async function streamAnalyzeAndPlan(
     method: "POST",
     headers: {
       Accept: "text/event-stream",
-      "Content-Type": "application/json"
+      "Content-Type": "application/json",
+      ...(getAuthToken() ? { Authorization: `Bearer ${getAuthToken()}` } : {})
     },
     body: JSON.stringify(payload)
   });
@@ -426,8 +478,53 @@ export function getFailureSamples(runId?: number): Promise<FailureSample[]> {
   return getJson<FailureSample[]>(`/api/failure-samples${suffix}`);
 }
 
+export function getFailureSamplesPaged(page = 1, runId?: number): Promise<PageResponse<FailureSample>> {
+  const params = new URLSearchParams({ page: String(page), page_size: "10" });
+  if (runId) params.set("run_id", String(runId));
+  return getJson<PageResponse<FailureSample>>(`/api/failure-samples/paged?${params.toString()}`);
+}
+
+export function deleteFailureSample(sampleId: number): Promise<void> {
+  return deleteJson<void>(`/api/failure-samples/${sampleId}`);
+}
+
 export function analyzeFailureSample(sampleId: number): Promise<FailureAnalysis> {
   return postJson<FailureAnalysis>(`/api/failure-samples/${sampleId}/analyze`, {});
+}
+
+export function getFailureContext(sampleId: number): Promise<FailureContext> {
+  return getJson<FailureContext>(`/api/failure-samples/${sampleId}/context`);
+}
+
+export function getFailureSolutions(sampleId: number): Promise<FailureSolution[]> {
+  return getJson<FailureSolution[]>(`/api/failure-samples/${sampleId}/solutions`);
+}
+
+export function generateFailureSolutionFromSample(sampleId: number, force = false): Promise<FailureSolution> {
+  return postJson<FailureSolution>(`/api/failure-samples/${sampleId}/solutions/generate`, { force });
+}
+
+export function updateFailureSolution(solutionId: number, payload: Record<string, unknown>): Promise<FailureSolution> {
+  return putJson<FailureSolution>(`/api/failure-solutions/${solutionId}`, payload);
+}
+
+export function createRuleDraftFromSolution(solutionId: number): Promise<RuleDraft> {
+  return postJson<RuleDraft>(`/api/failure-solutions/${solutionId}/rule-draft`, {});
+}
+
+export function validateFailureSolution(solutionId: number, sampleIds: number[] = []): Promise<RuleValidation> {
+  return postJson<RuleValidation>(`/api/failure-solutions/${solutionId}/validate`, {
+    validationType: "evidence_static_precheck",
+    sampleIds
+  });
+}
+
+export function publishFailureSolution(solutionId: number): Promise<{ abilityRuleId: number; ruleDraftId: number; status: string; message: string }> {
+  return postJson(`/api/failure-solutions/${solutionId}/publish`, {});
+}
+
+export function createMaintenanceResponse(solutionId: number): Promise<MaintenanceResponse> {
+  return postJson<MaintenanceResponse>(`/api/failure-solutions/${solutionId}/response`, {});
 }
 
 export function applyFailureAnalysisSuggestion(
@@ -458,6 +555,16 @@ export function getHumanInterventions(runId?: number): Promise<HumanIntervention
   return getJson<HumanIntervention[]>(`/api/human-interventions${suffix}`);
 }
 
+export function getHumanInterventionsPaged(page = 1, runId?: number): Promise<PageResponse<HumanIntervention>> {
+  const params = new URLSearchParams({ page: String(page), page_size: "10" });
+  if (runId) params.set("run_id", String(runId));
+  return getJson<PageResponse<HumanIntervention>>(`/api/human-interventions/paged?${params.toString()}`);
+}
+
+export function deleteHumanIntervention(interventionId: number): Promise<void> {
+  return deleteJson<void>(`/api/human-interventions/${interventionId}`);
+}
+
 export function getRunHumanInterventions(runId: number): Promise<HumanIntervention[]> {
   return getJson<HumanIntervention[]>(`/api/test-runs/${runId}/interventions`);
 }
@@ -482,6 +589,14 @@ export function getRuleDrafts(): Promise<RuleDraft[]> {
   return getJson<RuleDraft[]>("/api/rule-drafts");
 }
 
+export function getRuleDraftsPaged(page = 1): Promise<PageResponse<RuleDraft>> {
+  return getJson<PageResponse<RuleDraft>>(`/api/rule-drafts/paged?page=${page}&page_size=10`);
+}
+
+export function deleteRuleDraft(draftId: number): Promise<void> {
+  return deleteJson<void>(`/api/rule-drafts/${draftId}`);
+}
+
 export function enableRuleDraft(draftId: number): Promise<AbilityRule> {
   return postJson<AbilityRule>(`/api/rule-drafts/${draftId}/enable`, {});
 }
@@ -494,8 +609,19 @@ export function getAbilityRules(filters: { rule_type?: string; production_enable
   return getJson<AbilityRule[]>(`/api/abilities/rules${suffix}`);
 }
 
+export function getAbilityRulesPaged(page = 1, filters: { rule_type?: string; production_enabled?: boolean } = {}): Promise<PageResponse<AbilityRule>> {
+  const params = new URLSearchParams({ page: String(page), page_size: "10" });
+  if (filters.rule_type) params.set("rule_type", filters.rule_type);
+  if (filters.production_enabled !== undefined) params.set("production_enabled", String(filters.production_enabled));
+  return getJson<PageResponse<AbilityRule>>(`/api/abilities/rules/paged?${params.toString()}`);
+}
+
 export function updateAbilityRule(ruleId: number, payload: Partial<AbilityRule>): Promise<AbilityRule> {
   return putJson<AbilityRule>(`/api/abilities/rules/${ruleId}`, payload);
+}
+
+export function deleteAbilityRule(ruleId: number): Promise<void> {
+  return deleteJson<void>(`/api/abilities/rules/${ruleId}`);
 }
 
 export function getAbilityStats(): Promise<AbilityStats> {
@@ -504,6 +630,14 @@ export function getAbilityStats(): Promise<AbilityStats> {
 
 export function getAbilityKnowledge(): Promise<AbilityKnowledge[]> {
   return getJson<AbilityKnowledge[]>("/api/abilities/knowledge");
+}
+
+export function getAbilityKnowledgePaged(page = 1): Promise<PageResponse<AbilityKnowledge>> {
+  return getJson<PageResponse<AbilityKnowledge>>(`/api/abilities/knowledge/paged?page=${page}&page_size=10`);
+}
+
+export function deleteAbilityKnowledge(knowledgeId: number): Promise<void> {
+  return deleteJson<void>(`/api/abilities/knowledge/${knowledgeId}`);
 }
 
 function parseSseMessage(eventText: string): RuntimeMessageWire | null {

@@ -156,6 +156,7 @@ class TestCampaignRead(BaseModel):
     failed_count: int
     blocked_count: int
     summary_json: JsonDict | None = None
+    created_by_user_id: int | None = None
     started_at: datetime | None = None
     ended_at: datetime | None = None
     created_at: datetime
@@ -200,4 +201,3 @@ class MaintenanceFeedbackRead(BaseModel):
     updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
-

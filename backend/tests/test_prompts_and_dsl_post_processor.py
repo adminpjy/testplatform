@@ -143,6 +143,27 @@ def test_natural_language_plan_builds_todo_batch_approval_row_steps() -> None:
     assert row_steps[0]["value"] == "按要求执行"
     assert process_step["loopPolicy"]["openMode"] == "new_page_or_same_page"
     assert not any(str(step.get("target") or "") == "待办表格中的第一行任意列" for step in dsl.steps)
+    nav_index = next(index for index, step in enumerate(dsl.steps) if step.get("action") == "navigate_path" and step.get("pathSegments") == ["工作台", "我的待办"])
+    process_index = next(index for index, step in enumerate(dsl.steps) if step.get("action") == "process_table_rows")
+    assert nav_index < process_index
+
+
+def test_natural_language_plan_builds_todo_batch_approval_without_opinion() -> None:
+    payload = NaturalLanguageTestRequest(
+        instruction="1、打开门户\n2、登录用户\n3、打开“工作台/我的待办”\n4、审批所有待办",
+        base_url="https://work.example.test/",
+        stream=True,
+    )
+    dsl = NaturalLanguageParser(provider=StaticTestLLMProvider()).plan(payload)
+
+    process_steps = [step for step in dsl.steps if step.get("action") == "process_table_rows"]
+    assert process_steps
+    process_step = process_steps[0]
+    row_steps = process_step["loopPolicy"]["rowSteps"]
+    assert row_steps[0]["action"] == "business_goal"
+    assert row_steps[0]["intent"] == "approval_pass"
+    assert process_step["loopPolicy"]["maxRows"] == 30
+    assert process_step["loopPolicy"]["maxConsecutiveFailures"] == 2
 
 
 def test_natural_language_plan_generates_approval_pass_business_goal() -> None:
@@ -276,10 +297,30 @@ def test_post_processor_converts_for_each_table_row_to_process_table_rows() -> N
     normalized = DslPostProcessor().normalize_dsl(
         {"steps": [{"action": "for_each_table_row", "target": "我的待办列表", "maxRows": 10}]}
     )
-    step = normalized["steps"][0]
+    assert normalized["steps"][0]["action"] == "navigate_path"
+    step = next(item for item in normalized["steps"] if item.get("action") == "process_table_rows")
     assert step["action"] == "process_table_rows"
     assert step["loopPolicy"]["maxRows"] == 10
     assert step["originalAction"] == "for_each_table_row"
+
+
+def test_post_processor_inserts_todo_navigation_before_list_actions() -> None:
+    dsl = DslPostProcessor().normalize_dsl(
+        {
+            "steps": [
+                {"action": "business_goal", "target": "登录系统", "intent": "login_system"},
+                {"action": "query_table_count", "target": "我的待办列表", "emptyStrategy": "pass"},
+                {"action": "process_table_rows", "target": "我的待办列表"},
+            ]
+        }
+    )
+
+    steps = dsl["steps"]
+    assert steps[1]["action"] == "navigate_path"
+    assert steps[1]["target"] == "工作台/我的待办"
+    assert steps[1]["pathSegments"] == ["工作台", "我的待办"]
+    assert steps[1]["preconditions"]["authState"] == "logged_in"
+    assert [step["action"] for step in steps].count("navigate_path") == 1
 
 
 def test_post_processor_folds_table_row_approval_steps_into_row_steps() -> None:
@@ -295,8 +336,9 @@ def test_post_processor_folds_table_row_approval_steps_into_row_steps() -> None:
         }
     )
 
-    assert len(normalized["steps"]) == 1
-    step = normalized["steps"][0]
+    assert len(normalized["steps"]) == 2
+    assert normalized["steps"][0]["action"] == "navigate_path"
+    step = normalized["steps"][1]
     assert step["action"] == "process_table_rows"
     assert step["loopPolicy"]["rowSteps"][0]["value"] == "按要求执行"
     assert step["loopPolicy"]["rowSteps"][0]["intent"] == "approval_pass"
@@ -339,8 +381,9 @@ def test_post_processor_carries_query_conditions_to_next_table_row_step() -> Non
             ],
         }
     )
-    assert normalized["steps"][0]["criteria"] == {"实例号": "26097"}
-    assert normalized["steps"][1]["rowCriteria"] == {"实例号": "26097"}
+    assert normalized["steps"][0]["action"] == "navigate_path"
+    assert normalized["steps"][1]["criteria"] == {"实例号": "26097"}
+    assert normalized["steps"][2]["rowCriteria"] == {"实例号": "26097"}
 
 
 def test_post_processor_never_requires_auth_for_open_url() -> None:

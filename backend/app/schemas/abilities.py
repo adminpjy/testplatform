@@ -109,3 +109,18 @@ class RuleResolverResponse(BaseModel):
     matchedRules: list[RuleResolverMatch]
     selectedRule: RuleResolverMatch | None
     reason: str
+
+
+class AbilityRuleValidationRequest(BaseModel):
+    sampleIds: list[int] | None = None
+    validationType: str = Field(default="evidence_precheck", max_length=64)
+
+
+class AbilityRuleValidationRead(BaseModel):
+    ruleId: int
+    ruleCode: str
+    status: str
+    passedCount: int
+    failedCount: int
+    checks: list[dict[str, Any]]
+    summary: str

@@ -9,7 +9,8 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.db.session import SessionLocal, get_db
-from app.models import TestCase, TestProject
+from app.dependencies.auth import get_current_user
+from app.models import PlatformUser, TestCase, TestProject
 from app.core.config import settings
 from app.schemas.cases import FunctionalTestCaseRead, SaveRunAsCaseRequest
 from app.schemas.test_runs import (
@@ -28,6 +29,7 @@ from app.schemas.test_runs import (
     TestStepRunRead,
     TraceViewerResponse,
 )
+from app.services.audit import log_audit
 from app.services.human_interventions import (
     convert_intervention_to_rule_draft,
     create_human_intervention,
@@ -35,6 +37,7 @@ from app.services.human_interventions import (
     list_failure_samples,
     list_human_interventions,
 )
+from app.services.permissions import require_project_permission
 from app.services.dsl_post_processor import parse_menu_path
 from app.services.ability_resolver import annotate_dsl_with_abilities
 from app.services.llm_call_logs import log_llm_call
@@ -58,25 +61,56 @@ STREAM_TYPES = {"text", "progress", "warning", "error", "success"}
 
 
 @router.post("", response_model=TestRunRead, status_code=status.HTTP_201_CREATED)
-def create_test_run(payload: TestRunCreate, db: Session = Depends(get_db)) -> TestRunRead:
+def create_test_run(
+    payload: TestRunCreate,
+    db: Session = Depends(get_db),
+    current_user: PlatformUser = Depends(get_current_user),
+) -> TestRunRead:
+    require_project_permission(db, current_user, payload.project_id, "run_case")
     try:
-        return create_and_execute_run(db, payload)
+        run = create_and_execute_run(db, payload, actor_user_id=current_user.id)
+        log_audit(
+            db,
+            current_user,
+            "test_run_start",
+            target_type="test_run",
+            target_id=run.id,
+            project_id=run.project_id,
+            case_id=run.case_id,
+            run_id=run.id,
+        )
+        return run
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
 
 @router.get("", response_model=list[TestRunRead])
-def read_test_runs(db: Session = Depends(get_db)) -> list[TestRunRead]:
-    return list_runs(db)
+def read_test_runs(
+    db: Session = Depends(get_db),
+    current_user: PlatformUser = Depends(get_current_user),
+) -> list[TestRunRead]:
+    return list_runs(db, current_user)
 
 
 @router.post("/analyze", response_model=AnalyzeResult)
-def analyze_test_goal(payload: NaturalLanguageTestRequest) -> AnalyzeResult:
+def analyze_test_goal(
+    payload: NaturalLanguageTestRequest,
+    db: Session = Depends(get_db),
+    current_user: PlatformUser = Depends(get_current_user),
+) -> AnalyzeResult:
+    if payload.project_id is not None:
+        require_project_permission(db, current_user, payload.project_id, "view_project")
     return NaturalLanguageParser().analyze(payload)
 
 
 @router.post("/analyze-stream")
-def stream_analyze_test_goal(payload: NaturalLanguageTestRequest):
+def stream_analyze_test_goal(
+    payload: NaturalLanguageTestRequest,
+    db: Session = Depends(get_db),
+    current_user: PlatformUser = Depends(get_current_user),
+):
+    if payload.project_id is not None:
+        require_project_permission(db, current_user, payload.project_id, "view_project")
     return StreamingResponse(
         _analysis_events(payload),
         media_type="text/event-stream",
@@ -89,7 +123,11 @@ def stream_analyze_test_goal(payload: NaturalLanguageTestRequest):
 
 
 @router.post("/plan", response_model=TestCaseDSL)
-def plan_test_case(payload: NaturalLanguageTestRequest, db: Session = Depends(get_db)) -> TestCaseDSL:
+def plan_test_case(
+    payload: NaturalLanguageTestRequest,
+    db: Session = Depends(get_db),
+    current_user: PlatformUser = Depends(get_current_user),
+) -> TestCaseDSL:
     parser = NaturalLanguageParser()
     analysis = parser.analyze(payload)
     if not analysis.readyToExecute:
@@ -108,6 +146,7 @@ def plan_test_case(payload: NaturalLanguageTestRequest, db: Session = Depends(ge
     )
     dsl = TestCaseDSL.model_validate(dsl_data)
     if payload.project_id is not None:
+        require_project_permission(db, current_user, payload.project_id, "edit_cases")
         if db.get(TestProject, payload.project_id) is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
         test_case = TestCase(
@@ -117,6 +156,8 @@ def plan_test_case(payload: NaturalLanguageTestRequest, db: Session = Depends(ge
             instruction=payload.instruction,
             dsl_json=dsl.model_dump(),
             status="draft",
+            created_by_user_id=current_user.id,
+            updated_by_user_id=current_user.id,
         )
         db.add(test_case)
         db.commit()
@@ -124,17 +165,50 @@ def plan_test_case(payload: NaturalLanguageTestRequest, db: Session = Depends(ge
 
 
 @router.post("/save-as-case", response_model=FunctionalTestCaseRead, status_code=status.HTTP_201_CREATED)
-def save_temporary_run_as_case(payload: SaveRunAsCaseRequest, db: Session = Depends(get_db)) -> FunctionalTestCaseRead:
+def save_temporary_run_as_case(
+    payload: SaveRunAsCaseRequest,
+    db: Session = Depends(get_db),
+    current_user: PlatformUser = Depends(get_current_user),
+) -> FunctionalTestCaseRead:
+    require_project_permission(db, current_user, payload.projectId, "edit_cases")
     try:
-        return save_run_as_case(db, payload)
+        case = save_run_as_case(db, payload)
+        log_audit(
+            db,
+            current_user,
+            "run_save_as_case",
+            target_type="test_case",
+            target_id=case.id,
+            project_id=case.project_id,
+            case_id=case.id,
+            run_id=payload.runId,
+        )
+        return case
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
 
 @router.post("/{run_id}/rerun", response_model=TestRunRead, status_code=status.HTTP_201_CREATED)
-def rerun_existing_test_run(run_id: int, db: Session = Depends(get_db)) -> TestRunRead:
+def rerun_existing_test_run(
+    run_id: int,
+    db: Session = Depends(get_db),
+    current_user: PlatformUser = Depends(get_current_user),
+) -> TestRunRead:
+    source = _ensure_run_access(db, run_id, current_user, "run_case")
     try:
-        return rerun_test_run(db, run_id)
+        run = rerun_test_run(db, run_id, actor_user_id=current_user.id)
+        log_audit(
+            db,
+            current_user,
+            "test_run_rerun",
+            target_type="test_run",
+            target_id=run.id,
+            project_id=run.project_id,
+            case_id=run.case_id,
+            run_id=run.id,
+            detail={"sourceRunId": source.id},
+        )
+        return run
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
@@ -145,9 +219,23 @@ def intervene_test_step(
     step_id: int,
     payload: HumanInterventionCreate,
     db: Session = Depends(get_db),
+    current_user: PlatformUser = Depends(get_current_user),
 ) -> HumanInterventionRead:
+    run = _ensure_run_access(db, run_id, current_user, "run_case")
     try:
-        return create_human_intervention(db, run_id=run_id, step_id=step_id, payload=payload)
+        intervention = create_human_intervention(db, run_id=run_id, step_id=step_id, payload=payload)
+        log_audit(
+            db,
+            current_user,
+            "human_intervention_create",
+            target_type="human_intervention",
+            target_id=intervention.id,
+            project_id=run.project_id,
+            case_id=run.case_id,
+            run_id=run_id,
+            detail={"stepId": step_id},
+        )
+        return intervention
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
@@ -157,9 +245,23 @@ def execute_test_run_intervention(
     run_id: int,
     intervention_id: int,
     db: Session = Depends(get_db),
+    current_user: PlatformUser = Depends(get_current_user),
 ) -> HumanInterventionRead:
+    run = _ensure_run_access(db, run_id, current_user, "run_case")
     try:
-        return execute_human_intervention(db, run_id=run_id, intervention_id=intervention_id)
+        intervention = execute_human_intervention(db, run_id=run_id, intervention_id=intervention_id)
+        log_audit(
+            db,
+            current_user,
+            "human_intervention_execute",
+            target_type="human_intervention",
+            target_id=intervention_id,
+            project_id=run.project_id,
+            case_id=run.case_id,
+            run_id=run_id,
+            detail=intervention.execution_result_json,
+        )
+        return intervention
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
@@ -169,9 +271,23 @@ def convert_test_run_intervention_to_rule(
     run_id: int,
     intervention_id: int,
     db: Session = Depends(get_db),
+    current_user: PlatformUser = Depends(get_current_user),
 ) -> RuleDraftRead:
+    run = _ensure_run_access(db, run_id, current_user, "run_case")
     try:
-        return convert_intervention_to_rule_draft(db, run_id=run_id, intervention_id=intervention_id)
+        draft = convert_intervention_to_rule_draft(db, run_id=run_id, intervention_id=intervention_id)
+        log_audit(
+            db,
+            current_user,
+            "human_intervention_convert_to_rule",
+            target_type="rule_draft",
+            target_id=draft.id,
+            project_id=run.project_id,
+            case_id=run.case_id,
+            run_id=run_id,
+            detail={"interventionId": intervention_id},
+        )
+        return draft
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
@@ -182,8 +298,9 @@ def stream_test_run_runtime(
     after_id: int = 0,
     last_event_id: str | None = Header(default=None, alias="Last-Event-ID"),
     db: Session = Depends(get_db),
+    current_user: PlatformUser = Depends(get_current_user),
 ):
-    _ensure_run_exists(db, run_id)
+    _ensure_run_access(db, run_id, current_user, "view_runs")
     start_after_id = _resolve_start_after_id(after_id, last_event_id)
     return StreamingResponse(
         _runtime_message_events(run_id, start_after_id),
@@ -197,66 +314,98 @@ def stream_test_run_runtime(
 
 
 @router.get("/{run_id}", response_model=TestRunRead)
-def read_test_run(run_id: int, db: Session = Depends(get_db)) -> TestRunRead:
-    run = get_run(db, run_id)
-    if run is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Test run not found.")
-    return run
+def read_test_run(
+    run_id: int,
+    db: Session = Depends(get_db),
+    current_user: PlatformUser = Depends(get_current_user),
+) -> TestRunRead:
+    return _ensure_run_access(db, run_id, current_user, "view_runs")
 
 
 @router.get("/{run_id}/steps", response_model=list[TestStepRunRead])
-def read_test_run_steps(run_id: int, db: Session = Depends(get_db)) -> list[TestStepRunRead]:
-    _ensure_run_exists(db, run_id)
+def read_test_run_steps(
+    run_id: int,
+    db: Session = Depends(get_db),
+    current_user: PlatformUser = Depends(get_current_user),
+) -> list[TestStepRunRead]:
+    _ensure_run_access(db, run_id, current_user, "view_runs")
     return list_step_runs(db, run_id)
 
 
 @router.get("/{run_id}/artifacts", response_model=list[TestArtifactRead])
-def read_test_run_artifacts(run_id: int, db: Session = Depends(get_db)) -> list[TestArtifactRead]:
-    _ensure_run_exists(db, run_id)
+def read_test_run_artifacts(
+    run_id: int,
+    db: Session = Depends(get_db),
+    current_user: PlatformUser = Depends(get_current_user),
+) -> list[TestArtifactRead]:
+    _ensure_run_access(db, run_id, current_user, "view_runs")
     return list_artifacts(db, run_id)
 
 
 @router.get("/{run_id}/failure-samples", response_model=list[FailureSampleRead])
-def read_test_run_failure_samples(run_id: int, db: Session = Depends(get_db)) -> list[FailureSampleRead]:
-    _ensure_run_exists(db, run_id)
+def read_test_run_failure_samples(
+    run_id: int,
+    db: Session = Depends(get_db),
+    current_user: PlatformUser = Depends(get_current_user),
+) -> list[FailureSampleRead]:
+    _ensure_run_access(db, run_id, current_user, "view_reports")
     return list_failure_samples(db, run_id=run_id)
 
 
 @router.get("/{run_id}/interventions", response_model=list[HumanInterventionRead])
-def read_test_run_interventions(run_id: int, db: Session = Depends(get_db)) -> list[HumanInterventionRead]:
-    _ensure_run_exists(db, run_id)
+def read_test_run_interventions(
+    run_id: int,
+    db: Session = Depends(get_db),
+    current_user: PlatformUser = Depends(get_current_user),
+) -> list[HumanInterventionRead]:
+    _ensure_run_access(db, run_id, current_user, "view_runs")
     return list_human_interventions(db, run_id=run_id)
 
 
 @router.get("/{run_id}/runtime-messages", response_model=list[RuntimeMessageRead])
-def read_runtime_messages(run_id: int, db: Session = Depends(get_db)) -> list[RuntimeMessageRead]:
-    _ensure_run_exists(db, run_id)
+def read_runtime_messages(
+    run_id: int,
+    db: Session = Depends(get_db),
+    current_user: PlatformUser = Depends(get_current_user),
+) -> list[RuntimeMessageRead]:
+    _ensure_run_access(db, run_id, current_user, "view_runs")
     return list_runtime_messages(db, run_id)
 
 
 @router.get("/{run_id}/logs", response_model=list[RuntimeMessageRead])
-def read_test_run_logs(run_id: int, db: Session = Depends(get_db)) -> list[RuntimeMessageRead]:
-    _ensure_run_exists(db, run_id)
+def read_test_run_logs(
+    run_id: int,
+    db: Session = Depends(get_db),
+    current_user: PlatformUser = Depends(get_current_user),
+) -> list[RuntimeMessageRead]:
+    _ensure_run_access(db, run_id, current_user, "view_runs")
     return list_runtime_messages(db, run_id)
 
 
 @router.post("/{run_id}/stop", response_model=TestRunRead)
-def stop_test_run(run_id: int, db: Session = Depends(get_db)) -> TestRunRead:
-    run = get_run(db, run_id)
-    if run is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Test run not found.")
+def stop_test_run(
+    run_id: int,
+    db: Session = Depends(get_db),
+    current_user: PlatformUser = Depends(get_current_user),
+) -> TestRunRead:
+    run = _ensure_run_access(db, run_id, current_user, "run_case")
     if run.status not in {"passed", "failed", "stopped"}:
         run.status = "stopped"
         run.current_phase = "stopped"
         db.add(run)
         db.commit()
         db.refresh(run)
+        log_audit(db, current_user, "test_run_stop", target_type="test_run", target_id=run_id, project_id=run.project_id, case_id=run.case_id, run_id=run_id)
     return run
 
 
 @router.post("/{run_id}/trace-viewer/start", response_model=TraceViewerResponse)
-def start_test_run_trace_viewer(run_id: int, db: Session = Depends(get_db)) -> TraceViewerResponse:
-    _ensure_run_exists(db, run_id)
+def start_test_run_trace_viewer(
+    run_id: int,
+    db: Session = Depends(get_db),
+    current_user: PlatformUser = Depends(get_current_user),
+) -> TraceViewerResponse:
+    _ensure_run_access(db, run_id, current_user, "view_runs")
     try:
         return TraceViewerResponse.model_validate(start_trace_viewer(db, run_id))
     except ValueError as exc:
@@ -264,23 +413,35 @@ def start_test_run_trace_viewer(run_id: int, db: Session = Depends(get_db)) -> T
 
 
 @router.get("/{run_id}/trace-viewer/status", response_model=TraceViewerResponse)
-def read_test_run_trace_viewer_status(run_id: int, db: Session = Depends(get_db)) -> TraceViewerResponse:
-    _ensure_run_exists(db, run_id)
+def read_test_run_trace_viewer_status(
+    run_id: int,
+    db: Session = Depends(get_db),
+    current_user: PlatformUser = Depends(get_current_user),
+) -> TraceViewerResponse:
+    _ensure_run_access(db, run_id, current_user, "view_runs")
     return TraceViewerResponse.model_validate(trace_viewer_status(run_id))
 
 
 @router.post("/{run_id}/trace-viewer/stop", response_model=TraceViewerResponse)
-def stop_test_run_trace_viewer(run_id: int, db: Session = Depends(get_db)) -> TraceViewerResponse:
-    _ensure_run_exists(db, run_id)
+def stop_test_run_trace_viewer(
+    run_id: int,
+    db: Session = Depends(get_db),
+    current_user: PlatformUser = Depends(get_current_user),
+) -> TraceViewerResponse:
+    _ensure_run_access(db, run_id, current_user, "view_runs")
     return TraceViewerResponse.model_validate(stop_trace_viewer(run_id))
 
 
 @router.get("/{run_id}/latest-screenshot")
-def read_latest_screenshot(run_id: int, db: Session = Depends(get_db)):
+def read_latest_screenshot(
+    run_id: int,
+    db: Session = Depends(get_db),
+    current_user: PlatformUser = Depends(get_current_user),
+):
     from fastapi.responses import FileResponse
     from executor.aitp_executor.utils.file_paths import resolve_project_path
 
-    _ensure_run_exists(db, run_id)
+    _ensure_run_access(db, run_id, current_user, "view_runs")
     artifact = latest_screenshot(db, run_id)
     if artifact is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Latest screenshot not found.")
@@ -293,6 +454,14 @@ def read_latest_screenshot(run_id: int, db: Session = Depends(get_db)):
 def _ensure_run_exists(db: Session, run_id: int) -> None:
     if get_run(db, run_id) is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Test run not found.")
+
+
+def _ensure_run_access(db: Session, run_id: int, current_user: PlatformUser, permission: str):
+    run = get_run(db, run_id)
+    if run is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Test run not found.")
+    require_project_permission(db, current_user, run.project_id, permission)
+    return run
 
 
 def _runtime_message_events(run_id: int, after_id: int) -> Iterator[str]:
